@@ -1,33 +1,37 @@
-classdef (Abstract) matRad_DoseObjective
+classdef (Abstract) matRad_DoseConstraint
     %MATRAD_DOSEOBJECTIVE Summary of this class goes here
     %   Detailed explanation goes here
     
     properties (Abstract, Constant)        
         name
         parameterNames
-        %parameterIsDose
-        parameterTypes
+        parameterIsDose
+    end
+    
+    properties (Constant)
+        type = 'Constraint';
     end
     
     properties (Abstract, Access = public)
-        parameters        
-        penalty
+        parameters
+    end
+        
+    methods (Abstract)
+        cDose        = computeDoseConstraintFunction(obj,dose)
+        cDoseJacob   = computeDoseConstraintJacobian(obj,dose)
+        cu           = upperBounds(obj,n)
+        cl           = lowerBounds(obj,n)                
     end
     
-    methods (Abstract)
-        fDose       = computeDoseObjectiveFunction(obj,dose)
-        fDoseGrad   = computeDoseObjectiveGradient(obj,dose)
-    end        
-    
-    %Helper methods
+        %Helper methods
     methods (Access = public)
-        %Get only the parameters describing some kind of reference dose as
-        %numeric array
+        function jStruct = getConstraintJacobianStructure(obj,n)
+            jStruct = 
+        
         %Get only the parameters describing some kind of reference dose as
         %numeric array
         function doseParams = getDoseParameters(obj)
-            ix = cellfun(@(c) isequal('dose',c),obj.parameterTypes);
-            doseParams = [obj.parameters{ix}];
+            doseParams = [obj.parameters{obj.parameterIsDose}];
         end
         
         %Set only the parameters describing some kind of reference dose,
@@ -35,8 +39,7 @@ classdef (Abstract) matRad_DoseObjective
         function obj = setDoseParameters(obj,doseParams)
             %c = mat2cell(doseParams,1,numel(doseParams));
             %[obj.parameters{obj.parameterIsDose}] = deal(c{:});
-            ix = cellfun(@(c) isequal('dose',c),obj.parameterTypes);
-            obj.parameters(ix) = num2cell(doseParams);
+            obj.parameters(obj.parameterIsDose) = num2cell(doseParams);
 
         end
     end
