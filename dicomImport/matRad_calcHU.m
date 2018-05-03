@@ -1,15 +1,21 @@
-function matRad_CWKeyPressedCallback(~,KeyEvent)
+function ct = matRad_calcHU(ct)
 % %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-% matRad command window key pressed callback
-% 
+% matRad function to calculate Hounsfield units from a 
+% dicom ct that originally uses intensity values
+%
 % call
-%   matRad_CWKeyPressedCallback(~,KeyEvent)
+%   ct = matRad_calcHU(ct)
 %
 % input
-%   KeyEvent: java input from Matlab command line handle
+%   ct: unprocessed dicom ct data which are stored as intensity values (IV)
 %
+%                      HU = IV * slope + intercept
+%
+% output
+%   ct:                 ct struct with cube with HU
 %
 % References
+%   -
 %
 % %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
@@ -26,13 +32,10 @@ function matRad_CWKeyPressedCallback(~,KeyEvent)
 %
 % %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-global matRad_Q_Pressed
-
-% check if user pressed q
-if  get(KeyEvent,'keyCode') == 81
-
-    matRad_Q_Pressed = true;
-
+for i = 1:ct.numOfCtScen
+    ct.cubeHU{i} = double(ct.cubeIV{i}) * double(ct.dicomInfo.RescaleSlope) + double(ct.dicomInfo.RescaleIntercept);
 end
+
+ct = rmfield(ct,'cubeIV');
 
 end
