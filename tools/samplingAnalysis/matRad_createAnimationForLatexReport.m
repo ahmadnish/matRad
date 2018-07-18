@@ -1,5 +1,44 @@
 function matRad_createAnimationForLatexReport(confidenceValue, ct, cst, slice, meanCube, mRealizations, scenProb, subIx, outpath, legendColorbar)
-%%
+% %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% matRad function to create figures for a GIF animation
+% 
+% call
+%   matRad_createAnimationForLatexReport(confidenceValue, ct, cst, slice, ...
+%           meanCube, mRealizations, scenProb, subIx, outpath, legendColorbar)
+%
+% input
+%   confidenceValue confidence used for visualization        
+%   ct              matRad ct struct
+%   cst             matRad cst struct
+%   slice           slice of the ct used for visualization
+%   meanCube        cube holding the mean dose
+%   mRealzations    samples
+%   scenProb        linear vector of all probabilities for the individual
+%                   scenarios
+%   subIx           voxel indices that are considered during analysis
+%   outpath         output path for files
+%   legendColorbar  colorbar used for the legend
+%
+% output
+%
+% References
+%
+%
+% %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%
+% Copyright 2017 the matRad development team. 
+% 
+% This file is part of the matRad project. It is subject to the license 
+% terms in the LICENSE file found in the top-level directory of this 
+% distribution and at https://github.com/e0404/matRad/LICENSES.txt. No part 
+% of the matRad project, including this file, may be copied, modified, 
+% propagated, or distributed except according to the terms contained in the 
+% LICENSE file.
+%
+% %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
 ctDim = size(meanCube);
 doseSlice = meanCube(:,:,slice);
 doseSliceIx = find(doseSlice) + (slice-1)*prod(ctDim(1:2));

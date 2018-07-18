@@ -123,36 +123,37 @@ end
 % extract field shapes
 if strcmp(radiationMode, 'photons')
            
-    fractionSequence = planInfo.FractionGroupSequence.Item_1;
-    pln.Collimation  = matRad_importFieldShapes(BeamSequence,fractionSequence);
+    fractionSequence         = planInfo.FractionGroupSequence.Item_1;
+    pln.propStf.collimation  = matRad_importFieldShapes(BeamSequence,fractionSequence);
     
 end
 
 %% write parameters found to pln variable
-pln.isoCenter       = isoCenter;
 pln.radiationMode   = radiationMode; % either photons / protons / carbon
-pln.bixelWidth      = NaN; % [mm] / also corresponds to lateral spot spacing for particles
-pln.gantryAngles    = [gantryAngles{1:length(BeamSeqNames)}];
-pln.couchAngles     = [PatientSupportAngle{1:length(BeamSeqNames)}]; % [°]
-pln.numOfBeams      = length(BeamSeqNames);
-pln.numOfVoxels     = numel(ct.cube{1});
-pln.voxelDimensions = ct.cubeDim;
 pln.numOfFractions  = planInfo.FractionGroupSequence.Item_1.NumberOfFractionsPlanned;
-pln.runSequencing   = false; % 1/true: run sequencing, 0/false: don't / will be ignored for particles and also triggered by runDAO below
-pln.runDAO          = false; % 1/true: run DAO, 0/false: don't / will be ignored for particles
 pln.machine         = 'Generic';
-quantityOpt         = 'physicalDose';                                     
-modelName           = 'none';  
 
-% disable robust optimization
-pln.robOpt          = false;
-pln.scenGenType     = 'nomScen';
+% set handling of multiple scenarios -> default: only nominal
+pln.multScen = matRad_multScen(ct,'nomScen');
 
+% set bio model parameters (default physical opt, no bio model)
+pln.bioParam = matRad_bioModel(pln.radiationMode,'physicalDose','none');
+
+% set properties for steering
+pln.propStf.isoCenter    = isoCenter;
+pln.propStf.bixelWidth   = NaN; % [mm] / also corresponds to lateral spot spacing for particles
+pln.propStf.gantryAngles = [gantryAngles{1:length(BeamSeqNames)}];
+pln.propStf.couchAngles  = [PatientSupportAngle{1:length(BeamSeqNames)}]; % [°]
+pln.propStf.numOfBeams   = length(BeamSeqNames);
+
+% turn off sequerncing an DAO by default
+pln.propOpt.runSequencing   = false; % 1/true: run sequencing, 0/false: don't / will be ignored for particles and also triggered by runDAO below
+pln.propOpt.runDAO          = false; % 1/true: run DAO, 0/false: don't / will be ignored for particles
 
 % if we imported field shapes then let's trigger field based dose calc by
 % setting the bixelWidth to 'field'
-if isfield(pln,'Collimation')
-    pln.bixelWidth  = 'field'; 
+if isfield(pln.propStf,'collimation')
+    pln.propStf.bixelWidth  = 'field'; 
 end
 
 % timestamp
@@ -169,11 +170,4 @@ end
 if dicomMetaBool == true
     pln.DicomInfo.Meta = planInfo;
 end
-
-% retrieve bio model parameters
-pln.bioParam = matRad_bioModel(pln.radiationMode,quantityOpt, modelName);
-
-% retrieve scenarios for dose calculation and optimziation
-pln.multScen = matRad_multScen(ct,pln.scenGenType);
-
 end

@@ -1,3 +1,4 @@
+
 classdef matRad_bioModel
     % %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
     %  matRad_bioModel
@@ -5,18 +6,18 @@ classdef matRad_bioModel
     % a given radiation modatlity and a given bio model identifier string.
     %
     % constructor call
-    %   pln.bioParam = matRad_bioModel(sRadiationMode,sIdentifier)
+    %   pln.bioParam = matRad_bioModel(sRadiationMode,sQuantityOpt, sModel)
     %
     %   e.g. pln.bioParam = matRad_bioModel('protons','constRBE_RBExD')
     %
     % input
     %   sRadiationMode:     radiation modality 'photons' 'protons' 'carbon'
-    %   sIdentifier:        string to denote a biological model along with the
-    %                       quantity used for optimization
-    %                       none_physicalDose: physical optimization;                              constRBE_RBExD; constant RBE of 1.1;
-    %                       MCN_effect; McNamara-variable RBE model for protons (effect based)     MCN_RBExD; McNamara-variable RBE model for protons (RBExD) based
-    %                       WED_effect; Wedenberg-variable RBE model for protons (effect based)    WED_RBExD; Wedenberg-variable RBE model for protons (RBExD) based
-    %                       LEM_effect: effect-based optimization;                                 LEM_RBExD: optimization of RBE-weighted dose
+    %   sQuntityOpt:        string to denote the quantity used for
+    %                       optimization 'physicalDose', 'RBExD', 'effect'
+    %   sModel:             string to denote which biological model is used
+    %                       'none': for photons, protons, carbon                                    'constRBE': constant RBE for photons and protons 
+    %                       'MCN': McNamara-variable RBE model for protons                          'WED': Wedenberg-variable RBE model for protons 
+    %                       'LEM': Local Effect Model for carbon ions
     %
     % output
     %   bioParam:           matRad's bioParam structure containing information
@@ -63,12 +64,14 @@ classdef matRad_bioModel
         AvailableradiationModealities   = {'photons','protons','helium','carbon'};
         AvailableQuantitiesForOpt       = {'physicalDose','effect','RBExD'};
         
-        AvailableAlphaXBetaX       = {[0.036 0.024],    'prostate';
+        AvailableAlphaXBetaX = {[0.036 0.024],    'prostate';
             [0.089 0.287],    'rectum and normal tissue';
             [0.55 0.05],      'head and neck MCN';
             [0.0499 0.0238],  'brain tissue';
             [0.1 0.05],       'default values';
-            [0.1 0.005],      'default values'}; %
+            [0.1 0.005],      'default values'; %
+            [0.0081 0.0033],  'LEM IV AB 2.45'; %
+            [0.0030 0.0015],  'LEM IV AB 2'}; %
         
     end
     
@@ -220,6 +223,17 @@ classdef matRad_bioModel
                                     matRad_dispToConsole(['matRad: Invalid biological model: ' this.model  '; using "none" instead. \n'],[],'warning');
                                     this.model  = 'none';
                                 end
+                                
+                            case {'effect','RBExD'}
+                                if strcmp(this.model,'LEM')
+                                    boolCHECK           = true;
+                                    this.bioOpt         = true;
+                                    this.quantityVis    = 'RBExD';
+                                else
+                                    matRad_dispToConsole(['matRad: Invalid biological Model: ' this.model  '; using Local Effect Model instead. \n'],[],'warning');
+                                    this.model = 'LEM';
+                                end
+                                
                             otherwise
                                 matRad_dispToConsole(['matRad: Invalid biological optimization quantity: ' this.quantityOpt  '; using "none" instead. \n'],[],'warning');
                                 this.quantityOpt = 'physicalDose';
@@ -252,11 +266,7 @@ classdef matRad_bioModel
                                 matRad_dispToConsole(['matRad: Invalid biological optimization quantity: ' this.quantityOpt  '; using "none" instead. \n'],[],'warning');
                                 this.quantityOpt = 'physicalDose';
                         end
-                        
-                    case {'helium'}
-                     
-                        warning('not yet implemented');  
-                        
+                                      
                     otherwise
                         matRad_dispToConsole(['matRad: Invalid biological radiation mode: ' this.radiationMode  '; using photons instead. \n'],[],'warning');
                         this.radiationMode = 'photons';
@@ -414,7 +424,7 @@ classdef matRad_bioModel
                     bixelAlpha = RBEmax    .* vAlpha_x;
                     bixelBeta  = RBEmin.^2 .* vBeta_x;
                     
-                case {'carbon_LEM'}
+                case {'carbon_LEM','helium_LEM'}
                     
                     numOfTissueClass = size(baseDataEntry(1).alpha,2);
                     

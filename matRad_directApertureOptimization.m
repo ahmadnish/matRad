@@ -39,13 +39,10 @@ function [optResult,info] = matRad_directApertureOptimization(dij,cst,apertureIn
 %
 % %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-if exist('param','var')
-   if ~isfield(param,'logLevel')
-      param.logLevel = 1;
-   end
-else
-   param.logLevel = 1;
-end
+
+% determine if Matlab or Octave
+[env, ~] = matRad_getEnvironment();
+
 
 if ~isdeployed % only if _not_ running as standalone
     
@@ -53,7 +50,6 @@ if ~isdeployed % only if _not_ running as standalone
     matRadRootDir = fileparts(mfilename('fullpath'));
     addpath(fullfile(matRadRootDir,'optimization'))
     addpath(fullfile(matRadRootDir,'tools'))
-    [env, ~] = matRad_getEnvironment();
     
     if param.logLevel == 1
         switch env
@@ -81,12 +77,12 @@ end
 % initialize global variables for optimizer
 global matRad_global_x;
 global matRad_global_d;
-global matRad_STRG_C_Pressed;
+global matRad_Q_Pressed;
 global matRad_objective_function_value;
 
 matRad_global_x                 = NaN * ones(dij.totalNumOfBixels,1); % works with bixel weights even though we do dao!
 matRad_global_d                 = NaN * ones(dij.numOfVoxels,1);
-matRad_STRG_C_Pressed           = false;
+matRad_Q_Pressed                = false;
 matRad_objective_function_value = [];
 
 % adjust overlap priorities
@@ -136,6 +132,10 @@ funcs.jacobian          = @(x) matRad_daoJacobFunc(x,apertureInfo,dij,cst,option
 funcs.jacobianstructure = @( ) matRad_daoGetJacobStruct(apertureInfo,dij,cst);
 funcs.iterfunc          = @(iter,objective,paramter) matRad_IpoptIterFunc(iter,objective,paramter,options.ipopt.max_iter,param);
 
+% Informing user to press q to terminate optimization
+fprintf('\nOptimzation initiating...\n');
+fprintf('Press q to terminate the optimization...\n');
+
 % Run IPOPT.
 [optApertureInfoVec, info] = ipopt(apertureInfo.apertureVector,funcs,options);
 
@@ -147,9 +147,9 @@ end
 % clear global variables after optimization
 switch env
     case 'MATLAB'
-        clearvars -global matRad_global_x matRad_global_d;
+        clearvars -global matRad_global_x matRad_global_d matRad_Q_Pressed matRad_objective_function_value;
     case 'OCTAVE' 
-        clear -global matRad_global_x matRad_global_d;
+        clear -global matRad_global_x matRad_global_d matRad_Q_Pressed matRad_objective_function_value;
 end
 
 % update the apertureInfoStruct and calculate bixel weights

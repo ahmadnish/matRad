@@ -50,6 +50,7 @@ else
    param.logLevel       = 1;
 end
 
+
 if param.logLevel == 1
    % initialize waitbar
    figureWait = waitbar(0,'calculate dose influence matrix for particles...');
@@ -57,8 +58,11 @@ if param.logLevel == 1
    set(figureWait,'pointer','watch');
 end
 
+% calculate rED or rSP from HU
+ct = matRad_calcWaterEqD(ct, pln, param);
+
 % meta information for dij
-dij.numOfBeams         = pln.propStf.numOfBeams;
+dij.numOfBeams         = numel(stf);
 dij.numOfVoxels        = prod(ct.cubeDim);
 dij.resolution         = ct.resolution;
 dij.dimensions         = ct.cubeDim;
@@ -131,6 +135,13 @@ else
    V = unique(vertcat(V{:}));
 end
 
+% ignore densities outside of contours
+eraseCtDensMask = ones(dij.numOfVoxels,1);
+eraseCtDensMask(V) = 0;
+for i = 1:ct.numOfCtScen
+    ct.cube{i}(eraseCtDensMask == 1) = 0;
+end
+
 % Convert CT subscripts to linear indices.
 [yCoordsV_vox, xCoordsV_vox, zCoordsV_vox] = ind2sub(ct.cubeDim,V);
 
@@ -198,7 +209,7 @@ if pln.bioParam.bioOpt
            matRad_dispToConsole(['matRad: using default alpha_x and beta_x parameters for ' cst{i,2} ' \n'],param,'warning');
         end
         
-        if  ~isempty(cst{i,6}) && (isequal(cst{i,3},'OAR') || isequal(cst{i,3},'TARGET'))
+        if isequal(cst{i,3},'OAR') || isequal(cst{i,3},'TARGET')
             dij.alphaX(cst{i,4}{1}) = cst{i,5}.alphaX;
             dij.betaX(cst{i,4}{1})  = cst{i,5}.betaX;               
         end
@@ -211,7 +222,7 @@ if pln.bioParam.bioOpt
     % generates tissue class matrix for biological optimization
     vTissueIndex = zeros(size(V,1),1);
     
-   if strcmp(pln.radiationMode,'carbon')
+   if strcmp(pln.radiationMode,'carbon') || strcmp(pln.radiationMode,'helium')
 
        for i = 1:size(cst,1)
            % find indices of structures related to V
@@ -246,14 +257,14 @@ if pln.bioParam.bioOpt
 
 end
 
-%ctScen  = 1;        % current ct scenario
+ctScen  = 1;        % current ct scenario
 matRad_dispToConsole('matRad: Particle dose calculation... \n',param,'info');
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %loop over all shift scenarios
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 for ShiftScen = 1:pln.multScen.totNumShiftScen
-    
+   
     % manipulate isocenter
     for k = 1:length(stf)
         stf(k).isoCenter = stf(k).isoCenter + pln.multScen.isoShift(ShiftScen,:);
@@ -265,9 +276,9 @@ for ShiftScen = 1:pln.multScen.totNumShiftScen
     counter = 0;
     
     % compute SSDs
-    stf = matRad_computeSSD(stf,ct);  
+    stf = matRad_computeSSD(stf,ct,ctScen,param);
 
-   for i = 1:dij.numOfBeams % loop over all beams    
+   for i = 1:numel(stf) % loop over all beams
 
        matRad_dispToConsole(['Beam ' num2str(i) ' of ' num2str(dij.numOfBeams) ':  \n'],param,'info');
 
@@ -291,7 +302,7 @@ for ShiftScen = 1:pln.multScen.totNumShiftScen
        % transformation of the coordinate system need double transpose
 
        % rotation around Z axis (gantry)
-       rotMat_system_T = matRad_getRotationMatrix(pln.propStf.gantryAngles(i),pln.propStf.couchAngles(i));
+       rotMat_system_T = matRad_getRotationMatrix(stf(i).gantryAngle,stf(i).couchAngle);
 
        % Rotate coordinates (1st couch around Y axis, 2nd gantry movement)
        rot_coordsV = coordsV*rotMat_system_T;
@@ -316,7 +327,7 @@ for ShiftScen = 1:pln.multScen.totNumShiftScen
        matRad_dispToConsole('matRad: calculate lateral cutoff...',param,'info');
        cutOffLevel          = 0.99;
        visBoolLateralCutOff = 0;
-       machine              = matRad_calcLateralParticleCutOff(machine,cutOffLevel,stf(i),visBoolLateralCutOff);
+       machine              = matRad_calcLateralParticleCutOff(machine,cutOffLevel,stf(i),ctScen,visBoolLateralCutOff);
        matRad_dispToConsole('done. \n',param,'info');    
 
        for j = 1:stf(i).numOfRays % loop over all rays
@@ -371,6 +382,13 @@ for ShiftScen = 1:pln.multScen.totNumShiftScen
                    % find energy index in base data
                    energyIx = find(round2(stf(i).ray(j).energy(k),4) == round2([machine.data.energy],4));
  
+                   % create offset vector to account for additional offsets modelled in the base data and a potential 
+                   % range shifter. In the following, we only perform dose calculation for voxels having a radiological depth
+                   % that is within the limits of the base data set (-> machine.data(i).dephts). By this means, we only allow  
+                   % interpolations in matRad_calcParticleDoseBixel() and avoid extrapolations.
+                   offsetRadDepth = machine.data(energyIx).offset - stf(i).ray(j).rangeShifter(k).eqThickness;
+
+                
                    for ctScen = 1:pln.multScen.numOfCtScen
                        for RangeShiftScen = 1:pln.multScen.totNumRangeScen 
                           
@@ -388,15 +406,15 @@ for ShiftScen = 1:pln.multScen.totNumShiftScen
                                 
                             % find depth depended lateral cut off
                             if cutOffLevel >= 1
-                                currIx = radDepths <= machine.data(energyIx).depths(end) + machine.data(energyIx).offset;
+                                currIx = radDepths <= machine.data(energyIx).depths(end) + offsetRadDepth;
                             elseif cutOffLevel < 1 && cutOffLevel > 0
                                 % perform rough 2D clipping
-                                currIx = radDepths <= machine.data(energyIx).depths(end) + machine.data(energyIx).offset & ...
+                                currIx = radDepths <= machine.data(energyIx).depths(end) + offsetRadDepth & ...
                                      radialDist_sq <= max(machine.data(energyIx).LatCutOff.CutOff.^2);
 
                                 % peform fine 2D clipping  
                                 if length(machine.data(energyIx).LatCutOff.CutOff) > 1
-                                    currIx(currIx) = matRad_interp1((machine.data(energyIx).LatCutOff.depths + machine.data(energyIx).offset)',...
+                                   currIx(currIx) = matRad_interp1((machine.data(energyIx).LatCutOff.depths + offsetRadDepth)',...
                                         (machine.data(energyIx).LatCutOff.CutOff.^2)', radDepths(currIx)) >= radialDist_sq(currIx);
                                 end
                             else
