@@ -1,67 +1,46 @@
-function [resultGUI, delivery] = matRad_calc4dDose(ct, pln, dij, stf, cst, resultGUI, FileName)
+function [resultGUI, bixelInfo] = matRad_calc4dDoseNish(ct, pln, dij, stf, cst, resultGUI)
 % %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 % matRad 4D dose calculation
-% 
-% call
-%   
 %
-% input 
-%       FileName = Name of PBP and Lmdout File
-%   
+% call
+%
+%
+% input
+%
 %
 % output
-%   
+%
 %
 % References
-%   
+%
 %
 % %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
+% make a time sequence for when each bixel is irradiated, the sequence
+% follows the backforth spot scanning
+bixelInfo = matRad_makeBixelTimeSeq(stf, resultGUI);
 
-if ~isdeployed % only if _not_ running as standalone
-    
-    % add path for optimization functions
-    matRadRootDir = fileparts(mfilename('fullpath'));
-    addpath(fullfile(matRadRootDir,'4Ddose'))
-    
-    addpath(fullfile(matRadRootDir,'tools'))
-    
-    % get handle to Matlab command window
-    mde         = com.mathworks.mde.desk.MLDesktop.getInstance;
-    cw          = mde.getClient('Command Window');
-    xCmdWndView = cw.getComponent(0).getViewport.getComponent(0);
-    h_cw        = handle(xCmdWndView,'CallbackProperties');
+motionPeriod = 5; % a whole breathing motion period (in seconds)
+motion = 'linear'; % the assumed motion of chest
+numOfPhases = size(ct.cube, 2);
 
-    % set Key Pressed Callback of Matlab command window
-    set(h_cw, 'KeyPressedCallback', @matRad_CWKeyPressedCallback);
+% prepare a phase matrix in which place each bixel dose in it's phase
+bixelInfo = matRad_makePhaseMatrix(bixelInfo, numOfPhases, motionPeriod, motion);
 
-end
-
-    
-%reads in PB XML Plan and result of dose delivery simulation and creates
-%delievery struct
-delivery = matRad_readLmdout(dij, stf, FileName);
-
-%write bioModell in resultGUI for phase dose calculation and dose
-%accumulation (otherwise we need to add pln to  matRad_calcPhaseDose and 
-% matRad_doseAcc
 resultGUI.bioParam = pln.bioParam;
 
-%dose in each CT phase is calculated
-delivery(1).offset = 0;
-delivery(1).motionperiod = 5;
-
-delivery(1).NumOfPhases = size(dij.physicalDose,1);
-if isfield(ct, 'dvf')
-if size(ct.dvf,2) < size(ct.cube,2)
-    delivery(1).NumOfPhases = size(ct.dvf,2);
-end
-end
-
-if(ct.numOfCtScen == size(dij.physicalDose,1))
-    [resultGUI, delivery] = matRad_calcPhaseDoseMatrix(resultGUI, dij,delivery, 'linear', 0.01);
-else
-    [resultGUI, delivery] = matRad_calcPhaseDoseDirect(ct, stf, pln, cst, resultGUI, dij, delivery);
+for iPhase = 1:numOfPhases
+    
+    w = bixelInfo(1).totalPhaseMatrix(:,iPhase);
+    
+    resultGUI.phaseDose{iPhase} = reshape(dij.physicalDose{iPhase} * w, dij.dimensions);
+    
+    if isequal(resultGUI.bioParam.model,'MCN')
+        
+        resultGUI.phaseAlphaDose{p} = reshape(dij.mAlphaDose{p} * w, dij.dimensions);
+        resultGUI.phaseSqrtBetaDose{p} = reshape(dij.mSqrtBetaDose{p} * w, dij.dimensions);
+        
+    end
 end
 
 %dose accumulation
@@ -70,10 +49,15 @@ resultGUI = matRad_doseAcc(ct, resultGUI, cst, 'DDM');  %acc Methods: 'EMT' 'DDM
 %visualisation
 matRad_plotPhaseDose_2(ct, cst, pln, resultGUI); %optional kann slice angegeben werden  
 
-
-
-
-
-
-
-
+% Plot the result in comparison to the static dose
+slice = round(pln.isoCenter(1,3)./ct.resolution.z); 
+figure 
+subplot(2,2,1)
+imagesc(resultGUI.RBExD(:,:,slice)),colorbar, colormap(jet); 
+title('static dose distribution')
+subplot(2,2,2)
+imagesc(resultGUI.accRBExD(:,:,slice)),colorbar, colormap(jet); 
+title('4D dose distribution')
+subplot(2,2,3)
+imagesc(resultGUI.RBExD(:,:,slice) - resultGUI.accRBExD(:,:,slice)) ,colorbar, colormap(jet); 
+title('Difference')
