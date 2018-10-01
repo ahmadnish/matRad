@@ -1,32 +1,32 @@
-function statusAll = runMatRadTests(varargin)
 %% This file runs the complete matRad test suite.
 
-
-CI_MODE = strcmpi(getenv('CONTINUOUS_INTEGRATION'),'true') || strcmp(getenv('CI'),'true');
-isJenkins = ~isempty(getenv('JENKINS_URL'));
-
 %% Set path
-addpath(fullfile(pwd,'suites'));
+clc; clear; close all
 addpath(fullfile(pwd,'..'));
-addpath(fullfile(pwd,'..','examples'));
 
-%% Select functions to runs
-suite = @coreTest;
-allTests = 1:numel(suite(0));
 
-%% Prepare environment
-if strcmpi(getEnvironment(), 'Octave')
-  % Ensure that paging is disabled
-  % https://www.gnu.org/software/octave/doc/interpreter/Paging-Screen-Output.html
-  more off
-end
+% limiting the optimization to 10 iterations
+cd ./../optimization/
+fileId = fopen('matRad_ipoptOptions.m', 'a');
+fprintf(fileId, '\n');
+fwrite(fileId, 'options.ipopt.max_iter = 10;');
+fclose(fileId);
+cd ./../unitTest/
 
-%% Run tests
-status = coreTest(1);
+% supressing the inherent Ocatave warnings for division by zero
+warning("off", "Octave:divide-by-zero")
 
-matRad_example5_protons
+unitTests = {@matRad_example0, ...
+             @matRad_example1_phantom, ...
+             @matRad_example2_photons, ...
+             @matRad_example3_photonsDAO, ...
+             @matRad_example5_protons, ...
+             @matRad_example6_protonsNoise, ...
+             @matRad_example7_carbon, ...
+             @matRad_example8_protonsRobust};
 
-%% Calculate exit code
-if CI_MODE
-    exit(nErrors);
+for k = 1:length(unitTests);
+    
+    [cst, stf, pln, ct, dij, resultGUI] = unitTests{k}();
+
 end

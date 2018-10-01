@@ -1,3 +1,4 @@
+function [cst, stf, pln, ct, dij, resultGUI] = matRad_example0()
 % %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 % matRad script
 % %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -56,22 +57,21 @@ pln.bioParam = matRad_bioModel(pln.radiationMode,quantityOpt, modelName);
 % retrieve scenarios for dose calculation and optimziation
 pln.multScen = matRad_multScen(ct,scenGenType);
 
-%% initial visualization and change objective function settings if desired
-matRadGUI
-
 %% generate steering file
 stf = matRad_generateStf(ct,cst,pln);
 
+
 %% dose calculation
+param.logLevel = 3;
 if strcmp(pln.radiationMode,'photons')
-    dij = matRad_calcPhotonDose(ct,stf,pln,cst);
+    dij = matRad_calcPhotonDose(ct,stf,pln,cst,param);
     %dij = matRad_calcPhotonDoseVmc(ct,stf,pln,cst);
 elseif strcmp(pln.radiationMode,'protons') || strcmp(pln.radiationMode,'helium') || strcmp(pln.radiationMode,'carbon')
-    dij = matRad_calcParticleDose(ct,stf,pln,cst);
+    dij = matRad_calcParticleDose(ct,stf,pln,cst,param);
 end
 
 %% inverse planning for imrt
-resultGUI  = matRad_fluenceOptimization(dij,cst,pln);
+resultGUI  = matRad_fluenceOptimization(dij,cst,pln,param);
 
 %% sequencing
 if strcmp(pln.radiationMode,'photons') && (pln.propOpt.runSequencing || pln.propOpt.runDAO)
@@ -82,13 +82,13 @@ end
 
 %% DAO
 if strcmp(pln.radiationMode,'photons') && pln.propOpt.runDAO
-   resultGUI = matRad_directApertureOptimization(dij,cst,resultGUI.apertureInfo,resultGUI,pln);
+   resultGUI = matRad_directApertureOptimization(dij,cst,resultGUI.apertureInfo,resultGUI,pln,param);
    matRad_visApertureInfo(resultGUI.apertureInfo);
 end
 
-%% start gui for visualization of result
-matRadGUI
 
 %% indicator calculation and show DVH and QI
-[dvh,qi] = matRad_indicatorWrapper(cst,pln,resultGUI);
+[dvh,qi] = matRad_indicatorWrapper(cst,pln,resultGUI,[], [], param);
+
+end
 
