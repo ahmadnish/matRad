@@ -19,8 +19,6 @@ before_install:
 #sudo apt-get install coinor-libipopt-dev --yes --force-yes
 # Compiling IpOpt
   - cd ..
-  - export HOME=`pwd`
-  - ls
   - mkdir IpoptMUMPS
   - cd IpoptMUMPS
   - wget https://www.coin-or.org/download/source/Ipopt/Ipopt-3.12.10.tgz
@@ -52,16 +50,9 @@ before_install:
 
 # compile interface
   - mkoctfile --mex -ImexIPOPT/src -I/usr/local/include/coin mexIPOPT/src/ipopt.cc mexIPOPT/src/IpoptInterfaceCommon.cc -v -DMATLAB_MEXFILE -DHAVE_CSTDDEF -DIPOPT_INTERFACE_MISSING_COPY_N -Wl,--no-undefined -lipopt -lcoinmumps -lcoinlapack -lcoinblas -L/usr/local/lib -std=gnu++11
-  - find . -name \*.mex\*
   - sudo cp ipopt* $MATRAD/optimization
-  - cd $HOME
-  - ls
-  - cd $MATRAD/optimization
-  - ls
   - cd $MATRAD
-  - pwd 
 before_script:
-  - mkdir test
   - ulimit -c unlimited -S  # enable core dumps for Octave crash debugging
 script:
   - ./runtests.sh /usr/bin/octave
