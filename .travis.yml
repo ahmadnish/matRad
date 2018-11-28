@@ -18,7 +18,7 @@ before_install:
 # IpOpt in Ubuntu repo is too old
 #sudo apt-get install coinor-libipopt-dev --yes --force-yes
 # Compiling IpOpt
-
+  - cd ..
   - mkdir IpoptMUMPS
   - cd IpoptMUMPS
   - wget https://www.coin-or.org/download/source/Ipopt/Ipopt-3.12.10.tgz
@@ -55,8 +55,14 @@ before_install:
   - cd $HOME/optimization
   - ls
   - cd $HOME
+  - cd ls
+  - cd ..
+  - ls
+  - cd $HOME
   - pwd 
 before_script:
+  - mkdir matRad
+  - cd matRad
   - ulimit -c unlimited -S  # enable core dumps for Octave crash debugging
 script:
   - ./runtests.sh /usr/bin/octave
