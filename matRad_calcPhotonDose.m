@@ -54,11 +54,6 @@ else
 end
 
 % set consistent random seed (enables reproducibility)
-if ~isdeployed
-    matRadRootDir = fileparts(mfilename('fullpath'));
-    addpath(fullfile(matRadRootDir,'tools'))
-end
-
 [env, ~] = matRad_getEnvironment();
 
 switch env

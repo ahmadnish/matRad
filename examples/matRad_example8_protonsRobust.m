@@ -13,8 +13,7 @@
 %
 % %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-%% 
-% In this example we will  
+%% In this example we will  
 % (i)   create a small artifical phantom
 % (ii)  create a scanned proton treatment plan considering a constant RBE of 1.1
 % (iii) we will enable dose calculation on nine selected worst case scenarios
@@ -23,44 +22,25 @@
 % (v)   visualise all individual dose scenarios 
 % (vi)  sample discrete scenarios from Gaussian uncertainty assumptions
 
-%% Patient Data
-% Let's begin with a clear Matlab environment and import the liver
-% patient into your workspace.
-clc, close all;
+%% set matRad runtime configuration
+matRad_rc
 
-switch matRad_getEnvironment
-    case 'MATLAB'
-        clearvars -except param
-    case 'OCTAVE'
-        clear -x param
-end
-
-if exist('param','var')
-    if ~isfield(param,'logLevel')
-       param.logLevel = 1;
-    end
-    
-else
-   param.calcDoseDirect = false;
-   param.subIx          = [];
-   param.logLevel       = 1;
-end
 %% Create a CT image series
 xDim = 150;
 yDim = 150;
 zDim = 50;
 
 ct.cubeDim      = [xDim yDim zDim];
-ct.resolution.x = 2;
-ct.resolution.y = 2;
-ct.resolution.z = 3;
+ct.resolution.x = 2; % mm
+ct.resolution.y = 2; % mm
+ct.resolution.z = 3; % mm
 ct.numOfCtScen  = 1;
  
 % create an ct image series with zeros - it will be filled later
-ct.cubeHU{1} = ones(ct.cubeDim) * -1000;
+ct.cubeHU{1} = ones(ct.cubeDim) * -1024;
 
-%% Create the VOI data for the phantom
-% Now we define structures a contour for the phantom and a target
+%% Create VOI data for the phantom
+% Now we define two structures for the phantom 
 ixOAR = 1;
 ixPTV = 2;
 
@@ -76,11 +56,11 @@ cst{ixPTV,3} = 'TARGET';
 cst{ixOAR,5}.TissueClass = 1;
 cst{ixOAR,5}.alphaX      = 0.1000;
 cst{ixOAR,5}.betaX       = 0.0500;
-cst{ixOAR,5}.Priority    = 2;
+cst{ixOAR,5}.Priority    = 2;           % overlap priority for optimization - a higher number corresponds to a lower priority
 cst{ixOAR,5}.Visible     = 1;
 cst{ixOAR,6}.type        = 'square overdosing';
 cst{ixOAR,6}.dose        = 30;
-cst{ixOAR,6}.penalty     = 10;
+cst{ixOAR,6}.penalty     = 10;          % penalty of the square overdose objective 
 cst{ixOAR,6}.EUD         = NaN;
 cst{ixOAR,6}.volume      = NaN;
 cst{ixOAR,6}.coverage    = NaN;
@@ -89,18 +69,18 @@ cst{ixOAR,6}.robustness  = 'none';
 cst{ixPTV,5}.TissueClass = 1;
 cst{ixPTV,5}.alphaX      = 0.1000;
 cst{ixPTV,5}.betaX       = 0.0500;
-cst{ixPTV,5}.Priority    = 1;
-cst{ixPTV,5}.Visible     = 1;
+cst{ixPTV,5}.Priority    = 1;           % overlap priority for optimization - a lower number corresponds to a higher priority
+cst{ixPTV,5}.Visible     = 1; 
 cst{ixPTV,6}.type        = 'square deviation';
 cst{ixPTV,6}.dose        = 60;
-cst{ixPTV,6}.penalty     = 50;
+cst{ixPTV,6}.penalty     = 50;          % penalty of the square deviation objective 
 cst{ixPTV,6}.EUD         = NaN;
 cst{ixPTV,6}.volume      = NaN;
 cst{ixPTV,6}.coverage    = NaN;
 cst{ixPTV,6}.robustness  = 'none';
 
 %% Lets create a cubic phantom
-% first the OAR
+% first define the dimensions of the organ at risk
 cubeHelper = zeros(ct.cubeDim);
 xLowOAR    = round(xDim/2 - xDim/6);
 xHighOAR   = round(xDim/2 + xDim/6);
@@ -117,7 +97,7 @@ for x = xLowOAR:1:xHighOAR
    end
 end
       
-% extract the voxel indices and save it in the cst
+% extract the linear voxel indices and save it in the cst
 cst{ixOAR,4}{1} = find(cubeHelper);
 
 % second the PTV
@@ -134,15 +114,15 @@ for x = 1:xDim
    end
 end
 
-% extract the voxel indices and save it in the cst
+% extract the linear voxel indices and save it in the cst
 cst{ixPTV,4}{1} = find(cubeHelper);
 
-%a ssign relative electron densities
+% assign relative electron densities
 vIxOAR = cst{ixOAR,4}{1};
 vIxPTV = cst{ixPTV,4}{1};
 
-ct.cubeHU{1}(vIxOAR) = 1;  % assign HU of water
-ct.cubeHU{1}(vIxPTV) = 1;  % assign HU of water
+ct.cubeHU{1}(vIxOAR) = 300; % assign HU of soft tissue
+ct.cubeHU{1}(vIxPTV) = 0;   % assign HU of water
 
 %% Treatment Plan
 % The next step is to define your treatment plan labeled as 'pln'. This 
@@ -215,7 +195,7 @@ cst{ixOAR,6}.robustness  = 'COWC';
 resultGUIrobust = matRad_fluenceOptimization(dij,cst,pln,param);
 %% Visualize results
 if param.logLevel == 1
-    addpath('tools')
+
     plane      = 3;
     slice      = round(pln.propStf.isoCenter(1,3)./ct.resolution.z);
 
@@ -230,18 +210,16 @@ if param.logLevel == 1
        'value',numScen, 'min',1, 'max',pln.multScen.totNumScen,'SliderStep', [1/(pln.multScen.totNumScen-1) , 1/(pln.multScen.totNumScen-1)]);
     b.Callback = @(es,ed)  matRad_plotSliceWrapper(gca,ct,cst,1,resultGUIrobust.(['RBExD_' num2str(round(es.Value))]),plane,slice,[],[],colorcube,[],doseWindow,[]); 
 
-%% Indicator calculation and show DVH and QI
-[dvh,qi] = matRad_indicatorWrapper(cst,pln,resultGUIrobust,[],[],param);
-%% Perform sampling
-addpath(['tools' filesep 'samplingAnalysis'])
-% select structures to include in sampling; leave empty to sample dose for all structures
-structSel = {}; % structSel = {'PTV','OAR1'};
-[caSamp, mSampDose, plnSamp, resultGUInomScen]          = matRad_sampling(ct,stf,cst,pln,resultGUI.w,structSel,[],param);
-[cstStat, resultGUISamp, param]                         = matRad_samplingAnalysis(ct,cst,plnSamp,caSamp, mSampDose, resultGUInomScen,param);
+    %% Indicator calculation and show DVH and QI
+    [dvh,qi] = matRad_indicatorWrapper(cst,pln,resultGUIrobust,[],[],param);
+    %% Perform sampling
+    % select structures to include in sampling; leave empty to sample dose for all structures
+    structSel = {}; % structSel = {'PTV','OAR1'};
+    [caSamp, mSampDose, plnSamp, resultGUInomScen]          = matRad_sampling(ct,stf,cst,pln,resultGUI.w,structSel,[],param);
+    [cstStat, resultGUISamp, param]                         = matRad_samplingAnalysis(ct,cst,plnSamp,caSamp, mSampDose, resultGUInomScen,param);
 
-[caSampRob, mSampDoseRob, plnSampRob, resultGUInomScen] = matRad_sampling(ct,stf,cst,pln,resultGUIrobust.w,structSel,[],param);
-[cstStatRob, resultGUISampRob, paramRob]                = matRad_samplingAnalysis(ct,cst,plnSampRob,caSampRob, mSampDoseRob, resultGUInomScen,param);
-
+    [caSampRob, mSampDoseRob, plnSampRob, resultGUInomScen] = matRad_sampling(ct,stf,cst,pln,resultGUIrobust.w,structSel,[],param);
+    [cstStatRob, resultGUISampRob, paramRob]                = matRad_samplingAnalysis(ct,cst,plnSampRob,caSampRob, mSampDoseRob, resultGUInomScen,param);
 
     figure,title('std dose cube based on sampling - conventional')
     matRad_plotSliceWrapper(gca,ct,cst,1,resultGUISamp.stdCube,plane,slice,[],[],colorcube,[],[0 max(resultGUISamp.stdCube(:))],[]);

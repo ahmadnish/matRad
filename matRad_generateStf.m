@@ -74,8 +74,13 @@ voiTarget(V) = 1;
 % add margin
 addmarginBool = 1;
 if addmarginBool
-    voiTarget = matRad_addMargin(voiTarget,cst,ct.resolution,ct.resolution,true);
-    V   = find(voiTarget>0);
+   % add margin -  account for voxel resolution, the maximum shift scenario and the current bixel width.
+   margin.x  = max([ct.resolution.x max(abs(pln.multScen.isoShift(:,1))) pln.propStf.bixelWidth+1e-3]);
+   margin.y  = max([ct.resolution.y max(abs(pln.multScen.isoShift(:,2))) pln.propStf.bixelWidth+1e-3]);
+   margin.z  = max([ct.resolution.z max(abs(pln.multScen.isoShift(:,3))) pln.propStf.bixelWidth+1e-3]);
+   
+   voiTarget = matRad_addMargin(voiTarget,cst,ct.resolution,margin,true);
+    V        = find(voiTarget>0);
 end
 
 % throw error message if no target is found
@@ -107,12 +112,6 @@ if strcmp(pln.radiationMode,'protons') || strcmp(pln.radiationMode,'helium') || 
 end
 
 % calculate rED or rSP from HU
-if ~isdeployed
-   addpath(fullfile(pwd,'..', 'dicomImport'));
-   addpath(fullfile(pwd,'..', 'dicomImport', 'hlutLibrary'));
-   addpath(fullfile(pwd,'..', 'IO'));
-
-end
 ct = matRad_calcWaterEqD(ct, pln, param);
 
 % take only voxels inside patient
