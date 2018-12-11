@@ -26,6 +26,7 @@ load('BOXPHANTOM_2mm.mat')
 
 [ct, cst, pln, stf, resultGUI] = slabgeometry(ct, cst, vars);
 
+close
 % filename = ['topas_ws_',int2str(slab_loc(1)),'_',int2str(slab_loc(2)), ...
 %     '_',int2str(slab_loc(3)),'_',int2str(geo(1)),'_',int2str(geo(2)), ...
 %     '_',int2str(geo(3))];
@@ -33,3 +34,4 @@ load('BOXPHANTOM_2mm.mat')
 filename = ['topas_ws'];
 
 save([filename, '.mat']);
+matRadGUI

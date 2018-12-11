@@ -1,8 +1,16 @@
 function [ct, cst, pln, stf, resultGUI] = slabgeometry(ct, cst, vars)
+% %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% takes the vars as the variables regarding the slab and does the dose
+% calculations
+%
+%   call:
+%         [ct, cst, pln, stf, resultGUI] = slabgeometry(ct, cst, vars)
+% %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 pln.radiationMode = 'protons';
 pln.machine = 'generic_TOPAS_cropped';
 
+%%
 % setting up the plan
 pln.numOfFractions        = 30;
 pln.propStf.gantryAngles  = vars.gantryAngle;
