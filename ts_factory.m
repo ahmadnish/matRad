@@ -1,9 +1,11 @@
 % Load The Boxphantom
 clc, clear, close all
 
+
 vars.gantryAngle = 0;
 vars.couchAngle = 0;
-vars.geo = [3 15 3]; % size of the geometry in voxels
+vars.geo.shape = 'Rec';
+vars.geo.size = [3 15 3]; % size of the geometry in voxels
                 % for Rectagle:
                 % for Triangle:
                 % for Circle:

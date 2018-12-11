@@ -23,7 +23,6 @@ pln.propOpt.runDAO        = 0;
 pln.propOpt.runSequencing = 0;
 
 % slab geometry and alignment
-geo = vars.geo;
 alignment = vars.alignment;
 
 % setting up dose with realistic numbers considering it's one bixel and
@@ -41,17 +40,10 @@ slab_loc(1) = floor(slab_loc(1)/ct.resolution.y) + alignment(1);
 slab_loc(2) = floor(slab_loc(2)/ct.resolution.x) + alignment(2);
 slab_loc(3) = floor(slab_loc(3)/ct.resolution.z) + alignment(3);
 
+% book keeping the slab location
+vars.slab_loc = slab_loc;
 % bulding the mask for where the slab is
-mask = zeros(ct.cubeDim);
-    
-for i = -geo(1):geo(1)
-    for j = -2 * geo(2) : 0
-        for z = -geo(3):geo(3)
-            ix = slab_loc + [i, j, z];
-            mask(ix(1),ix(2),ix(3)) = 1;
-        end
-    end
-end
+mask = slabGeometry(vars, ct.cubeDim);
 
 % assigning electron density to the slab
 ct.cube{1}(mask == 1) = vars.slab_ed;
