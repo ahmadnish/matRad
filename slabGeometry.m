@@ -1,5 +1,11 @@
 function mask = slabGeometry(vars, cubeDim)
-
+% %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% takes the shape and the size of the geometry and produces the
+% corresponding mask cube for it.
+%
+%   call:
+%         mask = slabGeometry(vars, cubeDim)
+% %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 shape = vars.geo.shape;
 geo = vars.geo.size;
 slab_loc = vars.slab_loc;

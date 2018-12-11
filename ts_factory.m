@@ -1,6 +1,7 @@
-% Load The Boxphantom
+% %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% % Script for preparing training set for ANN 
+% %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 clc, clear, close all
-
 
 vars.gantryAngle = 0;
 vars.couchAngle = 0;
@@ -26,6 +27,7 @@ vars.Energy = 116.3620; % desired energy for the particle
 load('BOXPHANTOM_2mm.mat')
 
 [ct, cst, pln, stf, resultGUI] = doseCalc(ct, cst, vars);
+close
 
 % filename = ['topas_ws_',int2str(slab_loc(1)),'_',int2str(slab_loc(2)), ...
 %     '_',int2str(slab_loc(3)),'_',int2str(geo(1)),'_',int2str(geo(2)), ...
