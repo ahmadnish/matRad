@@ -1,4 +1,4 @@
-function [ct, cst, pln, stf, resultGUI] = slabgeometry(ct, cst, vars)
+function [ct, cst, pln, stf, resultGUI] = doseCalc(ct, cst, vars)
 % %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 % takes the vars as the variables regarding the slab and does the dose
 % calculations
