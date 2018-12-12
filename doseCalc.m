@@ -27,8 +27,8 @@ alignment = vars.alignment;
 
 % setting up dose with realistic numbers considering it's one bixel and
 % only one fraction
-cst{2,6}.dose = .2;
-cst{2,6}.dose = .5;
+cst{1,6}.dose = .2;
+cst{2,6}.dose = .5; % 0.0167 each fraction
 
 pln.propOpt.bioOptimization = 'none';
 
