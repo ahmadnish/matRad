@@ -1,17 +1,30 @@
 % %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 % % Script for preparing training set for ANN 
 % %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-clc, clear, close all
+clc, , clear, close all
+%% Write down all the possible values for the parameters
+load protons_generic_TOPAS_cropped.mat
 
+particleEnergies = [machine.data.energy];
+peakPos = [machine.data.peakPos];
+
+particleEnergies = particleEnergies(7:28); %22 cases
+peakPos = peakPos(7:28); 
+
+slabSPs = [0.00324:.01:2.53061]; %253 cases
+slab_goe_xs = 0;
+slabGeometeries = ["Rectangle", "Circle", "Pyramid"];
+
+%% Random sample from the possible values
 vars.gantryAngle = 0;
 vars.couchAngle = 0;
-vars.geo.shape = 'Rec';
-vars.geo.size = [3 15 3]; % size of the geometry in voxels
+vars.geo.shape = 'Pyramid';
+vars.geo.size = [8 15 8]; % size of the geometry in voxels
                 % for Rectagle:
                 % for Triangle:
                 % for Circle:
                 
-vars.alignment = [-10 -1 0]; % aligns the center point in respect to the
+vars.alignment = [-30 -16 0]; % aligns the center point in respect to the
                        % isocneter which in turn will be the starting point
                        % for building the geometry. y and z are build around
                        % this point while x is build toward left or right
@@ -22,9 +35,10 @@ vars.alignment = [-10 -1 0]; % aligns the center point in respect to the
 vars.slab_ed = 2; % slab's electron density
 vars.slab_hu = 1024; % slab's Hounsfield's unit
 
-vars.Energy = 116.3620; % desired energy for the particle
+vars.Energy = 127.5440; % desired energy for the particle
 
-load('BOXPHANTOM_2mm.mat')
+% load('BOXPHANTOM_2mm.mat')
+[ct, cst] = makeBoxphantom(160,160,160);
 
 [ct, cst, pln, stf, resultGUI] = doseCalc(ct, cst, vars);
 close
