@@ -40,11 +40,18 @@ switch shape
 
     case 'Pyramid'
         
-        for i = 0:geo(1)
-            for j = 0:geo(2)
-                for k = 0:geo(3)
+        for i = -geo(1):geo(1)
+            for j = -geo(2):geo(2)
+                for k = -geo(3):geo(3)
                     ix = slab_loc + [i,j,k];
-                    if (i <= ((1 - j/geo(2)) * geo(1)) && k <= (1 - j/geo(2)) * geo(3))
+                    if geo(2)
+                        coef = (1 - sign(j)*j/geo(2));
+                        assert(coef <= 1);
+                    else
+                        coef = 1;
+                    end
+                    
+                    if (sign(i)*i <= coef * geo(1) && sign(k)*k <= coef * geo(3))
                         mask(ix(1),ix(2),ix(3)) = 1;
                     end                       
                 end
