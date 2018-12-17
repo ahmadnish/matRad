@@ -46,7 +46,7 @@ vars.slab_loc = slab_loc;
 mask = slabGeometry(vars, ct.cubeDim);
 
 % assigning electron density to the slab
-ct.cube{1}(mask == 1) = vars.slab_ed;
+% ct.cube{1}(mask == 1) = vars.slab_sp;
 ct.cubeHU{1}(mask == 1) = vars.slab_hu;
 
 stf = matRad_generateStf(ct, cst, pln);
