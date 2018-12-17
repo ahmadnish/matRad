@@ -6,13 +6,13 @@ function mask = slabGeometry(vars, cubeDim)
 %   call:
 %         mask = slabGeometry(vars, cubeDim)
 % %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-shape = vars.geo.shape;
-geo = vars.geo.size;
+
+geo = vars.geoSize;
 slab_loc = vars.slab_loc;
 
 mask = zeros(cubeDim);
 
-switch shape
+switch vars.geoShape
     
     case 'Rectangle'
         
@@ -37,7 +37,26 @@ switch shape
                 end
             end
         end
-
+    case '2DPyramid'
+        
+        for i = -geo(1):geo(1)
+            for j = -geo(2):geo(2)
+                for k = -geo(3):geo(3)
+                    ix = slab_loc + [i,j,k];
+                    if geo(2)
+                        coef = (1 - sign(j)*j/geo(2));
+                        assert(coef <= 1);
+                    else
+                        coef = 1;
+                    end
+                    
+                    if (sign(i)*i <= coef * geo(1))
+                        mask(ix(1),ix(2),ix(3)) = 1;
+                    end                       
+                end
+            end
+        end
+        
     case 'Pyramid'
         
         for i = -geo(1):geo(1)
