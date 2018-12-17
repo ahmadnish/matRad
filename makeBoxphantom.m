@@ -1,9 +1,14 @@
-function [ct, cst] = makeBoxphantom(xDim, yDim, zDim)
+function [ct, cst] = makeBoxphantom(boxSize, res)
 
-ct.cubeDim      = [xDim yDim zDim];
-ct.resolution.x = 2;
-ct.resolution.y = 2;
-ct.resolution.z = 2;
+ct.cubeDim      = boxSize;
+
+xDim = boxSize(1);
+yDim = boxSize(2);
+zDim = boxSize(3);
+
+ct.resolution.x = res(1);
+ct.resolution.y = res(2);
+ct.resolution.z = res(3);
 ct.numOfCtScen  = 1;
  
 % create an ct image series with zeros - it will be filled later
