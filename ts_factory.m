@@ -11,8 +11,8 @@ peakPos = [machine.data.peakPos];
 particleEnergies = particleEnergies(7:28); %22 cases
 peakPos = peakPos(7:28); 
 
-% slabSPs = 0.00324:.01:2.53061; %253 cases
-slabHUs = -1024: 10 : 3071; % 410 cases
+slabSPs = 0.00324:.01:2.53061; %253 cases
+
 slab_goe_xs = 0;
 slabGeometeries = ["Rectangle", "Ellipsoid", "Pyramid", "2DPyramid"];
 numOfSamples = 1;
@@ -38,8 +38,7 @@ while (i <= numOfSamples && tmp2 < 10)
     % second dimension x: left to right
     % third dimension
     
-%     vars(i).slab_sp = randsample(slabSPs,1); % slab's stopping power
-    vars(i).slab_hu = randsample(slabHUs,1); % slab's Hounsfield's unit
+    vars(i).slab_sp = randsample(slabSPs,1); % slab's stopping power
     
     vars(i).Energy = randsample(particleEnergies, 1); % desired energy for the particle
     
@@ -60,7 +59,6 @@ end
 
 clearvars -except vars numOfSamples
 
-% load('BOXPHANTOM_2mm.mat')
 boxSize = 160 * ones(1,3);
 res = 2 * ones(1,3);
 [ct, cst] = makeBoxphantom(boxSize, res);

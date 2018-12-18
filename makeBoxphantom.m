@@ -12,7 +12,6 @@ ct.resolution.z = res(3);
 ct.numOfCtScen  = 1;
  
 % create an ct image series with zeros - it will be filled later
-ct.cubeHU{1} = ones(ct.cubeDim) * -1024; % assign HU of Air
 ct.cube{1} = zeros(ct.cubeDim);
 
 %% Create the VOI data for the phantom
@@ -112,8 +111,8 @@ cst{ixPTV,4}{1} = find(cubeHelper);
 vIxOAR = cst{ixOAR,4}{1};
 vIxPTV = cst{ixPTV,4}{1};
 
-ct.cubeHU{1}(vIxOAR) = 0;
-ct.cubeHU{1}(vIxPTV) = 0;
-
 ct.cube{1}(vIxOAR) = 1;
 ct.cube{1}(vIxPTV) = 1;
+
+ct = matRad_electronDensitiesToHU(ct);
+end
