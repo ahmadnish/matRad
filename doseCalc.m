@@ -47,6 +47,7 @@ mask = slabGeometry(vars, ct.cubeDim);
 
 % assigning electron density to the slab
 ct.cube{1}(mask == 1) = vars.slab_sp;
+ct = matRad_electronDensitiesToHU(ct);
 
 stf = matRad_generateStf(ct, cst, pln);
 stf.ray.energy = vars.Energy;

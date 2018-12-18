@@ -113,6 +113,4 @@ vIxPTV = cst{ixPTV,4}{1};
 
 ct.cube{1}(vIxOAR) = 1;
 ct.cube{1}(vIxPTV) = 1;
-
-ct = matRad_electronDensitiesToHU(ct);
 end
