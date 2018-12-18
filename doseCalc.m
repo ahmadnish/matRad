@@ -12,6 +12,8 @@ pln.machine = 'generic_TOPAS_cropped';
 
 %% ct and cst
 [ct, cst] = makeBoxphantom(vars.boxSize, vars.res);
+mask_zeros = zeros(ct.cubeDim);
+mask_zeros(ct.cube{1} == 0) = 1;
 %%
 % setting up the plan
 pln.numOfFractions        = 30;
@@ -35,12 +37,14 @@ cst{2,6}.dose = .5; % 0.0167 each fraction
 pln.propOpt.bioOptimization = 'none';
 
 % reading the isocenter
-slab_loc = pln.propStf.isoCenter; 
+isoCenter = pln.propStf.isoCenter; 
 
+isoCenter(1) = floor(isoCenter(1)/ct.resolution.y);
+isoCenter(2) = floor(isoCenter(2)/ct.resolution.x);
+isoCenter(3) = floor(isoCenter(3)/ct.resolution.z);
 % turning it into voxels and aligning it
-slab_loc(1) = floor(slab_loc(1)/ct.resolution.y) + alignment(1);
-slab_loc(2) = floor(slab_loc(2)/ct.resolution.x) + alignment(2);
-slab_loc(3) = floor(slab_loc(3)/ct.resolution.z) + alignment(3);
+
+slab_loc = isoCenter + alignment;
 
 % book keeping the slab location
 vars.slab_loc = slab_loc;
@@ -49,7 +53,15 @@ mask = slabGeometry(vars, ct.cubeDim);
 
 % assigning electron density to the slab
 ct.cube{1}(mask == 1) = vars.slab_sp;
+ct.cube{1}(mask_zeros == 1) = 0;
 ct = matRad_electronDensitiesToHU(ct);
+
+mask2 = zeros(ct.cubeDim);
+mask2(isoCenter(1)-79:isoCenter(1)+80, ...
+     isoCenter(2)-14:isoCenter(2)+14, ...
+     isoCenter(3)-14:isoCenter(3)+14) = 1;
+ 
+% ct.cube{1}(mask ~= 1 & mask2 == 1) = ct.cube{1}(mask ~= 1 & mask2 == 1) + .7;
 
 stf = matRad_generateStf(ct, cst, pln);
 stf.ray.energy = vars.Energy;
