@@ -10,37 +10,36 @@ finalCubeSize = [80 28 28]; % the extraction cube for ANN
 particleEnergies = [machine.data.energy];
 peakPos = [machine.data.peakPos];
 
-particleEnergies = particleEnergies(7:28); %22 cases
+particleEnergies = particleEnergies(7:28); % 22 cases
 peakPos = peakPos(7:28); 
 
-slabSPs = 0.00324:.01:2.53061; %253 cases
+slabSPs = 0.00324:.01:2.53061; % 253 cases
 
-slabXs = 1:finalCubeSize(1)/2; % 41 cases
-slabYs = 1:finalCubeSize(2)/2; % 15 cases
+slabXs = 1:finalCubeSize(1)/2; % 41 cases (adaptive)
+slabYs = 8:finalCubeSize(2)/2; % 9 cases
 slabZs = finalCubeSize(3)/2;   % fixed value
 
 alignmentsX = -40:0; % 41 cases
 
 slab_goe_xs = 0;
-slabGeometeries = ["Rectangle", "Ellipsoid", "Pyramid", "2DPyramid"];
-numOfSamples = 10;
+% slabGeometeries = ["Rectangle", "Ellipsoid", "Pyramid", "2DPyramid"];
+slabGeometeries = ["Rectangle", "2DPyramid"];
+numOfSamples = 30;
 %% Random sample from the possible values
-boxSize = 160 * ones(1,3);
-res = 2 * ones(1,3);
-
-
 vars = struct;
 i = 1;
 tmp2 = 0;
 while (i <= numOfSamples && tmp2 < 10)
     
+    vars(i).boxSize = 160 * ones(1,3);
+    vars(i).res = 2 * ones(1,3);
     vars(i).gantryAngle = 0;
     vars(i).couchAngle = 0;
-    vars(i).geoShape = '2DPyramid';
+    vars(i).geoShape = randsample(slabGeometeries, 1);
    
     vars(i).Energy = randsample(particleEnergies, 1); % desired energy for the particle
     peakPosition = peakPos(vars(i).Energy == particleEnergies);
-    peakPosition = peakPosition/res(3);
+    peakPosition = peakPosition/vars(i).res(3);
     
 %     vars(i).geoSize = [40 14 14];
     vars(i).geoSize = zeros(1,3);
@@ -77,13 +76,13 @@ while (i <= numOfSamples && tmp2 < 10)
     
 end
 
-[ct, cst] = makeBoxphantom(boxSize, res);
+
 
 for i = 1:numOfSamples
-    [ct, cst, pln, stf, resultGUI, mask] = doseCalc(ct, cst, vars(i));
+    [ct, cst, pln, stf, resultGUI, mask] = doseCalc(vars(i));
     close
     matRadGUI
-    pause(5)
+    pause(3)
 %     filename = ['topas_ws_', num2str(i, '%.6u'), '.mat'];
 %     
 %     save(filename, 'ct', 'cst', 'pln', 'resultGUI', 'stf');

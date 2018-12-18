@@ -1,4 +1,4 @@
-function [ct, cst, pln, stf, resultGUI, mask] = doseCalc(ct, cst, vars)
+function [ct, cst, pln, stf, resultGUI, mask] = doseCalc(vars)
 % %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 % takes the vars as the variables regarding the slab and does the dose
 % calculations
@@ -10,6 +10,8 @@ function [ct, cst, pln, stf, resultGUI, mask] = doseCalc(ct, cst, vars)
 pln.radiationMode = 'protons';
 pln.machine = 'generic_TOPAS_cropped';
 
+%% ct and cst
+[ct, cst] = makeBoxphantom(vars.boxSize, vars.res);
 %%
 % setting up the plan
 pln.numOfFractions        = 30;
