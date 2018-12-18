@@ -20,7 +20,9 @@ switch vars.geoShape
             for j = -geo(2) : geo(2)
                 for k = -geo(3):geo(3)
                     ix = slab_loc + [i, j, k];
-                    mask(ix(1),ix(2),ix(3)) = 1;
+                    if(nnz(ix>0) == 3)
+                        mask(ix(1),ix(2),ix(3)) = 1;
+                    end
                 end
             end
         end
@@ -31,7 +33,7 @@ switch vars.geoShape
             for j = -geo(2):geo(2)
                 for k = -geo(3):geo(3)
                     ix = slab_loc + [i,j,k];
-                    if (sum(([i,j,k].^2) ./ (geo.^2)) <= 1)
+                    if (sum(([i,j,k].^2) ./ (geo.^2)) <= 1 && nnz(ix>0) == 3)
                         mask(ix(1),ix(2),ix(3)) = 1;
                     end                       
                 end
@@ -50,7 +52,7 @@ switch vars.geoShape
                         coef = 1;
                     end
                     
-                    if (sign(i)*i <= coef * geo(1))
+                    if (sign(i)*i <= coef * geo(1)  && nnz(ix>0) == 3 )
                         mask(ix(1),ix(2),ix(3)) = 1;
                     end                       
                 end
@@ -70,7 +72,7 @@ switch vars.geoShape
                         coef = 1;
                     end
                     
-                    if (sign(i)*i <= coef * geo(1) && sign(k)*k <= coef * geo(3))
+                    if (sign(i)*i <= coef * geo(1) && sign(k)*k <= coef * geo(3) && nnz(ix>0) == 3)
                         mask(ix(1),ix(2),ix(3)) = 1;
                     end                       
                 end
