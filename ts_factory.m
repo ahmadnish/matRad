@@ -76,16 +76,35 @@ while (i <= numOfSamples && tmp2 < 10)
     
 end
 
+save(['vars_', num2str(taskNumber, '%.2u'), '.mat'], 'vars');
 
-
+auto = 0;
 for i = 1:numOfSamples
     [ct, cst, pln, stf, resultGUI, mask] = doseCalc(vars(i));
     close
     matRadGUI
-    pause(3)
-%     filename = ['topas_ws_', num2str(i, '%.6u'), '.mat'];
-%     
-%     save(filename, 'ct', 'cst', 'pln', 'resultGUI', 'stf');
+%     if(auto == 0)
+%         s = input('press a key to continue:', 's');
+%         if( s == 'a')
+%             auto = 1;
+%         end
+%     else
+%         pause(3)
+%     end
+    pause(1)
+    
+    filename1 = ['topas_', num2str(taskNumber, '%.2u'),'_', num2str(i, '%.6u'), '.mat'];
+    filename2 = ['aux_', num2str(taskNumber, '%.2u'),'_', num2str(i, '%.6u'), '.mat'];
+    v = vars(i);
+    save(filename2, 'ct', 'cst', 'pln', 'resultGUI', 'stf', 'v');
+    
+    tmp = resultGUI;
+    clear resultGUI
+    resultGUI.w = tmp.w;
+    clear tmp
+    ct = rmfield(ct, 'cubeHU');
+    
+    save(filename1, 'ct', 'pln', 'resultGUI', 'stf');
 end
 
 toc
