@@ -87,12 +87,12 @@ cst{ixOAR,4}{1} = find(cubeHelper);
 cubeHelper = zeros(ct.cubeDim);
 
       
-xLowPTV  = round(xDim/2 - xDim/8);
-xHighPTV = round(xDim/2 + xDim/8);
-yLowPTV  = round(yDim/2 - yDim/8);
-yHighPTV = round(yDim/2 + yDim/8);
-zLowPTV  = round(zDim/2 - zDim/8);
-zHighPTV = round(zDim/2 + zDim/8);
+xLowPTV  = round(xDim/2 - xDim/5);
+xHighPTV = round(xDim/2 + xDim/5);
+yLowPTV  = round(yDim/2 - yDim/5);
+yHighPTV = round(yDim/2 + yDim/5);
+zLowPTV  = round(zDim/2 - zDim/5);
+zHighPTV = round(zDim/2 + zDim/5);
 
 cubeHelper = zeros(ct.cubeDim);
 
