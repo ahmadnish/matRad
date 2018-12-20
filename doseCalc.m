@@ -11,7 +11,7 @@ pln.radiationMode = 'protons';
 pln.machine = 'generic_TOPAS_cropped';
 
 %% ct and cst
-[ct, cst] = makeBoxphantom(vars.boxSize, vars.res);
+[ct, cst] = makeBoxphantom(vars.boxSize, vars.res, vars.tissue_sp);
 mask_zeros = zeros(ct.cubeDim);
 mask_zeros(ct.cube{1} == 0) = 1;
 %%

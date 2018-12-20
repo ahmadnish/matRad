@@ -1,4 +1,4 @@
-function [ct, cst] = makeBoxphantom(boxSize, res)
+function [ct, cst] = makeBoxphantom(boxSize, res, tissue_sp)
 
 ct.cubeDim      = boxSize;
 
@@ -111,6 +111,6 @@ cst{ixPTV,4}{1} = find(cubeHelper);
 vIxOAR = cst{ixOAR,4}{1};
 vIxPTV = cst{ixPTV,4}{1};
 
-ct.cube{1}(vIxOAR) = 1;
-ct.cube{1}(vIxPTV) = 1;
+ct.cube{1}(vIxOAR) = tissue_sp;
+ct.cube{1}(vIxPTV) = tissue_sp;
 end
