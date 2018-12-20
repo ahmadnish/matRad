@@ -3,6 +3,7 @@
 % %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 clc,clear ,tic
 %% Write down all the possible values for the parameters
+taskNumber = 1;
 load protons_generic_TOPAS_cropped.mat
 
 finalCubeSize = [80 28 28]; % the extraction cube for ANN
@@ -10,21 +11,19 @@ finalCubeSize = [80 28 28]; % the extraction cube for ANN
 particleEnergies = [machine.data.energy];
 peakPos = [machine.data.peakPos];
 
-particleEnergies = particleEnergies(7:28); % 22 cases
-peakPos = peakPos(7:28); 
+% particleEnergies = particleEnergies(7:28); % 22 cases
+% peakPos = peakPos(7:28); 
 
-slabSPs = 0.00324:.01:2.53061; % 253 cases
-
-slabXs = 1:finalCubeSize(1)/2; % 41 cases (adaptive)
-slabYs = 8:finalCubeSize(2)/2; % 9 cases
-slabZs = finalCubeSize(3)/2;   % fixed value
-
+slabSPs = 0.00324:.1:2.53061; % 26 cases
+tissueSps = .8:.1:1.2; % 5 cases
+slabXs = 0:15; % 16 cases (adaptive)
+slabYs = 8:21; % 14 cases
+slabZs = 0:8; % 9 cases
 alignmentsX = -40:0; % 41 cases
+slabGeometeries = ["Rectangle", "Ellipsoid", "Pyramid", "2DPyramid"]; % 4 cases
 
-slab_goe_xs = 0;
-% slabGeometeries = ["Rectangle", "Ellipsoid", "Pyramid", "2DPyramid"];
-slabGeometeries = ["Rectangle", "2DPyramid"];
-numOfSamples = 30;
+% slabGeometeries = ["Rectangle", "2DPyramid"];
+numOfSamples = 1;
 %% Random sample from the possible values
 vars = struct;
 i = 1;
