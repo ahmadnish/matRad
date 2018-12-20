@@ -36,19 +36,22 @@ while (i <= numOfSamples && tmp2 < 10)
     vars(i).gantryAngle = 0;
     vars(i).couchAngle = 0;
     vars(i).geoShape = randsample(slabGeometeries, 1);
-   
-    vars(i).Energy = randsample(particleEnergies, 1); % desired energy for the particle
-    peakPosition = peakPos(vars(i).Energy == particleEnergies);
-    peakPosition = peakPosition/vars(i).res(3);
-    
-%     vars(i).geoSize = [40 14 14];
-    vars(i).geoSize = zeros(1,3);
-    vars(i).geoSize(1) = randsample(slabXs(slabXs < peakPosition/2),1);
-    vars(i).geoSize(2) = randsample(slabYs,1);
-    vars(i).geoSize(3) = randsample(slabZs,1); % 
-%     
+
+%     vars(i).Energy = randsample(particleEnergies, 1); % desired energy for the particle
+    vars(i).Energy = particleEnergies(16);
+%     peakPosition = peakPos(vars(i).Energy == particleEnergies);
+%     peakPosition = peakPosition/vars(i).res(3);
+
     vars(i).alignment = [0 -15 0]; 
     vars(i).alignment(1) = randsample(alignmentsX,1);
+    
+    vars(i).alignment = [0 -15 0]; 
+    vars(i).alignment(1) = randsample(alignmentsX,1);
+    
+    vars(i).geoSize = zeros(1,3);
+    vars(i).geoSize(1) = randsample(slabXs(vars(i).alignment(1) - slabXs > -41),1);
+    vars(i).geoSize(2) = randsample(slabYs,1);
+    vars(i).geoSize(3) = randsample(slabZs(),1); 
     
     % aligns the center point in respect to the
     % isocneter which in turn will be the starting point
@@ -59,7 +62,7 @@ while (i <= numOfSamples && tmp2 < 10)
     % third dimension
     
     vars(i).slab_sp = randsample(slabSPs,1); % slab's stopping power
-    
+    vars(i).tissue_sp = randsample(tissueSps, 1); % tissue's stopping power
     
     tmp1 = 1;
     for ii = 1:i-1
