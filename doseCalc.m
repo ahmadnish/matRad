@@ -17,8 +17,8 @@ mask_zeros(ct.cube{1} == 0) = 1;
 %%
 % setting up the plan
 pln.numOfFractions        = 30;
-pln.propStf.gantryAngles  = vars.gantryAngle;
-pln.propStf.couchAngles   = vars.couchAngle;
+pln.propStf.gantryAngles  = 0;
+pln.propStf.couchAngles   = 0;
 pln.propStf.bixelWidth    = 150;
 pln.propStf.longitudinalSpotSpacing = 1500;
 pln.propStf.numOfBeams    = numel(pln.propStf.gantryAngles);
