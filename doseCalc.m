@@ -20,7 +20,7 @@ pln.numOfFractions        = 30;
 pln.propStf.gantryAngles  = vars.gantryAngle;
 pln.propStf.couchAngles   = vars.couchAngle;
 pln.propStf.bixelWidth    = 150;
-pln.propStf.longitudinalSpotSpacing = 150;
+pln.propStf.longitudinalSpotSpacing = 1500;
 pln.propStf.numOfBeams    = numel(pln.propStf.gantryAngles);
 pln.propStf.isoCenter     = ones(pln.propStf.numOfBeams,1) * matRad_getIsoCenter(cst,ct,0);
 pln.propOpt.runDAO        = 0;
@@ -56,15 +56,17 @@ ct.cube{1}(mask == 1) = vars.slab_sp;
 ct.cube{1}(mask_zeros == 1) = 0;
 ct = matRad_electronDensitiesToHU(ct);
 
-mask2 = zeros(ct.cubeDim);
-mask2(isoCenter(1)-79:isoCenter(1)+80, ...
-     isoCenter(2)-14:isoCenter(2)+14, ...
-     isoCenter(3)-14:isoCenter(3)+14) = 1;
+% mask2 = zeros(ct.cubeDim);
+% mask2(isoCenter(1)-79:isoCenter(1)+80, ...
+%      isoCenter(2)-14:isoCenter(2)+14, ...
+%      isoCenter(3)-14:isoCenter(3)+14) = 1;
  
 % ct.cube{1}(mask ~= 1 & mask2 == 1) = ct.cube{1}(mask ~= 1 & mask2 == 1) + .7;
 
-stf = matRad_generateStf(ct, cst, pln);
-stf.ray.energy = vars.Energy;
+% stf = matRad_generateStf(ct, cst, pln);
+% stf.ray.energy = vars.Energy;
+
+load stf.mat
 
 dij = matRad_calcParticleDose(ct,stf,pln,cst);
 
