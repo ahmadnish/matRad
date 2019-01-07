@@ -1,9 +1,9 @@
-% %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-% % Script for preparing training set for ANN 
-% %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-clc,clear ,tic
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Script for preparing training set for ANN 
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+clc,clear
 %% Write down all the possible values for the parameters
-taskNumber = 3;
+taskNumber = 7;
 load protons_generic_TOPAS_cropped.mat
 
 finalCubeSize = [80 28 28]; % the extraction cube for ANN
@@ -23,7 +23,7 @@ alignmentsX = -40:0; % 41 cases
 slabGeometeries = ["Rectangle", "Ellipsoid", "Pyramid", "2DPyramid"]; % 4 cases
 
 % slabGeometeries = ["Rectangle", "2DPyramid"];
-numOfSamples = 2500;
+numOfSamples = 10000;
 %% Random sample from the possible values
 vars = struct;
 i = 1;
@@ -74,15 +74,16 @@ while (i <= numOfSamples && tmp2 < 10)
     
 end
 
-save(['./nishTopas/vars_', num2str(taskNumber, '%.2u'), '.mat'], 'vars');
+save(['./nishTopas/task_07/vars_', num2str(taskNumber, '%.2u'), '.mat'], 'vars');
 
+tic
 for i = 1:numOfSamples
     disp(i)
     [ct, cst, pln, dij, stf, resultGUI, mask] = doseCalc(vars(i));
     close
     
-    filename1 = ['./nishTopas/topas_', num2str(taskNumber, '%.2u'),'_', num2str(i, '%.6u'), '.mat'];
-    filename2 = ['./nishTopas/auxiliary/aux_', num2str(taskNumber, '%.2u'),'_', num2str(i, '%.6u'), '.mat'];
+    filename1 = ['./nishTopas/task_07/topas_', num2str(taskNumber, '%.2u'),'_', num2str(i, '%.6u'), '.mat'];
+    filename2 = ['./nishTopas/task_07/auxiliary/aux_', num2str(taskNumber, '%.2u'),'_', num2str(i, '%.6u'), '.mat'];
     
     Vars = vars(i);
     save(filename2, 'ct', 'cst', 'pln', 'dij', 'resultGUI', 'stf', 'Vars');
