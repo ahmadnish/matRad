@@ -77,14 +77,15 @@ end
 save(['./nishTopas/vars_', num2str(taskNumber, '%.2u'), '.mat'], 'vars');
 
 for i = 1:numOfSamples
-    [ct, cst, pln, stf, resultGUI, mask] = doseCalc(vars(i));
+    disp(i)
+    [ct, cst, pln, dij, stf, resultGUI, mask] = doseCalc(vars(i));
     close
     
     filename1 = ['./nishTopas/topas_', num2str(taskNumber, '%.2u'),'_', num2str(i, '%.6u'), '.mat'];
     filename2 = ['./nishTopas/auxiliary/aux_', num2str(taskNumber, '%.2u'),'_', num2str(i, '%.6u'), '.mat'];
     
     Vars = vars(i);
-    save(filename2, 'ct', 'cst', 'pln', 'resultGUI', 'stf', 'Vars');
+    save(filename2, 'ct', 'cst', 'pln', 'dij', 'resultGUI', 'stf', 'Vars');
     
     tmp = resultGUI;
     clear resultGUI

@@ -1,4 +1,4 @@
-function [ct, cst, pln, stf, resultGUI, mask] = doseCalc(vars)
+function [ct, cst, pln, dij, stf, resultGUI, mask] = doseCalc(vars)
 % %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 % takes the vars as the variables regarding the slab and does the dose
 % calculations
