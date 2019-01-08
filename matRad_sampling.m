@@ -1,5 +1,4 @@
 function [caSampRes, mSampDose, pln, resultGUInomScen]  = matRad_sampling(ct,stf,cst,pln,w,structSel,multScen,param)
-% %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 % matRad_randomSampling enables sampling multiple treatment scenarios
 % 
 % call
@@ -22,8 +21,7 @@ function [caSampRes, mSampDose, pln, resultGUInomScen]  = matRad_sampling(ct,stf
 %   pln:               matRad pln struct containing sampling information
 %   resultGUInomScen:  resultGUI struct of the nominal scenario
 %
-% %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
+%
 % %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %
 % Copyright 2017 the matRad development team. 
@@ -59,13 +57,22 @@ plnNominal = pln;
 % create nominal scenario
 plnNominal.multScen = matRad_multScen(ct,'nomScen'); 
 
+% check for different ct scenarios
+ctSamp = ct;
+if ct.numOfCtScen > 1
+   matRad_dispToConsole(['Sampling for different ct scenarios is not implemented \n'],param,'warning');
+   ctSamp.numOfCtScen = 1;
+end
+
 % either use existing multScen struct or create new one
 if exist('multScen','var') && ~isempty(multScen)
     pln.multScen = multScen;
 else
     % create random scenarios for sampling
-    pln.multScen = matRad_multScen(ct,'rndScen'); % 'impSamp' or 'wcSamp'
+    pln.multScen = matRad_multScen(ctSamp,'rndScen'); % 'impSamp' or 'wcSamp'
 end
+
+
 
 matRad_dispToConsole(['Using ' num2str(pln.multScen.totNumScen) 'samples in total \n'],param,'info')
 
@@ -125,6 +132,10 @@ nomQi                = matRad_calcQualityIndicators(cst,pln,resultGUInomScen.(pl
 resultGUInomScen.qi  = nomQi;
 resultGUInomScen.cst = cst;
 
+% default ct scenario for sampling
+ctScenSampling = 1;
+matRad_dispToConsole(['Sampling will be performed on ct scenario: ', num2str(ctScenSampling), ' \n'],param,'info');
+
 % only show errors and disable waitbars and figures
 param.logLevel = 4;
 
@@ -151,7 +162,7 @@ if FlagParallToolBoxLicensed
       FlagParforProgressDisp = false;
    end
   
-   parfor i = 1:pln.multScen.totNumScen
+   for i = 1:pln.multScen.totNumScen
           
           % create nominal scenario
           plnSamp          = pln;
@@ -163,7 +174,7 @@ if FlagParallToolBoxLicensed
           plnSamp.multScen.isoShift            = pln.multScen.scenForProb(i,1:3);
           plnSamp.multScen.totNumShiftScen     = 1;
           plnSamp.multScen.totNumRangeScen     = 1;
-          plnSamp.multScen.numOfCtScen         = 1;
+          plnSamp.multScen.numOfCtScen         = ctScenSampling;
           plnSamp.multScen.scenMask            = 1;
           plnSamp.multScen.linearMask          = 1;
           plnSamp.multScen.scenProb            = 1;
@@ -211,7 +222,7 @@ end
           plnSamp.multScen.isoShift            = pln.multScen.scenForProb(i,1:3);
           plnSamp.multScen.totNumShiftScen     = 1;
           plnSamp.multScen.totNumRangeScen     = 1;
-          plnSamp.multScen.numOfCtScen         = 1;
+          plnSamp.multScen.numOfCtScen         = ctScenSampling;
           plnSamp.multScen.scenMask            = 1;
           plnSamp.multScen.linearMask          = 1;
           plnSamp.multScen.scenProb            = 1;

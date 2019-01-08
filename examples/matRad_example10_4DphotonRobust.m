@@ -127,7 +127,6 @@ ct.cubeHU{1}(vIxOAR) = 300; % assign HU of soft tissue
 ct.cubeHU{1}(vIxPTV) = 0;   % assign HU of water
 
 %% add motion to the phantom and artificially create a 4D CT with vector fields
-
 amplitude    = [5 0 0]; % [voxels]
 numOfCtScen  = 10;
 motionPeriod = 5; % [s] 
@@ -198,6 +197,11 @@ pln.propStf.isoCenter     = ones(pln.propStf.numOfBeams,1) * matRad_getIsoCenter
 pln.propOpt.runDAO        = 0;
 pln.propOpt.runSequencing = 0;
 
+% dose calculation settings
+pln.propDoseCalc.doseGrid.resolution.x = 5; % [mm]
+pln.propDoseCalc.doseGrid.resolution.y = 5; % [mm]
+pln.propDoseCalc.doseGrid.resolution.z = 5; % [mm]
+
 % retrieve bio model parameters
 pln.bioParam = matRad_bioModel(pln.radiationMode,quantityOpt,modelName);
 
@@ -222,12 +226,16 @@ resultGUI = matRad_fluenceOptimization(dij,cst,pln,param);
 cst{ixPTV,6}.robustness  = 'COWC';
 cst{ixOAR,6}.robustness  = 'COWC';
 
-% Create for each VOI a second objective and use 
-% voxel wise worst case optimization VWWC.
-% cst{ixPTV,6}(2,1) = cst{ixPTV,6}(1);
-% cst{ixOAR,6}(2,1) = cst{ixOAR,6}(1);
-% cst{ixPTV,6}(2,1).robustness  = 'VWWC';
-% cst{ixOAR,6}(2,1).robustness  = 'VWWC';
+% voxel wise worst case 'VWWC' does not work for 4D robust optimization
+
+% parameters for probabilistic optimization
+%cst{ixPTV,6}.robustness  = 'PROB';
+%cst{ixOAR,6}.robustness  = 'PROB';
+%pln.multScen.scenProb = (1/ct.numOfCtScen) * ones(ct.numOfCtScen,1);  % assign probabilities to 4D scenarios
+
+% % parameters for objective wise worst case
+%cst{ixPTV,6}.robustness  = 'OWC';
+%cst{ixOAR,6}.robustness  = 'OWC';
 
 resultGUIrobust = matRad_fluenceOptimization(dij,cst,pln,param);
 
@@ -235,8 +243,10 @@ resultGUIrobust = matRad_fluenceOptimization(dij,cst,pln,param);
 resultGUI = matRad_appendResultGUI(resultGUI,resultGUIrobust,0,'robust');
 
 %% calc 4D dose
-% make sure that the correct pln, dij and stf are loeaded in the workspace
-[resultGUIrobust4D, timeSequence] = matRad_calc4dDose(ct, pln, dij, stf, cst, resultGUIrobust); 
+totalPhaseMatrix = ones(dij.totalNumOfBixels,ct.numOfCtScen)/ct.numOfCtScen;  % the total phase matrix determines a mapping what fluence will be delivered in the which phase
+totalPhaseMatrix = bsxfun(@times,totalPhaseMatrix,resultGUIrobust.w);         % equally distribute the fluence over all fluences
+
+[resultGUIrobust4D, timeSequence] = matRad_calc4dDose(ct, pln, dij, stf, cst, resultGUIrobust,totalPhaseMatrix); 
 
 %% Visualize results
 if param.logLevel == 1
@@ -252,8 +262,13 @@ if param.logLevel == 1
    subplot(121),matRad_plotSliceWrapper(gca,ct,cst,1,resultGUIrobust.([quantityOpt '_' 'beam1']),plane,slice,[],[],colorcube,[],[0 maxDose],doseIsoLevels);title('robust plan - beam1')
    subplot(122),matRad_plotSliceWrapper(gca,ct,cst,1,resultGUIrobust.([quantityOpt]),plane,slice,[],[],colorcube,[],[0 maxDose],doseIsoLevels);title('robust plan')
    
+   
+   figure
+   subplot(131),matRad_plotSliceWrapper(gca,ct,cst,1,resultGUIrobust4D.([quantityOpt]),plane,slice,[],[],colorcube,[],[0 maxDose],doseIsoLevels);title('robust plan')
+   subplot(132),matRad_plotSliceWrapper(gca,ct,cst,1,resultGUIrobust4D.('accPhysicalDose'),plane,slice,[],[],colorcube,[],[0 maxDose],doseIsoLevels);title('robust plan dose accumulation')
+
    % create an interactive plot to slide through individual scnearios
-   f       = figure;title('individual scenarios');
+   f       = figure; title('individual scenarios');
    numScen = 1;
    maxDose       = max(max(resultGUIrobust.([quantityOpt '_' num2str(round(numScen))])(:,:,slice)))+0.2;
    doseIsoLevels = linspace(0.1 * maxDose,maxDose,10);
@@ -267,7 +282,10 @@ if param.logLevel == 1
    
    %% Perform sampling
    % select structures to include in sampling; leave empty to sample dose for all structures
+   
+   % sampling does not know on which scenario sampling should be performed
    structSel = {}; % structSel = {'PTV','OAR1'};
+   param.logLevel = 2;
    [caSamp, mSampDose, plnSamp, resultGUInomScen]          = matRad_sampling(ct,stf,cst,pln,resultGUI.w,structSel,[],[]);
    [cstStat, resultGUISamp, param]                         = matRad_samplingAnalysis(ct,cst,plnSamp,caSamp, mSampDose, resultGUInomScen,[]);
    

@@ -1,5 +1,4 @@
 function matRad_unitTestTextManipulation(filename, string1, string2, path)
-% %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 % matRad function for manipulating certain parameters in matRad pipeline
 % so that it would be less computational expensive when it's being 
 % used in continuous integration builds.
@@ -8,7 +7,7 @@ function matRad_unitTestTextManipulation(filename, string1, string2, path)
 %   matRad_unitTestTextManipulation(filename, string1, string2, path)
 %
 % input
-%     filename: file to be manipulated
+%     filename: file(s) to be manipulated, pass multiple files as cell array
 %     string1: string to be changed
 %     string2: string to be replaced
 %     path: (optional) path where the function is located. default is the
@@ -16,11 +15,8 @@ function matRad_unitTestTextManipulation(filename, string1, string2, path)
 %
 %
 % References
-%   
+%   -   
 %
-% %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-
 % %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %
 % Copyright 2018 the matRad development team. 
@@ -38,26 +34,34 @@ if nargin < 4
     path = '../';
 end
 
-fid=fopen(filename);
-fo=fopen('tempFile.m','w');
-tline = fgetl(fid);
+if ~iscell(filename)
+    filename = {filename};
+end
 
-while ischar(tline)
+for fIx = 1:numel(filename)
     
-    if strfind(tline, string1)
-        fprintf(fo, '%s\n', string2);
-    else
-        fprintf(fo, '%s\n', tline);
-    end
+    currFilename = filename{fIx};
+    
+    fid=fopen([path currFilename]);
+    fo=fopen('tempFile.m','w');
     tline = fgetl(fid);
+    
+    while ischar(tline)
+        
+        if strfind(tline, string1)
+            fprintf(fo, '%s\n', string2);
+        else
+            fprintf(fo, '%s\n', tline);
+        end
+        tline = fgetl(fid);
+    end
+    
+    
+    fclose(fid);
+    fclose(fo);
+    
+    
+    movefile('tempFile.m', [path currFilename], 'f');
 end
-
-
-fclose(fid);
-fclose(fo);
-
-
-movefile('tempFile.m', [path filename], 'f');
 end
-
 

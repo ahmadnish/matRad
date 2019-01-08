@@ -1,5 +1,4 @@
 function varargout = matRadGUI(varargin)
-% %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 % matRad GUI
 %
 % call
@@ -22,8 +21,7 @@ function varargout = matRadGUI(varargin)
 %      instance to run (singleton)".
 %
 % See also: GUIDE, GUIDATA, GUIHANDLES
-% %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
+%
 % %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %
 % Copyright 2015 the matRad development team. 
@@ -938,7 +936,24 @@ if ~isempty(ct) && get(handles.popupTypeOfPlot,'Value')==1
     end
 
     if get(handles.radiobtnCT,'Value')
-        [AxesHandlesCT_Dose(end+1),~,handles.dispWindow{ctIx,1}] = matRad_plotCtSlice(handles.axesFig,plotCtCube,1,plane,slice,ctMap,handles.dispWindow{ctIx,1});
+
+       % retrieve number of dose cube and check if a corresponding CT is available
+       num = regexp(handles.SelectedDisplayOption, '\d+', 'match');
+
+       if isempty(num)
+          ctScenNum = 1;
+       else
+          ctScenNum = str2num(num{1});
+          if ~isnumeric(ctScenNum)
+             ctScenNum = 1;
+          end
+          % check if there is a ct scneario available
+          if ct.numOfCtScen < ctScenNum
+             ctScenNum = 1;
+          end
+       end
+       
+       [AxesHandlesCT_Dose(end+1),~,handles.dispWindow{ctIx,1}] = matRad_plotCtSlice(handles.axesFig,plotCtCube,ctScenNum,plane,slice,ctMap,handles.dispWindow{ctIx,1});
         
         % plot colorbar? If 1 the user asked for the CT
         if plotColorbarSelection == 2 && handles.cBarChanged
@@ -1022,7 +1037,7 @@ set(handles.txtMaxVal,'String',num2str(handles.dispWindow{selectIx,2}(1,2)));
 
 %% plot VOIs
 if get(handles.radiobtnContour,'Value') && get(handles.popupTypeOfPlot,'Value')==1 && handles.State>0
-    AxesHandlesVOI = [AxesHandlesVOI matRad_plotVoiContourSlice(handles.axesFig,cst,ct,1,handles.VOIPlotFlag,plane,slice,[],'LineWidth',2)];
+    AxesHandlesVOI = [AxesHandlesVOI matRad_plotVoiContourSlice(handles.axesFig,cst,ct,ctScenNum,handles.VOIPlotFlag,plane,slice,[],'LineWidth',2)];
 end
 
 %% Set axis labels and plot iso center
@@ -1371,8 +1386,15 @@ set(axesFig3D,'DataAspectRatio',ratios./max(ratios));
 
 set(axesFig3D,'Ydir','reverse');
 
-upperLimits = double(ct.cubeDim).*[ct.resolution.x ct.resolution.y ct.resolution.z];
-set(axesFig3D,'xlim',[1 upperLimits(2)],'ylim',[1 upperLimits(1)],'zlim',[1 upperLimits(3)]);
+% to guarantee downwards compatibility with data that does not have
+% ct.x/y/z
+if ~any(isfield(ct,{'x','y','z'}))
+    ct.x = ct.resolution.x*[0:ct.cubeDim(1)-1]-ct.resolution.x/2;
+    ct.y = ct.resolution.y*[0:ct.cubeDim(2)-1]-ct.resolution.y/2;
+    ct.z = ct.resolution.z*[0:ct.cubeDim(3)-1]-ct.resolution.z/2;
+end
+
+set(axesFig3D,'xlim',ct.x([1 end]),'ylim',ct.y([1 end]),'zlim',ct.z([1 end]));
 
 set(axesFig3D,'view',oldView);
 

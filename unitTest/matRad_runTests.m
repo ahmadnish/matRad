@@ -1,4 +1,17 @@
 %% This file runs the complete matRad test suite.
+%
+% %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%
+% Copyright 2017 the matRad development team. 
+% 
+% This file is part of the matRad project. It is subject to the license 
+% terms in the LICENSE file found in the top-level directory of this 
+% distribution and at https://github.com/e0404/matRad/LICENSES.txt. No part 
+% of the matRad project, including this file, may be copied, modified, 
+% propagated, or distributed except according to the terms contained in the 
+% LICENSE file.
+%
+% %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 %% Set path
 run(['..' filesep 'matRad_rc'])
@@ -9,6 +22,19 @@ run(['..' filesep 'matRad_rc'])
 matRad_unitTestTextManipulation('matRad_calcPhotonDose.m', 'lateralCutoff = 50', 'lateralCutoff = 20;')
 matRad_unitTestTextManipulation('matRad_calcParticleDose.m', 'cutOffLevel          = 0.99', '       cutOffLevel          = 0.8;')
 matRad_unitTestTextManipulation('matRad_ipoptOptions.m', 'options.ipopt.max_iter', 'options.ipopt.max_iter = 10;', '../optimization/')
+
+exampleScripts = {'matRad_example1_phantom.m',...
+    'matRad_example2_photons.m',...
+    'matRad_example3_photonsDAO.m',...
+    'matRad_example5_protons.m',...
+    'matRad_example6_protonsNoise.m',...
+    'matRad_example7_carbon.m'};
+
+unitTestBixelWidth = 20;
+
+matRad_unitTestTextManipulation(exampleScripts,'pln.propStf.bixelWidth',['pln.propStf.bixelWidth = ' num2str(unitTestBixelWidth)], '../examples/');
+matRad_unitTestTextManipulation(exampleScripts,'display(','%%%%%%%%%%%%%%% REMOVED DISPLAY FOR UNIT TESTING %%%%%%%%%%%%%%', '../examples/');
+matRad_unitTestTextManipulation('matRad.m','pln.propStf.bixelWidth',['pln.propStf.bixelWidth = ' num2str(unitTestBixelWidth)], '../');
 
 % supressing the inherent Ocatave warnings for division by zero
 if strcmp(matRad_getEnvironment,'OCTAVE')
@@ -29,7 +55,5 @@ disp('Unit test run example 6');
 matRad_example6_protonsNoise
 disp('Unit test run example 7');
 matRad_example7_carbon
-disp('Unit test run example 8');
-matRad_example8_protonsRobust
 disp('Unit test run matRad script');
 matRad

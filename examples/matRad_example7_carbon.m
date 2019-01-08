@@ -81,7 +81,7 @@ stf = matRad_generateStf(ct,cst,pln,param);
 %%
 % Let's have a closer look on the stf.ray sub-structure which contains the 
 % actual  beam/ray geometry information. For illustration purposes we want 
-% to show ray # 100. Besides geometrical  information about the position 
+% to show the last ray. Besides geometrical  information about the position 
 % and orientation of the ray, we can also find pencil beam information. If 
 % the ray coincides with the target, pencil beams were defined along the 
 % ray from target entry to target exit. 
@@ -147,17 +147,17 @@ resultGUI_tissue = matRad_calcDoseDirect(ct,stf,pln,cst,resultGUI.w,param);
 if param.logLevel == 1
     plane = 3;
     doseWindow = [0 max([resultGUI_effect.RBExD(:); resultGUI_tissue.RBExD(:)])];
-
-    figure,title('original plan')
-    matRad_plotSliceWrapper(gca,ct,cst,1,resultGUI_effect.RBExD,plane,slice,[],[],colorcube,[],doseWindow,[]);
-    figure,title('manipulated plan')
-    matRad_plotSliceWrapper(gca,ct,cst,1,resultGUI_tissue.RBExD,plane,slice,[],[],colorcube,[],doseWindow,[]);
+    figure,
+    matRad_plotSliceWrapper(gca,ct,cst,1,resultGUI_effect.RBExD,plane,slice,[],[],colorcube,[],doseWindow,[]);title('original plan')
+    figure,
+    matRad_plotSliceWrapper(gca,ct,cst,1,resultGUI_tissue.RBExD,plane,slice,[],[],colorcube,[],doseWindow,[]);title('manipulated plan')
 end
 %% 
 % At this point we would like to see the absolute difference of the original optimization and the 
 % recalculation. 
 if param.logLevel == 1
     absDiffCube = resultGUI_effect.RBExD-resultGUI_tissue.RBExD;
-    figure,title('absolute difference')
-    matRad_plotSliceWrapper(gca,ct,cst,1,absDiffCube,plane,slice,[],[],colorcube);
+    figure,
+    matRad_plotSliceWrapper(gca,ct,cst,1,absDiffCube,plane,slice,[],[],colorcube);title('absolute difference')
 end
+

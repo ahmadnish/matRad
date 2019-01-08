@@ -1,5 +1,4 @@
 classdef matRad_multScen 
-% %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %  matRad_multScen 
 %  This class creates all required biological model parameters according to
 % a given radiation modatlity and a given bio model identifier string. 
@@ -21,8 +20,6 @@ classdef matRad_multScen
 %   bioParam:           matRad's bioParam structure containing information
 %                       about the choosen biological model
 %
-% %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
 % %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %
 % Copyright 2017 the matRad development team. 
@@ -126,7 +123,7 @@ classdef matRad_multScen
                              
         % 'wcScen'  default parameters for  worst case scenarios
         numOfShiftScen_wcScen             = [2 2 2];                       % number of shifts in x y and z direction
-        shiftSize_wcScen                  = [3 3 3];                       % given in [mm]
+        shiftSize_wcScen                  = [4 4 4];                       % given in [mm]
         shiftGenType_wcScen               = 'equidistant';                 % equidistant: equidistant shifts
         shiftCombType_wcScen              = 'individual';                  % individual:  no combination of shift scenarios
         numOfRangeShiftScen_wcScen        = 2;                             % number of absolute and/or relative range scnearios.
