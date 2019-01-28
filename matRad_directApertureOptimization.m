@@ -1,5 +1,4 @@
 function [optResult,info] = matRad_directApertureOptimization(dij,cst,apertureInfo,optResult,pln)
-% %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 % matRad function to run direct aperture optimization
 %
 % call
@@ -24,9 +23,7 @@ function [optResult,info] = matRad_directApertureOptimization(dij,cst,apertureIn
 % References
 %   [1] http://dx.doi.org/10.1118/1.4914863
 %
-% %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-% %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %
 % Copyright 2015 the matRad development team. 
 % 
@@ -66,12 +63,12 @@ end
 % initialize global variables for optimizer
 global matRad_global_x;
 global matRad_global_d;
-global matRad_STRG_C_Pressed;
+global matRad_Q_Pressed;
 global matRad_objective_function_value;
 
 matRad_global_x                 = NaN * ones(dij.totalNumOfBixels,1); % works with bixel weights even though we do dao!
-matRad_global_d                 = NaN * ones(dij.numOfVoxels,1);
-matRad_STRG_C_Pressed           = false;
+matRad_global_d                 = NaN * ones(dij.doseGrid.numOfVoxels,1);
+matRad_Q_Pressed                = false;
 matRad_objective_function_value = [];
 
 % adjust overlap priorities
@@ -83,6 +80,10 @@ for i = 1:size(cst,1)
        cst{i,6}(j).dose = cst{i,6}(j).dose/pln.numOfFractions;
     end
 end
+
+% resizing cst to dose cube resolution 
+cst = matRad_resizeCstToGrid(cst,dij.ctGrid.x,dij.ctGrid.y,dij.ctGrid.z,...
+                                 dij.doseGrid.x,dij.doseGrid.y,dij.doseGrid.z);
 
 % update aperture info vector
 apertureInfo = matRad_daoVec2ApertureInfo(apertureInfo,apertureInfo.apertureVector);
@@ -109,6 +110,10 @@ funcs.jacobian          = @(x) matRad_daoJacobFunc(x,apertureInfo,dij,cst,option
 funcs.jacobianstructure = @( ) matRad_daoGetJacobStruct(apertureInfo,dij,cst);
 funcs.iterfunc          = @(iter,objective,paramter) matRad_IpoptIterFunc(iter,objective,paramter,options.ipopt.max_iter);
 
+% Informing user to press q to terminate optimization
+fprintf('\nOptimzation initiating...\n');
+fprintf('Press q to terminate the optimization...\n');
+
 % Run IPOPT.
 [optApertureInfoVec, info] = ipopt(apertureInfo.apertureVector,funcs,options);
 
@@ -120,17 +125,19 @@ end
 % clear global variables after optimization
 switch env
     case 'MATLAB'
-        clearvars -global matRad_global_x matRad_global_d;
+        clearvars -global matRad_global_x matRad_global_d matRad_Q_Pressed matRad_objective_function_value;
     case 'OCTAVE' 
-        clear -global matRad_global_x matRad_global_d;
+        clear -global matRad_global_x matRad_global_d matRad_Q_Pressed matRad_objective_function_value;
 end
 
 % update the apertureInfoStruct and calculate bixel weights
-optResult.apertureInfo = matRad_daoVec2ApertureInfo(apertureInfo,optApertureInfoVec);
+apertureInfo = matRad_daoVec2ApertureInfo(apertureInfo,optApertureInfoVec);
 
-% override also bixel weight vector in optResult struct
-optResult.w    = optResult.apertureInfo.bixelWeights;
-optResult.wDao = optResult.apertureInfo.bixelWeights;
+% logging final results
+fprintf('Calculating final cubes...\n');
+resultGUI = matRad_calcCubes(apertureInfo.bixelWeights,dij,cst);
 
-% calc dose and reshape from 1D vector to 3D array
-optResult.physicalDose = reshape(dij.physicalDose{1}*optResult.w,dij.dimensions);
+resultGUI.w    = apertureInfo.bixelWeights;
+resultGUI.wDAO = apertureInfo.bixelWeights;
+resultGUI.apertureInfo = apertureInfo;
+

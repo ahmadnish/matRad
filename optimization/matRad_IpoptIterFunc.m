@@ -1,5 +1,4 @@
 function flag = matRad_IpoptIterFunc(iter,objective,~,~)
-% %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 % matRad IPOPT callback: iter function
 % 
 % call
@@ -19,8 +18,6 @@ function flag = matRad_IpoptIterFunc(iter,objective,~,~)
 %   -
 %
 % %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-% %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %
 % Copyright 2015 the matRad development team. 
 % 
@@ -33,14 +30,14 @@ function flag = matRad_IpoptIterFunc(iter,objective,~,~)
 %
 % %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-global matRad_STRG_C_Pressed
+global matRad_Q_Pressed
 global matRad_objective_function_value;
 
 % update global objective function value
 matRad_objective_function_value(iter+1) = objective;
 
-% check if user pressed ctrl-c
-if matRad_STRG_C_Pressed
+% check if user pressed q
+if matRad_Q_Pressed
     flag = false;
 else
     flag = true;
