@@ -1,0 +1,19 @@
+Report for the progress of coverage tests:
+.
+.
+So far I tried different methods to do coverage tests
+the most viable solution might be MOcov which is under MOunitTest
+but still wasn't able to implement it 
+    So I add mocov(blabla) in matRad_runTests, instead of example1
+    but it gives an error regarding the some max_recursive limit
+    this is how I used it
+    mocov('-cover', '~/matRad/', '-expression', 'matRad_example1_photon',...
+            '-cover_json_file','coverage.json',...
+            '-cover_xml_file','coverage.xml',...
+            '-cover_html_dir','coverage_html',
+            '-method','file');
+
+Mark and I discussed it and we agreed on discussing it with Niklas and the others
+
+
+==> I should continue working on implementing the the whole MOunit test and use their .travis.yml
