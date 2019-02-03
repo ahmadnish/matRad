@@ -12,7 +12,7 @@ while true
         taskNumber = taskNumber + 1;
         foldername = ['.\nishTopas\task_', num2str(taskNumber, '%.2u')]
     else
-        if override
+        if 7 == exist(foldername, 'dir') && override
             taskNumber = taskNumber - 1;
             foldername = ['.\nishTopas\task_', num2str(taskNumber, '%.2u')]
             status = rmdir(foldername, 's')
