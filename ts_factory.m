@@ -5,17 +5,24 @@ clc,clear
 addpath(genpath(pwd))
 %% Write down all the possible values for the parameters
 taskNumber = 8;
-foldername = ['nishTopas\task_', num2str(taskNumber, '%.2u')]
-
+foldername = ['.\nishTopas\task_', num2str(taskNumber, '%.2u')];
+override = false
 while true
     if 7 == exist(foldername, 'dir')
         taskNumber = taskNumber + 1;
-        foldername = ['nishTopas\task_', num2str(taskNumber, '%.2u')]
+        foldername = ['.\nishTopas\task_', num2str(taskNumber, '%.2u')]
     else
+        if override
+            taskNumber = taskNumber - 1;
+            foldername = ['.\nishTopas\task_', num2str(taskNumber, '%.2u')]
+            status = rmdir(foldername, 's')
+        end
+        status = mkdir(foldername)
+        foldername = ['.\nishTopas\task_', num2str(taskNumber, '%.2u'),'\auxiliary']
+        status = mkdir(foldername)
         break
     end
 end
-
     
 load protons_generic_TOPAS_cropped.mat
 
