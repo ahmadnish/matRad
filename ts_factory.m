@@ -2,8 +2,21 @@
 % Script for preparing training set for ANN 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 clc,clear
+addpath(genpath(pwd))
 %% Write down all the possible values for the parameters
-taskNumber = 7;
+taskNumber = 8;
+foldername = ['nishTopas\task_', num2str(taskNumber, '%.2u')]
+
+while true
+    if 7 == exist(foldername, 'dir')
+        taskNumber = taskNumber + 1;
+        foldername = ['nishTopas\task_', num2str(taskNumber, '%.2u')]
+    else
+        break
+    end
+end
+
+    
 load protons_generic_TOPAS_cropped.mat
 
 finalCubeSize = [80 28 28]; % the extraction cube for ANN
