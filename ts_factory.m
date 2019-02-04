@@ -94,7 +94,7 @@ while (i <= numOfSamples && tmp2 < 10)
     
 end
 
-save(['./nishTopas/task_07/vars_', num2str(taskNumber, '%.2u'), '.mat'], 'vars');
+save(['./nishTopas/task_', num2str(taskNumber, '%.2u'), '/vars_', num2str(taskNumber, '%.2u'), '.mat'], 'vars');
 
 tic
 for i = 1:numOfSamples
@@ -102,8 +102,8 @@ for i = 1:numOfSamples
     [ct, cst, pln, dij, stf, resultGUI, mask] = doseCalc(vars(i));
     close
     
-    filename1 = ['./nishTopas/task_07/topas_', num2str(taskNumber, '%.2u'),'_', num2str(i, '%.6u'), '.mat'];
-    filename2 = ['./nishTopas/task_07/auxiliary/aux_', num2str(taskNumber, '%.2u'),'_', num2str(i, '%.6u'), '.mat'];
+    filename1 = ['./nishTopas/task_', num2str(taskNumber, '%.2u'), '/topas_', num2str(taskNumber, '%.2u'),'_', num2str(i, '%.6u'), '.mat'];
+    filename2 = ['./nishTopas/task_', num2str(taskNumber, '%.2u'), '/auxiliary/aux_', num2str(taskNumber, '%.2u'),'_', num2str(i, '%.6u'), '.mat'];
     
     Vars = vars(i);
     save(filename2, 'ct', 'cst', 'pln', 'dij', 'resultGUI', 'stf', 'Vars');
