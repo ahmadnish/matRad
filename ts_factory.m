@@ -4,15 +4,15 @@
 clc,clear
 addpath(genpath(pwd))
 %% Write down all the possible values for the parameters
-taskNumber = 8;
+taskNumber = 13;
 foldername = ['.\nishTopas\task_', num2str(taskNumber, '%.2u')];
-override = false
+override = true
 while true
     if 7 == exist(foldername, 'dir')
         taskNumber = taskNumber + 1;
         foldername = ['.\nishTopas\task_', num2str(taskNumber, '%.2u')]
     else
-        if 7 == exist(foldername, 'dir') && override
+        if override
             taskNumber = taskNumber - 1;
             foldername = ['.\nishTopas\task_', num2str(taskNumber, '%.2u')]
             status = rmdir(foldername, 's')
@@ -31,6 +31,7 @@ finalCubeSize = [80 28 28]; % the extraction cube for ANN
 particleEnergies = [machine.data.energy];
 peakPos = [machine.data.peakPos];
 
+% for now energy is 104 and hardcoded by loading the stf
 % particleEnergies = particleEnergies(7:28); % 22 cases
 % peakPos = peakPos(7:28); 
 
@@ -42,8 +43,16 @@ slabZs = 0:8; % 9 cases
 alignmentsX = -40:0; % 41 cases
 slabGeometeries = ["Rectangle", "Ellipsoid", "Pyramid", "2DPyramid"]; % 4 cases
 
-% slabGeometeries = ["Rectangle", "2DPyramid"];
-numOfSamples = 10000;
+% for the 1 case
+% slabSPs = 2; % 26 cases
+% tissueSps = 1; % 5 cases
+% slabXs = 3; % 16 cases (adaptive)
+% slabYs = 14; % 14 cases
+% slabZs = 3; % 9 cases
+% alignmentsX = -10; % 41 cases
+% slabGeometeries = ["Rectangle","Rectangle"]; % 4 cases
+
+numOfSamples = 5;
 %% Random sample from the possible values
 vars = struct;
 i = 1;
@@ -55,7 +64,6 @@ while (i <= numOfSamples && tmp2 < 10)
 %     vars(i).gantryAngle = 0;
 %     vars(i).couchAngle = 0;
     vars(i).geoShape = randsample(slabGeometeries, 1);
-
 %     vars(i).Energy = randsample(particleEnergies, 1); % desired energy for the particle
     vars(i).Energy = particleEnergies(16);
 %     peakPosition = peakPos(vars(i).Energy == particleEnergies);
@@ -73,11 +81,11 @@ while (i <= numOfSamples && tmp2 < 10)
         vars(i).geoSize(1) = randsample(tmp,1);
     end
     
-    vars(i).geoSize(2) = randsample(slabYs,1);
-    vars(i).geoSize(3) = randsample(slabZs(),1); 
+    vars(i).geoSize(2) = randsample(slabYs,1); % slabYs; for the 1 case
+    vars(i).geoSize(3) = randsample(slabZs,1); % slabZs; for the 1 case
     
-    vars(i).slab_sp = randsample(slabSPs,1); % slab's stopping power
-    vars(i).tissue_sp = randsample(tissueSps, 1); % tissue's stopping power
+    vars(i).slab_sp = randsample(slabSPs,1); % slab's stopping power ##  slabSPs; %for the 1 case 
+    vars(i).tissue_sp = randsample(tissueSps, 1); % tissue's stopping power ## tissueSps; %for the 1 case 
     
     tmp1 = 1;
     for ii = 1:i-1
@@ -113,7 +121,7 @@ for i = 1:numOfSamples
     resultGUI.w = tmp.w;
     clear tmp
     ct = rmfield(ct, 'cubeHU');
-    
-    save(filename1, 'ct', 'pln', 'resultGUI', 'stf');
+%     
+    save(filename1, 'ct', 'pln', 'dij', 'cst', 'resultGUI', 'stf');
 end
 toc
