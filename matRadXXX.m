@@ -15,20 +15,20 @@
 %
 % %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-clc, clear
+clc, %clear
 
 % meta information for treatment plan
-load('LungPat.mat')
+load('AlderNish.mat');
 pln.radiationMode   = 'protons';     % either photons / protons / carbon
-pln.machine         = 'Generic';
+pln.machine         = 'generic_TOPAS_cropped';
 
 pln.numOfFractions  = 30;
 
 % beam geometry settings
 pln.propStf.bixelWidth      = 1500; % [mm] / also corresponds to lateral spot spacing for particles
 pln.propStf.longitudinalSpotSpacing = 1500;
-pln.propStf.gantryAngles    = [330]; % [?]
-pln.propStf.couchAngles     = [0 0]; % [?]
+pln.propStf.gantryAngles    = [0]; % [?]
+pln.propStf.couchAngles     = zeros(size(pln.propStf.gantryAngles));% [?]
 pln.propStf.numOfBeams      = numel(pln.propStf.gantryAngles);
 pln.propStf.isoCenter       = ones(pln.propStf.numOfBeams,1) * matRad_getIsoCenter(cst,ct,0);
 
@@ -41,9 +41,13 @@ pln.propOpt.runSequencing   = false;  % 1/true: run sequencing, 0/false: don't /
 
 stf = matRad_generateStf(ct,cst,pln);
 
-%
+for i=1:size(pln.propStf.gantryAngles,2)
+    input_cube= matRad_rayTracingXXX(ct,stf(i).isoCenter,2,stf(i).gantryAngle,stf(i).couchAngle);
+end
+% 
+
 % matRad_calcParticleDoseXXX(ct,stf,pln,cst);
 
-dij = matRad_calcParticleDose(ct,stf,pln,cst);
-
-resultGUI = matRad_fluenceOptimization(dij,cst,pln);
+% dij = matRad_calcParticleDose(ct,stf,pln,cst);
+% 
+% resultGUI = matRad_fluenceOptimization(dij,cst,pln);
