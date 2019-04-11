@@ -44,9 +44,6 @@ stf = matRad_generateStf(ct,cst,pln);
 for i=1:size(pln.propStf.gantryAngles,2)
     input_cube= matRad_rayTracingXXX(ct,stf(i).isoCenter,2,stf(i).gantryAngle,stf(i).couchAngle);
 end
-% 
-
-% matRad_calcParticleDoseXXX(ct,stf,pln,cst);
 
 % dij = matRad_calcParticleDose(ct,stf,pln,cst);
 % 

@@ -1,4 +1,4 @@
-function input_cube = matRad_rayTracingXXX(ct,isoCenter,resolution,gantryAngle,couchAngle)
+function inputCube = matRad_rayTracingXXX(ct,isoCenter,resolution,gantryAngle,couchAngle)
 % %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 % matRad visualization of two-dimensional dose distributions on ct including
 % segmentation
@@ -37,10 +37,10 @@ function input_cube = matRad_rayTracingXXX(ct,isoCenter,resolution,gantryAngle,c
 % %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 SAD = 10000;
-depth = 90;
-imsize = 3;
+depth = 50;
+imsize = 15;
 
-[gridX,gridZ] = meshgrid(resolution*[-floor(imsize/2):floor(imsize/2)]);
+[gridX,gridZ] = meshgrid(2 * resolution * [-floor(imsize/2):floor(imsize/2)]);
 
 % set up ray matrix
 rayMx_bev = [gridX(:) ...
@@ -58,7 +58,9 @@ sourcePoint = [0 -SAD 0] * rotMat_vectors_T;
 
 regGridQueryPoints = 0.9*SAD:resolution:1.1*SAD;
 
-input_cube = zeros(imsize,imsize,depth);
+inputCube_padded = NaN * ones(imsize,imsize,numel(regGridQueryPoints));
+inputCube = NaN * ones(imsize,imsize,depth);
+firstNonZero = inf;
 % perform ray tracing over all rays
 % a = zeros(size(rayMx_world,1),1);
 for i = 1:size(rayMx_world,1)
@@ -74,37 +76,48 @@ alphaMid = (alpha(1:end-1)+alpha(2:end))/2;
 alphaMidPhys = [min(regGridQueryPoints) alphaMid*d12 max(regGridQueryPoints)];
 ctDensOnRegGrid = interp1(alphaMidPhys,[0 rho{1} 0],regGridQueryPoints,'pchip');
 
+firstNonZero = min(firstNonZero,find(ctDensOnRegGrid>0,1,'first'));
+
+
 mask = ctDensOnRegGrid ~= 0;
 tmp = ctDensOnRegGrid(mask);
-% a(i) = size(tmp, 2);
-tmp = tmp(1:depth);
+% % a(i) = size(tmp, 2);
+% tmp = tmp(1:depth);
 
 [cordX,cordZ] = ind2sub([imsize, imsize], i);
-cordX = imsize - cordX + 1;
+% cordX = imsize - cordX + 1;
 
-input_cube(cordX,cordZ,:) = tmp;
-% 
-% size(tmp)
+
+inputCube_padded(cordZ,cordX,:) = ctDensOnRegGrid;
+inputCube_padded(:,:,1)
+% inputCube(cordX,cordZ,:) = tmp;
+
 if 0%rem(i, 1) == 0
     figure
     hold on
-    plot(alphaMidPhys,100 * [0 rho{1} 0],'r')
-    % plot(regGridQueryPoints,ctDensOnRegGrid,'gx')
+    plot(alphaMidPhys,[0 rho{1} 0],'r')
+    plot(regGridQueryPoints,ctDensOnRegGrid,'gx')
 
-    alphaPhys = d12*alpha;
-    intRadDepths = [0 cumsum(rho{1})];
-
-    alphaPhysInt = [min(regGridQueryPoints) alphaPhys max(regGridQueryPoints)];
-    intRadDepthsInt = [0 intRadDepths intRadDepths(end)];
-
-    intRadDepthsOnRegGrid = interp1(alphaPhysInt,intRadDepthsInt,regGridQueryPoints,'pchip');
+%     alphaPhys = d12*alpha;
+%     intRadDepths = [0 cumsum(rho{1})];
+% 
+%     alphaPhysInt = [min(regGridQueryPoints) alphaPhys max(regGridQueryPoints)];
+%     intRadDepthsInt = [0 intRadDepths intRadDepths(end)];
+% 
+%     intRadDepthsOnRegGrid = interp1(alphaPhysInt,intRadDepthsInt,regGridQueryPoints,'pchip');
 
     % figure
-    hold on
-    plot(alphaPhys,intRadDepths,'gx')
+%     hold on
+%     plot(alphaPhys,intRadDepths,'gx')
     % plot(regGridQueryPoints,intRadDepthsOnRegGrid,'gx')
     title(gantryAngle)
 end
 
 end
+
+inputCube = inputCube_padded(:,:,[0:depth-1] + firstNonZero);
+
+end
+
+
 
