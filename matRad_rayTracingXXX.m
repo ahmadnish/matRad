@@ -1,4 +1,4 @@
-function inputCube = matRad_rayTracingXXX(ct,isoCenter,resolution,gantryAngle,couchAngle)
+function [inputCube, outputCube] = matRad_rayTracingXXX(ct_cube,dose_cube, ctres,isoCenter,resolution,gantryAngle,couchAngle, imsize, depth)
 % %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 % matRad visualization of two-dimensional dose distributions on ct including
 % segmentation
@@ -37,8 +37,6 @@ function inputCube = matRad_rayTracingXXX(ct,isoCenter,resolution,gantryAngle,co
 % %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 SAD = 10000;
-depth = 50;
-imsize = 15;
 
 [gridX,gridZ] = meshgrid(2 * resolution * [-floor(imsize/2):floor(imsize/2)]);
 
@@ -59,7 +57,8 @@ sourcePoint = [0 -SAD 0] * rotMat_vectors_T;
 regGridQueryPoints = 0.9*SAD:resolution:1.1*SAD;
 
 inputCube_padded = NaN * ones(imsize,imsize,numel(regGridQueryPoints));
-inputCube = NaN * ones(imsize,imsize,depth);
+outputCube_padded = NaN * ones(imsize,imsize,numel(regGridQueryPoints));
+
 firstNonZero = inf;
 % perform ray tracing over all rays
 % a = zeros(size(rayMx_world,1),1);
@@ -67,10 +66,10 @@ for i = 1:size(rayMx_world,1)
 
 % run siddon ray tracing algorithm
 [alpha,l,rho,d12,ixHitVoxel] = matRad_siddonRayTracer(isoCenter, ...
-                            ct.resolution, ...
+                            ctres, ...
                             sourcePoint, ...
                             rayMx_world(i,:), ...
-                            ct.cube);
+                            ct_cube);
                             
 alphaMid = (alpha(1:end-1)+alpha(2:end))/2;                        
 alphaMidPhys = [min(regGridQueryPoints) alphaMid*d12 max(regGridQueryPoints)];
@@ -79,9 +78,9 @@ ctDensOnRegGrid = interp1(alphaMidPhys,[0 rho{1} 0],regGridQueryPoints,'pchip');
 firstNonZero = min(firstNonZero,find(ctDensOnRegGrid>0,1,'first'));
 
 
-mask = ctDensOnRegGrid ~= 0;
-tmp = ctDensOnRegGrid(mask);
-% % a(i) = size(tmp, 2);
+% mask = ctDensOnRegGrid ~= 0;
+% tmp = ctDensOnRegGrid(mask);
+% % % a(i) = size(tmp, 2);
 % tmp = tmp(1:depth);
 
 [cordX,cordZ] = ind2sub([imsize, imsize], i);
@@ -89,15 +88,28 @@ tmp = ctDensOnRegGrid(mask);
 
 
 inputCube_padded(cordZ,cordX,:) = ctDensOnRegGrid;
-inputCube_padded(:,:,1)
 % inputCube(cordX,cordZ,:) = tmp;
 
+if ~isempty(dose_cube)
+    % run siddon ray tracing algorithm
+    [alpha,l,rho,d12,ixHitVoxel] = matRad_siddonRayTracer(isoCenter, ...
+                                ctres, ...
+                                sourcePoint, ...
+                                rayMx_world(i,:), ...
+                                dose_cube);
+
+    alphaMid = (alpha(1:end-1)+alpha(2:end))/2;                        
+    alphaMidPhys = [min(regGridQueryPoints) alphaMid*d12 max(regGridQueryPoints)];
+    doseDensOnRegGrid = interp1(alphaMidPhys,[0 rho{1} 0],regGridQueryPoints,'pchip');
+
+    outputCube_padded(cordZ,cordX,:) = doseDensOnRegGrid;
+end
 if 0%rem(i, 1) == 0
     figure
     hold on
     plot(alphaMidPhys,[0 rho{1} 0],'r')
     plot(regGridQueryPoints,ctDensOnRegGrid,'gx')
-
+    plot(regGridQueryPoints,doseDensOnRegGrid, 'bx')
 %     alphaPhys = d12*alpha;
 %     intRadDepths = [0 cumsum(rho{1})];
 % 
@@ -116,6 +128,13 @@ end
 end
 
 inputCube = inputCube_padded(:,:,[0:depth-1] + firstNonZero);
+if ~isempty(dose_cube)
+    outputCube = outputCube_padded(:,:,[0:depth-1] + firstNonZero);
+else
+    outputCube = []
+end
+
+
 
 end
 
