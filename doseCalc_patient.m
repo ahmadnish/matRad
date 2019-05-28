@@ -13,6 +13,13 @@ tmp = load('LungNish.mat');
 ct = tmp.ct;
 cst = tmp.cst;
 clear tmp
+
+% cst{7, 3} = 'TARGET';
+% cst{7, 5}.Priority = 1;
+% cst{7, 6} = cst{11, 6};
+% cst{11,6} = []
+% cst{11,3} = 'OAR'
+% cst{11, 5}.Priority = 2;
 %%
 % setting up the plan
 pln.numOfFractions        = 30;
@@ -42,5 +49,6 @@ stf.ray.energy = vars.energy;
 dij = matRad_calcParticleDose(ct,stf,pln,cst);
 
 resultGUI = matRad_fluenceOptimization(dij,cst,pln);
+
 
 end
