@@ -859,7 +859,7 @@ axes(handles.axesFig);
 % top of each other in matlab <2014
 drawnow;
 
-defaultFontSize = 8;
+defaultFontSize = 9;
 currAxes            = axis(handles.axesFig);
 AxesHandlesCT_Dose  = gobjects(0);
 AxesHandlesVOI      = cell(0);
@@ -977,10 +977,10 @@ if ~isempty(ct) && get(handles.popupTypeOfPlot,'Value')==1
             %Plot the colorbar
             handles.cBarHandel = matRad_plotColorbar(handles.axesFig,ctMap,handles.dispWindow{ctIx,1},'fontsize',defaultFontSize);
             %adjust lables
-            if isfield(ct,'cubeHU')
+            if 0%isfield(ct,'cubeHU')
                 set(get(handles.cBarHandel,'ylabel'),'String', 'Hounsfield Units','fontsize',defaultFontSize);
             else
-                set(get(handles.cBarHandel,'ylabel'),'String', 'Electron Density','fontsize',defaultFontSize);
+                set(get(handles.cBarHandel,'ylabel'),'String', 'Electron Density','fontsize',14);
             end
             % do not interprete as tex syntax
             set(get(handles.cBarHandel,'ylabel'),'interpreter','none');

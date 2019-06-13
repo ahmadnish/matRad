@@ -43,10 +43,10 @@ end
 % calculate rED or rSP from HU
 ct = matRad_calcWaterEqD(ct, pln);
 
-% initialize waitbar
-figureWait = waitbar(0,'calculate dose influence matrix for particles...');
-% prevent closure of waitbar and show busy state
-set(figureWait,'pointer','watch');
+% % initialize waitbar
+% figureWait = waitbar(0,'calculate dose influence matrix for particles...');
+% % prevent closure of waitbar and show busy state
+% set(figureWait,'pointer','watch');
 
 % meta information for dij
 dij.numOfBeams         = pln.propStf.numOfBeams;
@@ -274,9 +274,9 @@ for i = 1:length(stf) % loop over all beams
                 end
                 
                 % update waitbar only 100 times if it is not closed
-                if mod(counter,round(dij.totalNumOfBixels/100)) == 0 && ishandle(figureWait)
-                    waitbar(counter/dij.totalNumOfBixels,figureWait);
-                end
+%                 if mod(counter,round(dij.totalNumOfBixels/100)) == 0 && ishandle(figureWait)
+%                     waitbar(counter/dij.totalNumOfBixels,figureWait);
+%                 end
 
                 % remember beam and bixel number
                 if ~calcDoseDirect
@@ -429,8 +429,8 @@ end
 
 try
   % wait 0.1s for closing all waitbars
-  allWaitBarFigures = findall(0,'type','figure','tag','TMWWaitbar'); 
-  delete(allWaitBarFigures);
+%   allWaitBarFigures = findall(0,'type','figure','tag','TMWWaitbar'); 
+%   delete(allWaitBarFigures);
   pause(0.1); 
 catch
 end

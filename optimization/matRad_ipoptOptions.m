@@ -21,7 +21,7 @@
 % %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 % Output (C.1)
-options.ipopt.print_level                   = 5;
+options.ipopt.print_level                   = 0;
 options.ipopt.print_user_options            = 'no';
 options.ipopt.print_options_documentation   = 'no';
 
@@ -43,7 +43,7 @@ options.ipopt.max_cpu_time                  = 3000;
 
 % Barrier Parameter (C.6)
 options.ipopt.mu_strategy = 'adaptive';
-
+options.ipopt.file_print_level = 0;
 % Line Sarch (C.8)
 %options.ipopt.accept_every_trial_step = 'yes';
 %options.ipopt.line_search_method = 'cg-penalty';
