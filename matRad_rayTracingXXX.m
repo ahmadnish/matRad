@@ -1,4 +1,4 @@
-function [inputCube, outputCube] = matRad_rayTracingXXX(ct_cube,dose_cube, ctres,isoCenter,resolution,gantryAngle,couchAngle, imsize, depth)
+function [inputCube, outputCube, outputCube_phys] = matRad_rayTracingXXX(ct_cube,dose_cube_MC, dose_cube_phys, ctres,isoCenter,resolution,gantryAngle,couchAngle, imsize, depth)
 % %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 % matRad visualization of two-dimensional dose distributions on ct including
 % segmentation
@@ -58,6 +58,7 @@ regGridQueryPoints = 0.9*SAD:resolution:1.1*SAD;
 
 inputCube_padded = NaN * ones(imsize,imsize,numel(regGridQueryPoints));
 outputCube_padded = NaN * ones(imsize,imsize,numel(regGridQueryPoints));
+outputCubePhys_padded = NaN * ones(imsize,imsize,numel(regGridQueryPoints));
 
 firstNonZero = inf;
 % perform ray tracing over all rays
@@ -90,51 +91,60 @@ firstNonZero = min(firstNonZero,find(ctDensOnRegGrid>0,1,'first'));
 inputCube_padded(cordZ,cordX,:) = ctDensOnRegGrid;
 % inputCube(cordX,cordZ,:) = tmp;
 
-if ~isempty(dose_cube)
+if ~isempty(dose_cube_MC)
     % run siddon ray tracing algorithm
     [alpha,l,rho,d12,ixHitVoxel] = matRad_siddonRayTracer(isoCenter, ...
                                 ctres, ...
                                 sourcePoint, ...
                                 rayMx_world(i,:), ...
-                                dose_cube);
+                                dose_cube_MC);
 
     alphaMid = (alpha(1:end-1)+alpha(2:end))/2;                        
     alphaMidPhys = [min(regGridQueryPoints) alphaMid*d12 max(regGridQueryPoints)];
-    doseDensOnRegGrid = interp1(alphaMidPhys,[0 rho{1} 0],regGridQueryPoints,'pchip');
+%     smoothRho = smooth(rho{1})';
+%     smoothRho = rho{1};
+    smoothRho = sgolayfilt(rho{1}, 3, 7);
+    doseDensOnRegGrid = interp1(alphaMidPhys,[0 smoothRho 0],regGridQueryPoints,'pchip');    
+    [cordX,cordZ] = ind2sub([imsize, imsize], i);
 
     outputCube_padded(cordZ,cordX,:) = doseDensOnRegGrid;
 end
-if 0%rem(i, 1) == 0
-    figure
-    hold on
-    plot(alphaMidPhys,[0 rho{1} 0],'r')
-    plot(regGridQueryPoints,ctDensOnRegGrid,'gx')
-    plot(regGridQueryPoints,doseDensOnRegGrid, 'bx')
-%     alphaPhys = d12*alpha;
-%     intRadDepths = [0 cumsum(rho{1})];
-% 
-%     alphaPhysInt = [min(regGridQueryPoints) alphaPhys max(regGridQueryPoints)];
-%     intRadDepthsInt = [0 intRadDepths intRadDepths(end)];
-% 
-%     intRadDepthsOnRegGrid = interp1(alphaPhysInt,intRadDepthsInt,regGridQueryPoints,'pchip');
 
-    % figure
-%     hold on
-%     plot(alphaPhys,intRadDepths,'gx')
-    % plot(regGridQueryPoints,intRadDepthsOnRegGrid,'gx')
-    title(gantryAngle)
+if ~isempty(dose_cube_phys)
+    % run siddon ray tracing algorithm
+    [alpha,l,rho,d12,ixHitVoxel] = matRad_siddonRayTracer(isoCenter, ...
+                                ctres, ...
+                                sourcePoint, ...
+                                rayMx_world(i,:), ...
+                                dose_cube_MC);
+
+    alphaMid = (alpha(1:end-1)+alpha(2:end))/2;                        
+    alphaMidPhys = [min(regGridQueryPoints) alphaMid*d12 max(regGridQueryPoints)];
+    %smoothRho = smooth(rho{1})';
+    smoothRho = rho{1};
+%     smoothRho = sgolayfilt(rho{1}, 3, 7);
+    smoorhRho(smoothRho < 0) = 0;
+    doseDensOnRegGrid = interp1(alphaMidPhys,[0 smoothRho 0],regGridQueryPoints,'pchip');    
+    [cordX,cordZ] = ind2sub([imsize, imsize], i);
+
+    outputCubePhys_padded(cordZ,cordX,:) = doseDensOnRegGrid;
 end
 
 end
 
 inputCube = inputCube_padded(:,:,[0:depth-1] + firstNonZero);
-if ~isempty(dose_cube)
+
+if ~isempty(dose_cube_MC)
     outputCube = outputCube_padded(:,:,[0:depth-1] + firstNonZero);
 else
-    outputCube = []
+    outputCube = [];
 end
 
-
+if ~isempty(dose_cube_phys)
+    outputCube_phys = outputCubePhys_padded(:,:,[0:depth-1] + firstNonZero);
+else
+    outputCube_phys = [];
+end
 
 end
 

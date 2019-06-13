@@ -60,7 +60,7 @@ end
 
 %Handle the argument list
 if ~exist('thresh','var') || isempty(thresh)
-    thresh = [];
+    thresh = .01;
 end
 if ~exist('alpha','var') || isempty(alpha)
     alpha = [];

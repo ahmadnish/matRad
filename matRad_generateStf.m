@@ -113,6 +113,7 @@ eraseCtDensMask = ones(prod(ct.cubeDim),1);
 eraseCtDensMask(V) = 0;
 for i = 1:ct.numOfCtScen
     ct.cube{i}(eraseCtDensMask == 1) = 0;
+    ct.cubeHU{i}(eraseCtDensMask == 1) = -1024;
 end
 
 % Define steering file like struct. Prellocating for speed.

@@ -26,8 +26,10 @@
 % Let's begin with a clear Matlab environment and import the prostate
 % patient into your workspace
 clc,clear,close all;
-load('PROSTATE.mat');
-
+% load('HEAD_AND_NECK.mat');
+% load('PROSTATE.mat');
+% load('LungPat.mat')
+load BOXPHANTOM_2mm.mat
 %% Treatment Plan
 % The next step is to define your treatment plan labeled as 'pln'. This 
 % structure requires input from the treatment planner and defines the most 
@@ -41,7 +43,7 @@ load('PROSTATE.mat');
 % base data. matRad features generic base data in the file
 % 'proton_Generic.mat'; consequently the machine has to be set accordingly
 pln.radiationMode = 'protons';        
-pln.machine       = 'Generic';
+pln.machine       = 'generic_TOPAS_cropped.mat';
 
 %%
 % Define the flavor of biological optimization for treatment planning along
@@ -57,14 +59,15 @@ pln.propOpt.bioOptimization = 'const_RBExD';
 % for particles it is possible to also calculate the LET disutribution
 % alongside the physical dose. Therefore you need to activate the
 % corresponding option during dose calculcation
-pln.propDoseCalc.calcLET = 1;
+pln.propDoseCalc.calcLET = 0;
                                        
 %%
 % Now we have to set the remaining plan parameters.
 pln.numOfFractions        = 30;
-pln.propStf.gantryAngles  = [90 270];
-pln.propStf.couchAngles   = [0 0];
-pln.propStf.bixelWidth    = 3;
+pln.propStf.gantryAngles  = [0];
+pln.propStf.couchAngles   = [0];
+pln.propStf.bixelWidth    = 3000;
+pln.propStf.longitudinalSpotSpacing = 3000;
 pln.propStf.numOfBeams    = numel(pln.propStf.gantryAngles);
 pln.propStf.isoCenter     = ones(pln.propStf.numOfBeams,1) * matRad_getIsoCenter(cst,ct,0);
 pln.propOpt.runDAO        = 0;
@@ -72,6 +75,7 @@ pln.propOpt.runSequencing = 0;
 
 %% Generate Beam Geometry STF
 stf = matRad_generateStf(ct,cst,pln);
+stf.ray.energy = 104.2450;
 
 %% Dose Calculation
 % Lets generate dosimetric information by pre-computing dose influence 
