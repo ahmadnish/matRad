@@ -9,17 +9,26 @@ pln.radiationMode = 'protons';
 pln.machine = 'generic_TOPAS_cropped';
 
 %% ct and cst
-tmp = load('LungNish.mat');
-ct = tmp.ct;
-cst = tmp.cst;
-clear tmp
+% tmp = load('./HITS02TreatmentPlan.mat');
+% ct = tmp.ct;
+% cst = tmp.cst;
+% clear tmp
+% 
+% cst{2, 3} = 'TARGET';
+% cst{2, 5}.Priority = 1;
+% cst{2, 6} = cst{18, 6};
+% for index = 13:18
+%     cst{index,6} = [];
+%     cst{index,3} = 'OAR';
+%     cst{index,5}.Priority = 2;
+% end
+% 
+% pln.radiationMode = 'protons';
+% ct = matRad_calcWaterEqD(ct, pln)
+% save('./HITctCST.mat', 'ct', 'cst')
 
-% cst{7, 3} = 'TARGET';
-% cst{7, 5}.Priority = 1;
-% cst{7, 6} = cst{11, 6};
-% cst{11,6} = []
-% cst{11,3} = 'OAR'
-% cst{11, 5}.Priority = 2;
+load('./HITctCST.mat')
+cst{2,6}.dose = 2;
 %%
 % setting up the plan
 pln.numOfFractions        = 30;
@@ -29,7 +38,8 @@ pln.propStf.bixelWidth    = 1500;
 pln.propStf.longitudinalSpotSpacing = 1500;
 pln.propStf.numOfBeams    = numel(pln.propStf.gantryAngles);
 pln.propStf.isoCenter     = ones(pln.propStf.numOfBeams,1) * matRad_getIsoCenter(cst,ct,0);
-pln.propStf.isoCenter(3)  = pln.propStf.isoCenter(3) + vars.shift;
+% pln.propStf.isoCenter(3)     = 292.5682;
+% pln.propStf.isoCenter(3)  = pln.propStf.isoCenter(3) + vars.shift;
 pln.propOpt.runDAO        = 0;
 pln.propOpt.runSequencing = 0;
 

@@ -4,7 +4,7 @@
 clc,clear
 addpath(genpath(pwd))
 
-taskNumber = 22;
+taskNumber = 23;
 foldername = ['C:\matRad\nishTopas\task_', num2str(taskNumber, '%.2u')];
 
 % set up the folder
@@ -20,10 +20,8 @@ if exist(foldername, 'dir') ~= 7
 end
 
 fid = fopen([foldername, '\discription.txt'], 'wt' );
-discription = ['2500 samples of lung, with single energy. \n', ...
-    'I am doing this to be sure I have more data\n', ...
-    'and also to make sure I am not overfitting\n', ...
-    'I will use only 2000 of the data and keep 500 untouched'];
+discription = ['Using patient case S000002 from HIT data \n', ...
+    'to test the network -- straight angles'];
 % fprintf( fid, '%\n', discription);
 fwrite(fid, discription, 'char');cd 
 fclose(fid);
@@ -32,9 +30,9 @@ fclose(fid);
 load protons_generic_TOPAS_cropped.mat
 particleEnergies = [machine.data.energy];
 
-gantryAngles = 0:5:355;
+gantryAngles = [90 90];
 % couchAngles = 0:5:355;
-isoCenterShift = - 100 : 5 : -80
+isoCenterShift = 0;
 
 numOfSamples = 1;
 %%
@@ -45,7 +43,7 @@ while (i <= numOfSamples)
     
     vars(i).gantryAngle = randsample(gantryAngles, 1);
 %     vars(i).couchAngle = randsample(couchAngles, 1);
-    vars(i).shift = randsample(isoCenterShift, 1);
+    vars(i).shift = isoCenterShift;%randsample(isoCenterShift, 1);
     vars(i).energy = particleEnergies(16);
     
     
@@ -66,14 +64,11 @@ end
 
 save(['C:/matRad/nishTopas/task_', num2str(taskNumber, '%.2u'), '/vars_', num2str(taskNumber, '%.2u'), '.mat'], 'vars');
 %%
-load('C:/matRad/nishTopas/task_21/vars_21.mat')
 addpath(genpath(pwd))
-taskNumber = 21;
-numOfSamples = 2000;
 tic
 Ws = zeros(numOfSamples, 1);
 tmp = 0;
-for i = 795:numOfSamples
+for i = 1:numOfSamples
     
     disp(i)
     
@@ -102,10 +97,10 @@ for i = 795:numOfSamples
 
     
     % prune the input for topas, save what is necessary
-    tmp = resultGUI;
+    tt = resultGUI;
     clear resultGUI
-    resultGUI.w = tmp.w;
-    clear tmp
+    resultGUI.w = tt.w;
+    clear tt
     ct = rmfield(ct, 'cubeHU');
     disp(resultGUI.w)
     Ws(i) = resultGUI.w;
