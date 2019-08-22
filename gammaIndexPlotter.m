@@ -69,30 +69,30 @@ if plotting
     else
         
         for i = slices
-            ax = subplot(411);
-            imagesc(squeeze(ct(:,i,:))')
+            ax = subplot(141);
+            imagesc(squeeze(ct(:,i,:)))
             title('CT input (RSP)')
             colorbar()
             colormap(gca, 'gray')
             caxis(ax, [0, 2.5])
 
-            ax1 = subplot(412);
-            imagesc(squeeze(dose(:,i,:))')
+            ax1 = subplot(142);
+            imagesc(squeeze(dose(:,i,:)))
             colorbar()
             colormap(gca, 'jet')
-            title(['Monte Carlo Simulation [Gy] - Integral Dose = ', num2str(sum(dose(:)), '%.4f'), ' Gy'])
-            ax2 = subplot(413);
-            imagesc(squeeze(dose_ann(:,i,:))')
-            title(['Estimated dose by ANN [Gy] - Integral Dose = ', num2str(sum(dose_ann(:)), '%.4f'), ' Gy'])
+            title({'Monte Carlo Simulation [Gy]', ['Integral Dose = ', num2str(sum(dose(:)), '%.4f'), ' Gy']})
+            ax2 = subplot(143);
+            imagesc(squeeze(dose_ann(:,i,:)))
+            title({'Estimated dose by ANN [Gy]', ['Integral Dose = ', num2str(sum(dose_ann(:)), '%.4f'), ' Gy']})
             colorbar()
             colormap(gca, 'jet')
 
             caxis(ax1, [mIN, mAx])
             caxis(ax2, [mIN, mAx])
 
-            subplot(414)
-            imagesc(squeeze(gammaCube(:, i,:))')
-            title(['Gamma index analysis [\gamma] - Pass rate = ', num2str(pass) ' %'])
+            subplot(144)
+            imagesc(squeeze(gammaCube(:, i,:)))
+            title({'Gamma index analysis [\gamma]', ['Pass rate = ', num2str(pass) ' %']})
             caxis([0 2]), colormap(gca, matRad_getColormap('gammaIndex')), colorbar
 
             pause(1)
