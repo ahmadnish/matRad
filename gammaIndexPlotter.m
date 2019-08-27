@@ -1,13 +1,11 @@
-function [gammaCube, pass] = gammaIndexPlotter(ct, dose, dose_ann, plotting, slices, criteria)
-
-if plotting & ~exist('slices', 'var')
-    slices = floor(size(ct, 2)/2) + 1;
-end
+function [gammaCube, pass] = gammaIndexPlotter(ct, dose, dose_ann, plotting, slices, criteria, dim)
 
 
-if nargin < 5
-    criteria = [1 2];
-end
+% if ~exist('', 'var') || isempty(), = ;end
+if ~exist('plotting', 'var') || isempty(plotting), plotting = true; end
+if ~exist('slices', 'var') || isempty(slices), slices = floor(size(ct, 2)/2) + 1; end
+if ~exist('criteria', 'var') || isempty(criteria), criteria = [.5 1]; end
+if ~exist('dim', 'var') || isempty(dim), dim = true; end
 
 
 dose = dose/1000;
@@ -33,7 +31,7 @@ if plotting
     
     tmp = unique([ct(:, 1, :) ct(:,end,:)]);
     
-    if length(tmp) ~= 1
+    if length(tmp) ~= 1 && dim
     
 
         for i = slices
