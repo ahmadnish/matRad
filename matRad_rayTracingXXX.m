@@ -102,8 +102,8 @@ if ~isempty(dose_cube_MC)
     alphaMid = (alpha(1:end-1)+alpha(2:end))/2;                        
     alphaMidPhys = [min(regGridQueryPoints) alphaMid*d12 max(regGridQueryPoints)];
 %     smoothRho = smooth(rho{1})';
-%     smoothRho = rho{1};
-    smoothRho = sgolayfilt(rho{1}, 3, 7);
+    smoothRho = rho{1};
+%     smoothRho = sgolayfilt(rho{1}, 3, 7);
     doseDensOnRegGrid = interp1(alphaMidPhys,[0 smoothRho 0],regGridQueryPoints,'pchip');    
     [cordX,cordZ] = ind2sub([imsize, imsize], i);
 
