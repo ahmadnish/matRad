@@ -980,7 +980,7 @@ if ~isempty(ct) && get(handles.popupTypeOfPlot,'Value')==1
             if 0%isfield(ct,'cubeHU')
                 set(get(handles.cBarHandel,'ylabel'),'String', 'Hounsfield Units','fontsize',defaultFontSize);
             else
-                set(get(handles.cBarHandel,'ylabel'),'String', 'Electron Density','fontsize',14);
+                set(get(handles.cBarHandel,'ylabel'),'String', 'Relative Stopping Power','fontsize',14);
             end
             % do not interprete as tex syntax
             set(get(handles.cBarHandel,'ylabel'),'interpreter','none');
