@@ -23,7 +23,7 @@ if plotting
 
     
     figure
-    set(gcf, 'Units', 'Normalized', 'OuterPosition', [0, 0.3, .8, .7]);
+    set(gcf, 'Units', 'Normalized', 'OuterPosition', [0.3, 0.3, .5, .7]);
     
     combined = [dose dose_ann];
     mAx = max(combined(:));
@@ -37,31 +37,38 @@ if plotting
         for i = slices
             ax = subplot(141);
             imagesc(squeeze(ct(:,:,i)))
-            title('CT input (RSP)')
+            title('CT (RSP)')
             colorbar()
             colormap(gca, 'gray')
             caxis(ax, [0, 2.5])
-
+            set(gca, 'FontSize', 16, 'FontName', 'FixedWidth', 'FontWeight', 'bold')
+            ylabel('y [mm]')
+            xlabel('x [mm]')
             ax1 = subplot(142);
             imagesc(squeeze(dose(:,:,i)))
             colorbar()
             colormap(gca, 'jet')
-            title({'Monte Carlo Simulation [Gy]', ['Integral Dose = ', num2str(sum(dose(:)), '%.4f'), ' Gy']})
+            title({'MC [Gy]', ['ID = ', num2str(sum(dose(:)), '%.4f'), ' Gy']})
+            xlabel('x [mm]')
+            set(gca, 'FontSize', 16, 'FontName', 'FixedWidth', 'FontWeight', 'bold')
             ax2 = subplot(143);
             imagesc(squeeze(dose_ann(:,:,i)))
-            title({'Estimated dose by ANN [Gy]', ['Integral Dose = ', num2str(sum(dose_ann(:)), '%.4f'), ' Gy']})
+            title({'ANN [Gy]', ['ID = ', num2str(sum(dose_ann(:)), '%.4f'), ' Gy']})
             colorbar()
             colormap(gca, 'jet')
+            xlabel('x [mm]')
 
             caxis(ax1, [mIN, mAx])
             caxis(ax2, [mIN, mAx])
-
+            set(gca, 'FontSize', 16, 'FontName', 'FixedWidth', 'FontWeight', 'bold')
             subplot(144)
             imagesc(squeeze(gammaCube(:, :, i)))
-            title({'Gamma index analysis [\gamma]', ['Pass rate = ', num2str(pass) ' %']})
+            title({'[\gamma]', ['PR = ', num2str(pass) ' %']})
             caxis([0 2]), colormap(gca, matRad_getColormap('gammaIndex')), colorbar
-
+            xlabel('x [mm]')
+            set(gca, 'FontSize', 16, 'FontName', 'FixedWidth', 'FontWeight', 'bold')
             pause(1)
+            
         end
         
     else
@@ -69,30 +76,36 @@ if plotting
         for i = slices
             ax = subplot(141);
             imagesc(squeeze(ct(:,i,:)))
-            title('CT input (RSP)')
+            title('CT (RSP)')
             colorbar()
             colormap(gca, 'gray')
             caxis(ax, [0, 2.5])
-
+            set(gca, 'FontSize', 16, 'FontName', 'FixedWidth', 'FontWeight', 'bold')
+            ylabel('y [mm]')
+            xlabel('x [mm]')
             ax1 = subplot(142);
             imagesc(squeeze(dose(:,i,:)))
             colorbar()
             colormap(gca, 'jet')
-            title({'Monte Carlo Simulation [Gy]', ['Integral Dose = ', num2str(sum(dose(:)), '%.4f'), ' Gy']})
+            title({'MC [Gy]', ['ID = ', num2str(sum(dose(:)), '%.4f'), ' Gy']})
+            set(gca, 'FontSize', 16, 'FontName', 'FixedWidth', 'FontWeight', 'bold')
+            xlabel('x [mm]')
             ax2 = subplot(143);
             imagesc(squeeze(dose_ann(:,i,:)))
-            title({'Estimated dose by ANN [Gy]', ['Integral Dose = ', num2str(sum(dose_ann(:)), '%.4f'), ' Gy']})
+            title({'ANN [Gy]', ['ID = ', num2str(sum(dose_ann(:)), '%.4f'), ' Gy']})
             colorbar()
             colormap(gca, 'jet')
-
+            
             caxis(ax1, [mIN, mAx])
             caxis(ax2, [mIN, mAx])
-
+            set(gca, 'FontSize', 16, 'FontName', 'FixedWidth', 'FontWeight', 'bold')
+            xlabel('x [mm]')
             subplot(144)
             imagesc(squeeze(gammaCube(:, i,:)))
-            title({'Gamma index analysis [\gamma]', ['Pass rate = ', num2str(pass) ' %']})
+            title({'[\gamma]', ['PR = ', num2str(pass) ' %']})
             caxis([0 2]), colormap(gca, matRad_getColormap('gammaIndex')), colorbar
-
+            xlabel('x [mm]')
+            set(gca, 'FontSize', 16, 'FontName', 'FixedWidth', 'FontWeight', 'bold')
             pause(1)
         end
         
