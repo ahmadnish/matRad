@@ -37,6 +37,7 @@ if plotting
         for i = slices
             ax = subplot(141);
             imagesc(squeeze(ct(:,:,i)))
+            
             title('CT (RSP)')
             colorbar()
             colormap(gca, 'gray')
@@ -44,6 +45,7 @@ if plotting
             set(gca, 'FontSize', 16, 'FontName', 'FixedWidth', 'FontWeight', 'bold')
             ylabel('y [mm]')
             xlabel('x [mm]')
+            ticker(gca, 2)
             ax1 = subplot(142);
             imagesc(squeeze(dose(:,:,i)))
             colorbar()
@@ -51,6 +53,7 @@ if plotting
             title({'MC [Gy]', ['ID = ', num2str(sum(dose(:)), '%.4f'), ' Gy']})
             xlabel('x [mm]')
             set(gca, 'FontSize', 16, 'FontName', 'FixedWidth', 'FontWeight', 'bold')
+            ticker(gca, 2)
             ax2 = subplot(143);
             imagesc(squeeze(dose_ann(:,:,i)))
             title({'ANN [Gy]', ['ID = ', num2str(sum(dose_ann(:)), '%.4f'), ' Gy']})
@@ -61,12 +64,14 @@ if plotting
             caxis(ax1, [mIN, mAx])
             caxis(ax2, [mIN, mAx])
             set(gca, 'FontSize', 16, 'FontName', 'FixedWidth', 'FontWeight', 'bold')
+            ticker(gca, 2)
             subplot(144)
             imagesc(squeeze(gammaCube(:, :, i)))
             title({'[\gamma]', ['PR = ', num2str(pass) ' %']})
             caxis([0 2]), colormap(gca, matRad_getColormap('gammaIndex')), colorbar
             xlabel('x [mm]')
             set(gca, 'FontSize', 16, 'FontName', 'FixedWidth', 'FontWeight', 'bold')
+            ticker(gca, 2)
             pause(1)
             
         end
@@ -76,6 +81,7 @@ if plotting
         for i = slices
             ax = subplot(141);
             imagesc(squeeze(ct(:,i,:)))
+            ticker(gca, 2)
             title('CT (RSP)')
             colorbar()
             colormap(gca, 'gray')
@@ -83,6 +89,7 @@ if plotting
             set(gca, 'FontSize', 16, 'FontName', 'FixedWidth', 'FontWeight', 'bold')
             ylabel('y [mm]')
             xlabel('x [mm]')
+            ticker(gca, 2)
             ax1 = subplot(142);
             imagesc(squeeze(dose(:,i,:)))
             colorbar()
@@ -90,6 +97,7 @@ if plotting
             title({'MC [Gy]', ['ID = ', num2str(sum(dose(:)), '%.4f'), ' Gy']})
             set(gca, 'FontSize', 16, 'FontName', 'FixedWidth', 'FontWeight', 'bold')
             xlabel('x [mm]')
+            ticker(gca, 2)
             ax2 = subplot(143);
             imagesc(squeeze(dose_ann(:,i,:)))
             title({'ANN [Gy]', ['ID = ', num2str(sum(dose_ann(:)), '%.4f'), ' Gy']})
@@ -100,13 +108,16 @@ if plotting
             caxis(ax2, [mIN, mAx])
             set(gca, 'FontSize', 16, 'FontName', 'FixedWidth', 'FontWeight', 'bold')
             xlabel('x [mm]')
+            ticker(gca, 2)
             subplot(144)
             imagesc(squeeze(gammaCube(:, i,:)))
             title({'[\gamma]', ['PR = ', num2str(pass) ' %']})
             caxis([0 2]), colormap(gca, matRad_getColormap('gammaIndex')), colorbar
             xlabel('x [mm]')
             set(gca, 'FontSize', 16, 'FontName', 'FixedWidth', 'FontWeight', 'bold')
+            ticker(gca, 2)
             pause(1)
+            
         end
         
     end
@@ -117,3 +128,13 @@ end
 
 end
 
+function ticker(h, scaling)
+
+xticks = get(h,'xtick'); 
+newlabels = arrayfun(@(x) sprintf('%d', scaling * x), xticks, 'un', 0);
+set(h,'xticklabel',newlabels)
+yticks = get(h,'ytick');
+newlabels = arrayfun(@(x) sprintf('%d', scaling * x), yticks, 'un', 0);
+set(h,'yticklabel',newlabels)
+
+end
