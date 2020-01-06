@@ -116,14 +116,13 @@ if ~isempty(dose_cube_phys)
                                 ctres, ...
                                 sourcePoint, ...
                                 rayMx_world(i,:), ...
-                                dose_cube_MC);
+                                dose_cube_phys);
 
     alphaMid = (alpha(1:end-1)+alpha(2:end))/2;                        
     alphaMidPhys = [min(regGridQueryPoints) alphaMid*d12 max(regGridQueryPoints)];
     %smoothRho = smooth(rho{1})';
     smoothRho = rho{1};
 %     smoothRho = sgolayfilt(rho{1}, 3, 7);
-    smoorhRho(smoothRho < 0) = 0;
     doseDensOnRegGrid = interp1(alphaMidPhys,[0 smoothRho 0],regGridQueryPoints,'pchip');    
     [cordX,cordZ] = ind2sub([imsize, imsize], i);
 

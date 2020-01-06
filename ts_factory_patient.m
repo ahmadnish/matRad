@@ -4,7 +4,7 @@
 clc,clear
 addpath(genpath(pwd))
 
-taskNumber = 23;
+taskNumber = 33;
 foldername = ['C:\matRad\nishTopas\task_', num2str(taskNumber, '%.2u')];
 
 % set up the folder
@@ -20,8 +20,10 @@ if exist(foldername, 'dir') ~= 7
 end
 
 fid = fopen([foldername, '\discription.txt'], 'wt' );
-discription = ['Using patient case S000002 from HIT data \n', ...
-    'to test the network -- straight angles'];
+discription = ['Using patient case S000005 from HIT data ', ...
+    '\n to test the network -- all around angles ', ...
+    '\n Preparing ouputs for the PAPER'];
+
 % fprintf( fid, '%\n', discription);
 fwrite(fid, discription, 'char');cd 
 fclose(fid);
@@ -30,11 +32,11 @@ fclose(fid);
 load protons_generic_TOPAS_cropped.mat
 particleEnergies = [machine.data.energy];
 
-gantryAngles = [90 90];
+gantryAngles = [0:10:360];
 % couchAngles = 0:5:355;
-isoCenterShift = 0;
+isoCenterShift = -40:5:60;
 
-numOfSamples = 1;
+numOfSamples = 200;
 %%
 tmp2 = 0;
 i = 1;
@@ -43,7 +45,7 @@ while (i <= numOfSamples)
     
     vars(i).gantryAngle = randsample(gantryAngles, 1);
 %     vars(i).couchAngle = randsample(couchAngles, 1);
-    vars(i).shift = isoCenterShift;%randsample(isoCenterShift, 1);
+    vars(i).shift = randsample(isoCenterShift, 1);
     vars(i).energy = particleEnergies(16);
     
     
@@ -91,7 +93,7 @@ for i = 1:numOfSamples
 %     filename4 = ['./nishTopas/task_', num2str(taskNumber, '%.2u'), '/auxiliary/aux_', num2str(taskNumber, '%.2u'),'_', num2str(i, '%.6u'), '.png'];
     Vars = vars(i);
     
-    save(filename2, 'ct', 'cst', 'pln', 'dij', 'resultGUI', 'stf', 'Vars');
+    save(filename2, 'cst', 'dij', 'resultGUI', 'Vars');
     
 %     nishSliceWrapper(ct, cst, pln, resultGUI.physicalDose, true, filename3)
 

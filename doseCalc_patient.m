@@ -27,8 +27,13 @@ pln.machine = 'generic_TOPAS_cropped';
 % ct = matRad_calcWaterEqD(ct, pln)
 % save('./HITctCST.mat', 'ct', 'cst')
 
-load('./HITctCST.mat')
-cst{2,6}.dose = 2;
+load('C:/matRad/Paper_HITS05_2mm.mat')
+% pln.radiationMode = 'protons';
+% ct.numOfCtScen = 1;
+% ct = matRad_calcWaterEqD(ct, pln);
+% 
+% 
+% cst{2,6}.dose = 2;
 %%
 % setting up the plan
 pln.numOfFractions        = 30;
@@ -38,8 +43,8 @@ pln.propStf.bixelWidth    = 1500;
 pln.propStf.longitudinalSpotSpacing = 1500;
 pln.propStf.numOfBeams    = numel(pln.propStf.gantryAngles);
 pln.propStf.isoCenter     = ones(pln.propStf.numOfBeams,1) * matRad_getIsoCenter(cst,ct,0);
-% pln.propStf.isoCenter(3)     = 292.5682;
-% pln.propStf.isoCenter(3)  = pln.propStf.isoCenter(3) + vars.shift;
+% pln.propStf.isoCenter(3)     = 312;
+pln.propStf.isoCenter(3)  = pln.propStf.isoCenter(3) + vars.shift;
 pln.propOpt.runDAO        = 0;
 pln.propOpt.runSequencing = 0;
 
