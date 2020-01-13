@@ -4,10 +4,10 @@
 clc,clear
 addpath(genpath(pwd))
 
-taskNumber = 33;
+taskNumber = 36;
 foldername = ['C:\matRad\nishTopas\task_', num2str(taskNumber, '%.2u')];
 
-% set up the folder
+% set up the folders
 if exist(foldername, 'dir') ~= 7
     mkdir(foldername)
     mkdir([foldername, '\auxiliary'])
@@ -19,24 +19,27 @@ if exist(foldername, 'dir') ~= 7
     addpath(genpath(foldername))
 end
 
-fid = fopen([foldername, '\discription.txt'], 'wt' );
-discription = ['Using patient case S000005 from HIT data ', ...
-    '\n to test the network -- all around angles ', ...
-    '\n Preparing ouputs for the PAPER'];
 
+% prepare a description file of the task
+fid = fopen([foldername, '\discription.txt'], 'wt' );
+description = ['preparing a Pencil Beam for Paper figure'];
+% discription = ['Using patient case S000005 from HIT data ', ...
+%     '\n to test the network -- all around angles ', ...
+%     '\n Preparing ouputs for the PAPER'];
 % fprintf( fid, '%\n', discription);
-fwrite(fid, discription, 'char');cd 
+fwrite(fid, description, 'char'); 
 fclose(fid);
 
-
+% Load machine data
 load protons_generic_TOPAS_cropped.mat
 particleEnergies = [machine.data.energy];
 
-gantryAngles = [0:10:360];
+% set up the gantry and iso center shift change domain
+gantryAngles = [40:5:90];
 % couchAngles = 0:5:355;
-isoCenterShift = -40:5:60;
+isoCenterShift = [0 0];
 
-numOfSamples = 200;
+numOfSamples = 1;
 %%
 tmp2 = 0;
 i = 1;
@@ -73,8 +76,14 @@ tmp = 0;
 for i = 1:numOfSamples
     
     disp(i)
+    clearvars -except vars Ws tmp i taskNumber
     
-    [ct, cst, pln, dij, stf, resultGUI] = doseCalc_patient(vars(i));
+    [ct, cst] = load('C:/matRad/S000005_ID-20171221.mat');
+    pln.radiationMode = 'protons';
+    ct.numOfCtScen = 1;
+    ct = matRad_calcWaterEqD(ct, pln);
+    
+    [ct, cst, pln, dij, stf, resultGUI] = doseCalc_patient(vars(i), ct, cst);
     clc, close
 
     if isnan(resultGUI.w)
@@ -85,15 +94,17 @@ for i = 1:numOfSamples
     end
     
     
+%     
     
-    filename1 = ['C:/matRad/nishTopas/task_', num2str(taskNumber, '%.2u'), '/matfiles/topas_', num2str(taskNumber, '%.2u'),'_', num2str(i, '%.6u'), '.mat'];
-    filename2 = ['C:/matRad/nishTopas/task_', num2str(taskNumber, '%.2u'), '/auxiliary/aux_', num2str(taskNumber, '%.2u'),'_', num2str(i, '%.6u'), '.mat'];
-    filename3 = ['C:/matRad/nishTopas/task_', num2str(taskNumber, '%.2u'), '/figures/fig_', num2str(taskNumber, '%.2u'),'_', num2str(i, '%.6u')];
-%     filename3 = ['./nishTopas/task_', num2str(taskNumber, '%.2u'), '/auxiliary/aux_', num2str(taskNumber, '%.2u'),'_', num2str(i, '%.6u'), '.fig'];
-%     filename4 = ['./nishTopas/task_', num2str(taskNumber, '%.2u'), '/auxiliary/aux_', num2str(taskNumber, '%.2u'),'_', num2str(i, '%.6u'), '.png'];
+
+%     filename = ['C:/matRad/nishTopas/task_', num2str(taskNumber, '%.2u'), '/full_', num2str(taskNumber, '%.2u'),'_', num2str(i, '%.6u')];
+%     save(filename);
+
     Vars = vars(i);
     
-    save(filename2, 'cst', 'dij', 'resultGUI', 'Vars');
+    filename = ['C:/matRad/nishTopas/task_', num2str(taskNumber, '%.2u'), '/auxiliary/aux_', num2str(taskNumber, '%.2u'),'_', num2str(i, '%.6u'), '.mat'];
+    save(filename, 'cst', 'dij', 'resultGUI', 'Vars');
+
     
 %     nishSliceWrapper(ct, cst, pln, resultGUI.physicalDose, true, filename3)
 
@@ -107,7 +118,8 @@ for i = 1:numOfSamples
     disp(resultGUI.w)
     Ws(i) = resultGUI.w;
     
-    save(filename1, 'ct', 'pln', 'resultGUI', 'stf');
+    filename = ['C:/matRad/nishTopas/task_', num2str(taskNumber, '%.2u'), '/matfiles/topas_', num2str(taskNumber, '%.2u'),'_', num2str(i, '%.6u'), '.mat'];
+    save(filename, 'ct', 'pln', 'resultGUI', 'stf');
     
 end
 toc
