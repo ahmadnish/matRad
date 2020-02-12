@@ -1,16 +1,31 @@
-% Script for preparing a final version mat file after topas
+function matFinalizer(taskNumber, startI, endI, imsize, depth)
+% function for preparing a final version mat file after topas
 % This script designed to be executed in the task_X folder
-clc, clear
+
 addpath(genpath(pwd))
-taskNumber = 32;
-numOfSamples = 200;
-ii = 1;
-for i = 1:numOfSamples
+
+if startI >=  endI
+    error('start should be smaller than end')
+end
+
+foldername = ['C:\matRad\nishTopas\task_',num2str(taskNumber, '%.2u')];
+
+if exist(foldername, 'dir') ~= 7
+    error('task number does not exist')
+end
+
+inn = 'N';
+tic
+for i = startI:endI
     disp(['step 1_', num2str(i)])
-    clearvars -except taskNumber i ii numOfSamples
+    clearvars -except taskNumber i foldername inn startI endI cubeExtract imsize depth
     try
-        load(['C:\matRad\nishTopas\task_32\output\ws_topas_', num2str(taskNumber, '%.2u'), '_', num2str(i, '%.6u'), '.mat']);
-        tmp = load(['C:\matRad\nishTopas\task_32\auxiliary\aux_', num2str(taskNumber, '%.2u'), '_', num2str(i, '%.6u'), '.mat']);
+        outfile = [foldername ,'\output\ws_topas_', num2str(taskNumber, '%.2u'), '_', num2str(i, '%.6u'), '.mat'];
+        auxfile = [foldername,'\auxiliary\aux_', num2str(taskNumber, '%.2u'), '_', num2str(i, '%.6u'), '.mat'];
+        finalfile = [foldername,'\final\final_', num2str(taskNumber, '%.2u'), '_', num2str(i, '%.6u'), '.mat'];
+        
+        load(outfile);
+        tmp = load(auxfile);
 
         cst = tmp.cst;
         dij = tmp.dij;
@@ -22,69 +37,58 @@ for i = 1:numOfSamples
         eraseCtDensMask(V) = 0;
         resultGUI.MC_physicalDose(eraseCtDensMask == 1) =  0;
         resultGUI.MC_physicalDose(resultGUI.MC_physicalDose < 1e-4) = 0;
-
-        clear tmp
-        save(['C:\matRad\nishTopas\task_32\final\final_', num2str(taskNumber, '%.2u'), '_', num2str(ii, '%.6u'), '.mat']);
-        ii = ii + 1;
+        
+        
+        
+        % check if file exists to avoid overwriting
+        if ~isfile(finalfile)
+            
+            save(finalfile);
+            
+            if  isfile(finalfile)
+                movefile(outfile, 'D:\task_40_backup\output');
+                movefile(auxfile, 'D:\task_40_backup\auxiliary');
+                movefile(finalfile, 'D:\task_40_backup\final');
+                
+                if i == startI 
+%                     warning('out and aux are being deleted!')
+                    toc
+                end
+                
+            end                      
+            
+        else
+            
+            warning('Final file already exists!, no saving...')
+            
+        end
+        
         
     catch
-        warning('wasnt able to load')
-    end    
+        
+        warning('wasnt able to load the files - no saving no cube extraction')
+        
+    end
     
-end
-%%
-addpath(genpath(pwd))
-imsize = 15; 
-depth = 150;
-% load('./vars_21.mat')
-for j = 1:numOfSamples
-    tic
-    disp(['step 2_', num2str(j)])
-    clearvars -except taskNumber j numOfSamples imsize depth vars
-    
-%     jj = find([vars.gantryAngle] == j);
-%     jj = jj(1);
-    load(['C:/matRad/nishTopas/task_32/final/final_', num2str(taskNumber, '%.2u'), '_', num2str(j, '%.6u'), '.mat']);
-    
-    [inputcube, dosecube, dosecube_phys] = matRad_rayTracingXXX(ct.cube, ...
+    % performing the cube extraction if it is asked for
+    if exist('imsize', 'var')
+        
+        [inputcube, dosecube, dosecube_phys] = matRad_rayTracingXXX(ct.cube, ...
         {resultGUI.MC_physicalDose}, {resultGUI.physicalDose}, ct.resolution,stf.isoCenter,2, ...
         stf.gantryAngle,stf.couchAngle, imsize, depth);
-    
-%     t = max(max(dosecube_MC(:)), max(dosecube_phys(:)))
-%     clf
-%     hold on
-%     subplot(211)
-%     imagesc(squeeze(dosecube_MC(:,7,:)))
-%     title('Monte Carlo Dose')
-%     
-%     caxis('manual')
-%     caxis([0 t])
-%     colorbar;
-%     
-%     subplot(212)
-%     imagesc(squeeze(dosecube_phys(:,7,:)))
-%     title('Analytical Dose')
-%     
-%     caxis('manual')
-%     caxis([0 t])
-%     colorbar;
-%     
-%     pause(.1)
-    
-    %figure, plot(squeeze(dosecube(7,7,:)))
-    %clf
-    dosecube = dosecube/resultGUI.w;
-    
-    t = dosecube .* inputcube;
-    dosecube = 1000 * dosecube / sum(t(:));
-    
-    dosecube_phys = dosecube_phys/resultGUI.w;
-    
-    t = dosecube_phys .* inputcube;
-    dosecube_phys = 1000 * dosecube_phys / sum(t(:));
-    
-    toc
-    save(['C:/matRad/nishTopas/task_32/cubes/inpOutCubes_', num2str(j, '%.6u'), '.mat'], 'inputcube', 'dosecube', 'dosecube_phys');
+        
+        dosecube = dosecube/resultGUI.w;
 
+        t = dosecube .* inputcube;
+        dosecube = 1000 * dosecube / sum(t(:));
+
+        dosecube_phys = dosecube_phys/resultGUI.w;
+
+        t = dosecube_phys .* inputcube;
+        dosecube_phys = 1000 * dosecube_phys / sum(t(:));
+
+        save([foldername,'/cubes/inpOutCubes_', num2str(i, '%.6u'), '.mat'], 'inputcube', 'dosecube', 'dosecube_phys');
+
+    end
 
 end
