@@ -4,7 +4,7 @@
 clc,clear
 addpath(genpath(pwd))
 
-taskNumber = 36;
+taskNumber = 40;
 foldername = ['C:\matRad\nishTopas\task_', num2str(taskNumber, '%.2u')];
 
 % set up the folders
@@ -22,7 +22,8 @@ end
 
 % prepare a description file of the task
 fid = fopen([foldername, '\discription.txt'], 'wt' );
-description = ['preparing a Pencil Beam for Paper figure'];
+description = ['Preparing 3000 samples with 3 different energies', ...
+    '...'];
 % discription = ['Using patient case S000005 from HIT data ', ...
 %     '\n to test the network -- all around angles ', ...
 %     '\n Preparing ouputs for the PAPER'];
@@ -35,11 +36,12 @@ load protons_generic_TOPAS_cropped.mat
 particleEnergies = [machine.data.energy];
 
 % set up the gantry and iso center shift change domain
-gantryAngles = [40:5:90];
+gantryAngles = [0:5:355];
+% gantryAngles = [290 290];
 % couchAngles = 0:5:355;
-isoCenterShift = [0 0];
+isoCenterShift = [-40:5:60];
 
-numOfSamples = 1;
+numOfSamples = 3000;
 %%
 tmp2 = 0;
 i = 1;
@@ -49,7 +51,7 @@ while (i <= numOfSamples)
     vars(i).gantryAngle = randsample(gantryAngles, 1);
 %     vars(i).couchAngle = randsample(couchAngles, 1);
     vars(i).shift = randsample(isoCenterShift, 1);
-    vars(i).energy = particleEnergies(16);
+    vars(i).energy = randsample(particleEnergies([1,16,32]), 1);
     
     
     % check if there is recurrence in sampling
@@ -78,7 +80,10 @@ for i = 1:numOfSamples
     disp(i)
     clearvars -except vars Ws tmp i taskNumber
     
-    [ct, cst] = load('C:/matRad/S000005_ID-20171221.mat');
+    tmp = load('./Paper_HITS05_2mm.mat');
+    ct = tmp.ct;
+    cst = tmp.cst;
+    clear tmp
     pln.radiationMode = 'protons';
     ct.numOfCtScen = 1;
     ct = matRad_calcWaterEqD(ct, pln);
@@ -97,7 +102,7 @@ for i = 1:numOfSamples
 %     
     
 
-%     filename = ['C:/matRad/nishTopas/task_', num2str(taskNumber, '%.2u'), '/full_', num2str(taskNumber, '%.2u'),'_', num2str(i, '%.6u')];
+%     filename = ['C:/matRad/nishTopas/task_', num2str(taskNumber, '%.2u'), '/full_', num2str(taskNumber, '%.2u'),'_', num2str(i, '%.6u'), '.mat'];
 %     save(filename);
 
     Vars = vars(i);
@@ -105,8 +110,8 @@ for i = 1:numOfSamples
     filename = ['C:/matRad/nishTopas/task_', num2str(taskNumber, '%.2u'), '/auxiliary/aux_', num2str(taskNumber, '%.2u'),'_', num2str(i, '%.6u'), '.mat'];
     save(filename, 'cst', 'dij', 'resultGUI', 'Vars');
 
-    
-%     nishSliceWrapper(ct, cst, pln, resultGUI.physicalDose, true, filename3)
+    filename = ['C:/matRad/nishTopas/task_', num2str(taskNumber, '%.2u'), '/figures/fig_', num2str(taskNumber, '%.2u'),'_', num2str(i, '%.6u')];
+    nishSliceWrapper(ct, cst, pln, resultGUI.physicalDose, true, filename)
 
     
     % prune the input for topas, save what is necessary
@@ -117,7 +122,7 @@ for i = 1:numOfSamples
     ct = rmfield(ct, 'cubeHU');
     disp(resultGUI.w)
     Ws(i) = resultGUI.w;
-    
+%     
     filename = ['C:/matRad/nishTopas/task_', num2str(taskNumber, '%.2u'), '/matfiles/topas_', num2str(taskNumber, '%.2u'),'_', num2str(i, '%.6u'), '.mat'];
     save(filename, 'ct', 'pln', 'resultGUI', 'stf');
     
