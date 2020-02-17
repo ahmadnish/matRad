@@ -25,8 +25,8 @@ ax1.YAxis.FontSize = 12;
 ax1.YAxis.FontWeight = 'bold';
 ax1.YAxis.Exponent = -3;
 
-xlabel('epoch (#)', 'FontName', 'Times New Roman', 'FontSize', 15, 'FontWeight', 'normal')
-ylabel ('Mean Squared Error (MSE)', 'FontName', 'Times New Roman', 'FontSize', 15, 'FontWeight', 'normal')
+xlabel('Epochs (#)', 'FontName', 'Times New Roman', 'FontSize', 15, 'FontWeight', 'normal')
+ylabel ('Mean Squared Error', 'FontName', 'Times New Roman', 'FontSize', 15, 'FontWeight', 'normal')
 
 %%
 load('C:\matRad\nishTopas\losses\loss_LSTM_BOX.mat')
@@ -37,7 +37,6 @@ h21 = plot(mean(loss_train, 2), 'LineWidth', 2);
 hold on
 h22 = plot(mean(loss_test, 2), 'LineWidth', 2);
 
-
 ax2.XAxis.FontName = 'Times New Roman';
 ax2.XAxis.FontSize = 12;
 ax2.XAxis.FontWeight = 'bold';
@@ -45,8 +44,8 @@ ax2.YAxis.FontName = 'Times New Roman';
 ax2.YAxis.FontSize = 12;
 ax2.YAxis.FontWeight = 'bold';
 
-xlabel('epoch (#)', 'FontName', 'Times New Roman', 'FontSize', 15, 'FontWeight', 'normal')
-ylabel ('Mean Squared Error (MSE)', 'FontName', 'Times New Roman', 'FontSize', 15, 'FontWeight', 'normal')
+xlabel('Epochs (#)', 'FontName', 'Times New Roman', 'FontSize', 15, 'FontWeight', 'normal')
+ylabel ('Mean Squared Error', 'FontName', 'Times New Roman', 'FontSize', 15, 'FontWeight', 'normal')
 
 lg2 = legend('Train loss', 'Test loss');
 lg2.FontName = 'Times New Roman';
