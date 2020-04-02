@@ -23,7 +23,7 @@ if plotting
 
     
     figure
-    set(gcf, 'Units', 'Normalized', 'OuterPosition', [0.3, 0.3, .5, .7]);
+    set(gcf, 'Units', 'Normalized', 'OuterPosition', [0.1, 0.1, .9, .9]);
     
     combined = [dose dose_ann];
     mAx = max(combined(:));
