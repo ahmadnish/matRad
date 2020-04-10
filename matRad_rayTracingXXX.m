@@ -1,4 +1,4 @@
-function [inputCube, outputCube, outputCube_phys] = matRad_rayTracingXXX(ct_cube,dose_cube_MC, dose_cube_phys, ctres,isoCenter,resolution,gantryAngle,couchAngle, imsize, depth)
+function [inputCube, outputCube, outputCube_phys, hitvoxels] = matRad_rayTracingXXX(ct_cube,dose_cube_MC, dose_cube_phys, ctres,isoCenter,resolution,gantryAngle,couchAngle, imsize, depth)
 % %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 % matRad visualization of two-dimensional dose distributions on ct including
 % segmentation
@@ -63,6 +63,7 @@ outputCubePhys_padded = NaN * ones(imsize,imsize,numel(regGridQueryPoints));
 firstNonZero = inf;
 % perform ray tracing over all rays
 % a = zeros(size(rayMx_world,1),1);
+hitvoxels = []
 for i = 1:size(rayMx_world,1)
 
 % run siddon ray tracing algorithm
@@ -71,7 +72,8 @@ for i = 1:size(rayMx_world,1)
                             sourcePoint, ...
                             rayMx_world(i,:), ...
                             ct_cube);
-                            
+
+hitvoxels = [hitvoxels ixHitVoxel];                        
 alphaMid = (alpha(1:end-1)+alpha(2:end))/2;                        
 alphaMidPhys = [min(regGridQueryPoints) alphaMid*d12 max(regGridQueryPoints)];
 ctDensOnRegGrid = interp1(alphaMidPhys,[0 rho{1} 0],regGridQueryPoints,'pchip');

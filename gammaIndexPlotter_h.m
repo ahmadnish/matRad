@@ -19,7 +19,7 @@ dose_ann = dose_ann * 1.992;
 
 pass = (1 - nnz(gammaCube>1)/ nnz(gammaCube>0)) * 100;
 
-if size(dose,1) == size(dose, 1)
+if size(dose,1) == size(ct, 1)
     tickdistX = 12.5; tickdistY = 5;
     XXtick = [0 : tickdistX : size(ct, 1)];
     YYtick = [0 : tickdistY : size(ct, 2)];
