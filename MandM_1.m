@@ -18,7 +18,7 @@ resultGUI.MC_physicalDose(eraseCtDensMask == 1) =  0;
     % get the unique of them
     % and then ct.cubeHT{1}(hit) = ct.cubeHT{1}(hit) * 1.5
    
-   
+figure   
 [hCMap,hDose,hCt,~,hIsoDose] = nishSliceWrapper(ct, cst, pln,resultGUI.MC_physicalDose);
 
 ylim([45 165])
@@ -58,7 +58,7 @@ ylabel(hcb_1, 'RSP', 'FontName', 'Liberation Serif', 'FontSize', fontsize, 'Font
 
 ticker(gca, 2, XXtick, YYtick)
 
-axis labels
+% axis labels
 Xlm = xlim; Ylm = ylim;
 ylabel('mm', 'Position', [0, scaleLabelX * Ylm(1)], 'FontName', 'Liberation Serif', 'FontSize', fontsize)
 xlabel('mm', 'Position', [Xlm(2), scaleLabelX * Ylm(2)], 'FontName', 'Liberation Serif', 'FontSize', fontsize)
@@ -74,7 +74,7 @@ ylabel(hcb_2, 'Physical Dose [Gy]', 'FontName', 'Liberation Serif', 'FontSize', 
 
 ticker(gca, 2, XXtick, YYtick)
 
-axis labels
+% axis labels
 Xlm = xlim; Ylm = ylim;
 ylabel('mm', 'Position', [0, scaleLabelX * Ylm(1)], 'FontName', 'Liberation Serif', 'FontSize', fontsize)
 xlabel('mm', 'Position', [Xlm(2), scaleLabelX * Ylm(2)], 'FontName', 'Liberation Serif', 'FontSize', fontsize)
