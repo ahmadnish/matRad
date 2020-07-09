@@ -7,13 +7,22 @@ if ~exist('slices', 'var') || isempty(slices), slices = floor(size(ct, 2)/2) + 1
 if ~exist('criteria', 'var') || isempty(criteria), criteria = [.5 1]; end
 if ~exist('dim', 'var') || isempty(dim), dim = true; end
 
-scaleLabelX = 1.1;
+scaleLabelX = 1.15;
 
 dose = dose/1000;
 dose = dose * 1.992;
 
 dose_ann = dose_ann/1000;
 dose_ann = dose_ann * 1.992;
+
+if ~dim
+    dose = permute(dose, [1 3 2]);
+    dose_ann = permute(dose_ann, [1 3 2]);
+    ct = permute(ct, [1,3,2]);
+end
+
+
+fontsize = 18;
 
 [gammaCube] = matRad_gammaIndex(dose,dose_ann,[2 2 2], criteria, [], 3);
 
@@ -32,8 +41,8 @@ if plotting
 
     figure
     set(gcf, 'Color', 'w');
-    set(gcf, 'Units', 'Normalized', 'OuterPosition', [0.3, 0.3, .5, .7]);
-    set(gcf, 'Units', 'Normalized', 'OuterPosition', [0, 0, .5, 1]);
+    %set(gcf, 'Units', 'Normalized', 'OuterPosition', [0.3, 0.3, .5, .7]);
+    set(gcf, 'Units', 'Normalized', 'OuterPosition', [0, 0, .25, 1]);
     combined = [dose dose_ann];
     mAx = max(combined(:));
     mIN = min(combined(:));
@@ -50,15 +59,15 @@ if plotting
         hcb = colorbar();
         colormap(gca, 'gray')
         caxis(ax, [0, 2.5])
-        ylabel(hcb, 'RSP', 'FontName', 'Liberation Serif', 'FontSize', 12, 'FontWeight', 'bold')
+        ylabel(hcb, 'RSP', 'FontName', 'Liberation Serif', 'FontSize', fontsize, 'FontWeight', 'bold')
 
         % ticks
-        ticker(gca, 2, XXtick, YYtick)
+        ticker(gca, 2, XXtick, YYtick, fontsize)
         
         % axis labels
         Xlm = xlim; Ylm = ylim;      
-        xlabel('mm', 'Position', [Xlm(2), scaleLabelX * Ylm(2)], 'FontName', 'Liberation Serif', 'FontSize', 12)
-        ylabel('mm', 'Position', [0, scaleLabelX * Ylm(1)], 'FontName', 'Liberation Serif', 'FontSize', 12)
+        xlabel('mm', 'Position', [Xlm(2), scaleLabelX * Ylm(2)], 'FontName', 'Liberation Serif', 'FontSize', fontsize)
+        ylabel('mm', 'Position', [0, scaleLabelX * Ylm(1)], 'FontName', 'Liberation Serif', 'FontSize', fontsize)
         
         %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% subplot 2
         ax1 = subplot(412);
@@ -68,15 +77,15 @@ if plotting
         % colorbar
         hcb = colorbar();
         colormap(gca, 'jet')
-        ylabel(hcb, 'Dose [Gy]', 'FontName', 'Liberation Serif', 'FontSize', 12, 'FontWeight', 'bold')
+        ylabel(hcb, 'Dose [Gy]', 'FontName', 'Liberation Serif', 'FontSize', fontsize, 'FontWeight', 'bold')
         
         % ticks
-        ticker(gca, 2, XXtick, YYtick)
+        ticker(gca, 2, XXtick, YYtick, fontsize)
         
         % axis labels
         Xlm = xlim; Ylm = ylim;
-        xlabel('mm', 'Position', [Xlm(2), scaleLabelX * Ylm(2)], 'FontName', 'Liberation Serif', 'FontSize', 12)
-        ylabel('mm', 'Position', [0, scaleLabelX * Ylm(1)], 'FontName', 'Liberation Serif', 'FontSize', 12)
+        xlabel('mm', 'Position', [Xlm(2), scaleLabelX * Ylm(2)], 'FontName', 'Liberation Serif', 'FontSize', fontsize)
+        ylabel('mm', 'Position', [0, scaleLabelX * Ylm(1)], 'FontName', 'Liberation Serif', 'FontSize', fontsize)
         
         %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% subplot 3
         ax2 = subplot(413);
@@ -88,14 +97,14 @@ if plotting
         colormap(gca, 'jet')
         caxis(ax1, [mIN, mAx])
         caxis(ax2, [mIN, mAx])
-        ylabel(hcb, 'Dose [Gy]', 'FontName', 'Liberation Serif', 'FontSize', 12, 'FontWeight', 'bold')
+        ylabel(hcb, 'Dose [Gy]', 'FontName', 'Liberation Serif', 'FontSize', fontsize, 'FontWeight', 'bold')
         %ticks
-        ticker(gca, 2, XXtick, YYtick)
+        ticker(gca, 2, XXtick, YYtick ,fontsize)
         
         % axis labels
         Xlm = xlim; Ylm = ylim;
-        ylabel('mm', 'Position', [0, scaleLabelX * Ylm(1)], 'FontName', 'Liberation Serif', 'FontSize', 12)
-        xlabel('mm', 'Position', [Xlm(2), scaleLabelX * Ylm(2)], 'FontName', 'Liberation Serif', 'FontSize', 12)
+        ylabel('mm', 'Position', [0, scaleLabelX * Ylm(1)], 'FontName', 'Liberation Serif', 'FontSize', fontsize)
+        xlabel('mm', 'Position', [Xlm(2), scaleLabelX * Ylm(2)], 'FontName', 'Liberation Serif', 'FontSize', fontsize)
         %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% subplot 4
         subplot(414)
         imagesc(squeeze(gammaCube(:, :, i))')
@@ -104,15 +113,15 @@ if plotting
         % colorbar
         caxis([0 2]), colormap(gca, matRad_getColormap('gammaIndex'))
         hcb = colorbar;
-        ylabel(hcb, '\gamma value', 'FontName', 'Liberation Serif', 'FontSize', 12, 'FontWeight', 'bold')
+        ylabel(hcb, '\gamma value', 'FontName', 'Liberation Serif', 'FontSize', fontsize, 'FontWeight', 'bold')
         
         % ticks
-        ticker(gca, 2, XXtick, YYtick)
+        ticker(gca, 2, XXtick, YYtick, fontsize)
         
         % axis labels
         Xlm = xlim; Ylm = ylim;
-        xlabel('mm', 'Position', [Xlm(2), scaleLabelX * Ylm(2)], 'FontName', 'Liberation Serif', 'FontSize', 12)
-        ylabel('mm', 'Position', [0, scaleLabelX * Ylm(1)], 'FontName', 'Liberation Serif', 'FontSize', 12)
+        xlabel('mm', 'Position', [Xlm(2), scaleLabelX * Ylm(2)], 'FontName', 'Liberation Serif', 'FontSize', fontsize)
+        ylabel('mm', 'Position', [0, scaleLabelX * Ylm(1)], 'FontName', 'Liberation Serif', 'FontSize', fontsize)
 %                 
         pause(1)
 
@@ -124,9 +133,9 @@ end
 end
 
 
-function ticker(h, scaling, xticks, yticks)
+function ticker(h, scaling, xticks, yticks, fontsize)
 
-set(h, 'FontSize', 12, 'FontName', 'Liberation Serif')
+set(h, 'FontSize', fontsize, 'FontName', 'Liberation Serif')
 
 set(h, 'XTick', xticks)
 set(h, 'YTick', yticks)
