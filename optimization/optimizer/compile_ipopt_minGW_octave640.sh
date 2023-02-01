@@ -1,9 +1,10 @@
-# How to compile the IPOPT mex interface for Octave 5.2.0 (64-bit) in Windows
+# How to compile the IPOPT mex interface for Octave 6.4.0 (64-bit) in Windows
 # matRad only includes the IPOPT mex interface compiled for Matlab. It is also possible to compile the interface from the MSYS/MinGW distribution included in Octave for Windows.
-# The following has been tested for Octave 5.2.0 in 64 bit version to allow 64-bit algebra. Start this script from a octave mingw shell. You can open such a shell by running "cmdshell.bat" from your Octave install directory
+# The following has been tested for Octave 6.4.0 in 64 bit version to allow 64-bit algebra. Start this script from an octave mingw shell. You can open such a shell by running "cmdshell.bat" (potentially as administrator)from your Octave install directory
 
 pacman -Sy 
-pacman -S --noconfirm --needed wget which git
+# pacman -S --noconfirm --needed wget which git
+pacman -S --noconfirm --needed which
 
 # Run the following commands to create directories and get the IPOPT source. We dont need lapack and blas, since Octave comes with lapack and openblas
 
@@ -25,6 +26,8 @@ cd $IPOPTDIR/ThirdParty/Lapack
 cd $IPOPTDIR/ThirdParty/Metis
 ./get.Metis
 cd $IPOPTDIR/ThirdParty/Mumps
+# First we need to replace the url as the version can no longer be downloaded
+sed -i 's,http://mumps.enseeiht.fr/,http://coin-or-tools.github.io/ThirdParty-Mumps/,g' get.Mumps
 ./get.Mumps
 
 cd $IPOPTDIR
@@ -48,7 +51,7 @@ cd ../..
 # If everything worked, you should see some (static) libraries when doing ls /usr/local/lib 
 # we can get the mex interface
 
-git clone https://github.com/ebertolazzi/mexIPOPT
+git clone --depth 1 --branch 1.0.0 https://github.com/ebertolazzi/mexIPOPT
 
 # and compile it.
 mkoctfile --mex -ImexIPOPT/src -I$IPOPTINSTALLDIR/include/coin mexIPOPT/src/ipopt.cc mexIPOPT/src/IpoptInterfaceCommon.cc -v -DMATLAB_MEXFILE -DHAVE_CSTDDEF -DIPOPT_INTERFACE_MISSING_COPY_N -lipopt -lcoinmumps -lcoinmetis -lcoinlapack -lcoinblas -lgfortran -L$IPOPTINSTALLDIR/lib
