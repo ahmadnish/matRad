@@ -1,9 +1,12 @@
-# How to compile the IPOPT mex interface for Octave 5.2.0 (64-bit) in Windows
+# How to compile the IPOPT mex interface for Octave 6.4.0 (64-bit) in Windows
 # matRad only includes the IPOPT mex interface compiled for Matlab. It is also possible to compile the interface from the MSYS/MinGW distribution included in Octave for Windows.
-# The following has been tested for Octave 5.2.0 in 64 bit version to allow 64-bit algebra. Start this script from a octave mingw shell. You can open such a shell by running "cmdshell.bat" from your Octave install directory
+# The following has been tested for Octave 6.4.0 in 64 bit version to allow 64-bit algebra. Start this script from an octave mingw shell. You can open such a shell by running "cmdshell.bat" (potentially as administrator)from your Octave install directory
 
 pacman -Sy 
-pacman -S --noconfirm --needed wget which git
+# pacman -S --noconfirm --needed wget which git
+pacman -S --noconfirm --needed which
+
+echo "check_certificate = off" >> ~/.wgetrc
 
 # Run the following commands to create directories and get the IPOPT source. We dont need lapack and blas, since Octave comes with lapack and openblas
 
@@ -19,6 +22,8 @@ tar -zxvf Ipopt-3.12.13.tgz
 mv Ipopt-3.12.13/* ./
 
 cd $IPOPTDIR/ThirdParty/Blas
+# First we need to replace the url as the version can no longer be downloaded
+sed -i 's,http://www.netlib.org/blas/,http://coin-or-tools.github.io/ThirdParty-Blas/,g' get.Blas
 ./get.Blas
 cd $IPOPTDIR/ThirdParty/Lapack
 ./get.Lapack
@@ -26,10 +31,13 @@ cd $IPOPTDIR/ThirdParty/Lapack
 rm -rf $IPOPTDIR/ThirdParty/Metis
 git clone https://github.com/coin-or-tools/ThirdParty-Metis.git --depth 1 --branch releases/1.3.10 $IPOPTDIR/ThirdParty/Metis
 cd $IPOPTDIR/ThirdParty/Metis
+sed -i 's,http://glaros.dtc.umn.edu/gkhome/fetch/sw/metis/OLD/,http://coin-or-tools.github.io/ThirdParty-Metis/,g' get.Metis
 ./get.Metis
 rm -rf $IPOPTDIR/ThirdParty/Mumps
 git clone https://github.com/coin-or-tools/ThirdParty-Mumps.git --depth 1 --branch releases/1.6.3 $IPOPTDIR/ThirdParty/Mumps
 cd $IPOPTDIR/ThirdParty/Mumps
+# First we need to replace the url as the version can no longer be downloaded
+sed -i 's,http://mumps.enseeiht.fr/,http://coin-or-tools.github.io/ThirdParty-Mumps/,g' get.Mumps
 ./get.Mumps
 
 cd $IPOPTDIR
@@ -53,10 +61,10 @@ cd ../..
 # If everything worked, you should see some (static) libraries when doing ls $IPOPTINSTALLDIR 
 # we can get the mex interface
 
-git clone https://github.com/ebertolazzi/mexIPOPT --depth 1 --branch 1.0.0
+git clone --depth 1 --branch 1.1.4 https://github.com/ebertolazzi/mexIPOPT
 
 # and compile it.
-mkoctfile --mex -ImexIPOPT/src -I$IPOPTINSTALLDIR/include/coin mexIPOPT/src/ipopt.cc mexIPOPT/src/IpoptInterfaceCommon.cc -v -DMATLAB_MEXFILE -DHAVE_CSTDDEF -DIPOPT_INTERFACE_MISSING_COPY_N -lipopt -lcoinmumps -lcoinmetis -lcoinlapack -lcoinblas -lgfortran -L$IPOPTINSTALLDIR/lib
+mkoctfile --mex -ImexIPOPT/toolbox/src -I$IPOPTINSTALLDIR/include/coin mexIPOPT/toolbox/src/ipopt.cc mexIPOPT/toolbox/src/IpoptInterfaceCommon.cc -v -DMATLAB_MEXFILE -DHAVE_CSTDDEF -DIPOPT_INTERFACE_MISSING_COPY_N -lipopt -lcoinmumps -lcoinmetis -lcoinlapack -lcoinblas -lgfortran -L$IPOPTINSTALLDIR/lib
 
 echo "Do you wish to remove the IPOPT compilation directories?"
 select yn in "Yes" "No"; do
