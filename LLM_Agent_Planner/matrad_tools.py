@@ -9,16 +9,10 @@ import os
 import time
 import json
 import numpy as np
-from typing import Dict, List, Tuple, Any, Optional, Union
+from typing import Dict, List, Tuple, Any, Optional
 from pathlib import Path
 
-try:
-    import matlab.engine
-    MATLAB_AVAILABLE = True
-except ImportError:
-    MATLAB_AVAILABLE = False
-    print("MATLAB Engine for Python not found. Using mock implementations.")
-
+import matlab.engine
 
 class MatRadEngine:
     """Wrapper for MATLAB Engine with matRad functionality."""
@@ -49,12 +43,13 @@ class MatRadEngine:
         Start the MATLAB Engine and initialize matRad.
         
         Returns:
-            bool: True if successful, False otherwise.
+            bool: True if successful.
+            
+        Raises:
+            RuntimeError: If MATLAB Engine is not available or initialization fails.
         """
         if not MATLAB_AVAILABLE:
-            print("MATLAB Engine not available. Using mock implementation.")
-            self.initialized = True
-            return True
+            raise RuntimeError("MATLAB Engine not available. Please install MATLAB Engine API for Python.")
             
         try:
             print("Starting MATLAB Engine...")
@@ -72,17 +67,21 @@ class MatRadEngine:
             return True
             
         except Exception as e:
-            print(f"Error initializing MATLAB Engine: {str(e)}")
-            return False
+            error_msg = f"Error initializing MATLAB Engine: {str(e)}"
+            print(error_msg)
+            raise RuntimeError(error_msg)
     
     def stop_engine(self) -> bool:
         """
         Stop the MATLAB Engine.
         
         Returns:
-            bool: True if successful, False otherwise.
+            bool: True if successful.
+            
+        Raises:
+            RuntimeError: If there's an error stopping the MATLAB Engine.
         """
-        if not MATLAB_AVAILABLE or not self.initialized:
+        if not self.initialized:
             self.initialized = False
             return True
             
@@ -92,8 +91,9 @@ class MatRadEngine:
             print("MATLAB Engine stopped.")
             return True
         except Exception as e:
-            print(f"Error stopping MATLAB Engine: {str(e)}")
-            return False
+            error_msg = f"Error stopping MATLAB Engine: {str(e)}"
+            print(error_msg)
+            raise RuntimeError(error_msg)
     
     def load_patient(self, patient_file: str) -> Dict[str, Any]:
         """
@@ -877,191 +877,15 @@ class MatRadEngine:
             return {"success": False, "error": str(e)}
 
 
-# Mock implementation for testing without MATLAB
-class MockMatRadEngine:
-    """Mock implementation of MatRadEngine for testing without MATLAB."""
-    
-    def __init__(self, matrad_path: Optional[str] = None):
-        """Initialize the mock engine."""
-        self.matrad_path = matrad_path or os.getcwd()
-        self.initialized = False
-        self.patient_loaded = False
-        self.current_patient = None
-        
-    def start_engine(self) -> bool:
-        """Mock starting the engine."""
-        print("MOCK: Starting MatRad engine")
-        self.initialized = True
-        return True
-        
-    def stop_engine(self) -> bool:
-        """Mock stopping the engine."""
-        print("MOCK: Stopping MatRad engine")
-        self.initialized = False
-        return True
-        
-    def load_patient(self, patient_file: str) -> Dict[str, Any]:
-        """Mock loading a patient dataset."""
-        print(f"MOCK: Loading patient from {patient_file}")
-        self.patient_loaded = True
-        self.current_patient = patient_file
-        
-        return {
-            "success": True, 
-            "patient_file": patient_file,
-            "ct_dimensions": [1, 1, 1],
-            "num_structures": 10,
-            "message": "MOCK: Patient data loaded successfully"
-        }
-        
-    def get_structure_names(self) -> Dict[str, Any]:
-        """Mock getting structure names."""
-        return {
-            "success": True,
-            "targets": ["PTV70", "PTV63"],
-            "oars": ["PAROTID_LT", "PAROTID_RT", "SPINAL_CORD", "BRAIN_STEM"],
-            "other": ["SKIN"]
-        }
-        
-    def create_empty_plan(self) -> Dict[str, Any]:
-        """Mock creating an empty plan."""
-        return {
-            "success": True,
-            "radiation_mode": "photons",
-            "num_fractions": 30,
-            "num_beams": 5,
-            "gantry_angles": [0, 72, 144, 216, 288],
-            "message": "MOCK: Treatment plan initialized successfully"
-        }
-        
-    def set_beam_angles(self, gantry_angles: List[float], couch_angles: Optional[List[float]] = None) -> Dict[str, Any]:
-        """Mock setting beam angles."""
-        return {
-            "success": True,
-            "num_beams": len(gantry_angles),
-            "gantry_angles": gantry_angles,
-            "couch_angles": couch_angles or [0] * len(gantry_angles),
-            "message": "MOCK: Beam angles set successfully"
-        }
-        
-    def set_optimizer(self, optimizer_type: str = 'fmincon', max_iterations: int = 100) -> Dict[str, Any]:
-        """Mock setting optimizer."""
-        return {
-            "success": True,
-            "optimizer": optimizer_type,
-            "max_iterations": max_iterations,
-            "message": f"MOCK: Optimizer set to {optimizer_type}"
-        }
-        
-    def generate_beam_geometry(self) -> Dict[str, Any]:
-        """Mock generating beam geometry."""
-        return {
-            "success": True,
-            "num_beams": 5,
-            "total_bixels": 1000,
-            "beam_info": [
-                {"beam_id": 1, "gantry_angle": 0, "couch_angle": 0, "num_bixels": 200},
-                {"beam_id": 2, "gantry_angle": 72, "couch_angle": 0, "num_bixels": 200},
-                {"beam_id": 3, "gantry_angle": 144, "couch_angle": 0, "num_bixels": 200},
-                {"beam_id": 4, "gantry_angle": 216, "couch_angle": 0, "num_bixels": 200},
-                {"beam_id": 5, "gantry_angle": 288, "couch_angle": 0, "num_bixels": 200}
-            ],
-            "message": "MOCK: Beam geometry generated successfully"
-        }
-        
-    def calculate_influence_matrix(self) -> Dict[str, Any]:
-        """Mock calculating influence matrix."""
-        return {
-            "success": True,
-            "dimensions": [1000, 1000],
-            "num_voxels": 1000,
-            "calc_time_sec": 5.0,
-            "message": "MOCK: Dose influence matrix calculated successfully"
-        }
-        
-    def add_optimization_objective(self, structure_name: str, obj_type: str, 
-                                  dose_value: float, penalty: float = 1000.0) -> Dict[str, Any]:
-        """Mock adding optimization objective."""
-        return {
-            "success": True,
-            "structure": structure_name,
-            "objective_type": obj_type,
-            "dose_value": dose_value,
-            "penalty": penalty,
-            "total_objectives": 1,
-            "message": f"MOCK: Added {obj_type} objective to {structure_name}"
-        }
-        
-    def optimize_fluence(self) -> Dict[str, Any]:
-        """Mock fluence optimization."""
-        return {
-            "success": True,
-            "objective_value": 85.5,
-            "optimization_time_sec": 10.0,
-            "message": "MOCK: Fluence optimization completed successfully"
-        }
-        
-    def run_sequencing(self) -> Dict[str, Any]:
-        """Mock running sequencing."""
-        return {
-            "success": True,
-            "num_apertures": 50,
-            "sequencing_time_sec": 3.0,
-            "message": "MOCK: Sequencing completed successfully"
-        }
-        
-    def calculate_dvh(self, structure_name: Optional[str] = None) -> Dict[str, Any]:
-        """Mock calculating DVH."""
-        if structure_name:
-            return {
-                "success": True,
-                "structure": structure_name,
-                "dvh_values": [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0],
-                "bin_centers": [5, 10, 15, 20, 25, 30, 35, 40, 45, 50],
-                "message": f"MOCK: DVH calculated for {structure_name}"
-            }
-        else:
-            return {
-                "success": True,
-                "message": "MOCK: DVH calculated for all structures"
-            }
-        
-    def evaluate_plan(self) -> Dict[str, Any]:
-        """Mock evaluating plan."""
-        return {
-            "success": True,
-            "structure_metrics": [
-                {"name": "PTV70", "mean_dose": 70.0, "min_dose": 66.5, "max_dose": 74.0},
-                {"name": "PTV63", "mean_dose": 63.0, "min_dose": 60.0, "max_dose": 66.0},
-                {"name": "PAROTID_LT", "mean_dose": 20.0, "max_dose": 40.0},
-                {"name": "PAROTID_RT", "mean_dose": 22.0, "max_dose": 42.0},
-                {"name": "SPINAL_CORD", "max_dose": 30.0},
-                {"name": "BRAIN_STEM", "max_dose": 35.0}
-            ],
-            "message": "MOCK: Plan evaluation completed successfully"
-        }
-        
-    def save_plan(self, output_file: str) -> Dict[str, Any]:
-        """Mock saving the plan."""
-        return {
-            "success": True,
-            "output_file": output_file,
-            "message": f"MOCK: Plan saved successfully to {output_file}"
-        }
-
-
-# Function to create appropriate engine based on MATLAB availability
-def create_matrad_engine(matrad_path: Optional[str] = None) -> Union[MatRadEngine, MockMatRadEngine]:
+# Function to create matRad engine
+def create_matrad_engine(matrad_path: Optional[str] = None) -> MatRadEngine:
     """
-    Create and return appropriate matRad engine based on MATLAB availability.
+    Create and return a matRad engine instance.
     
     Args:
         matrad_path: Path to matRad installation. If None, assumes current directory.
         
     Returns:
-        MatRadEngine if MATLAB is available, otherwise MockMatRadEngine.
+        MatRadEngine instance.
     """
-    if MATLAB_AVAILABLE:
-        return MatRadEngine(matrad_path)
-    else:
-        return MockMatRadEngine(matrad_path) 
+    return MatRadEngine(matrad_path) 
