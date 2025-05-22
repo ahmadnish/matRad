@@ -47,9 +47,7 @@ class MatRadEngine:
             
         Raises:
             RuntimeError: If MATLAB Engine is not available or initialization fails.
-        """
-        if not MATLAB_AVAILABLE:
-            raise RuntimeError("MATLAB Engine not available. Please install MATLAB Engine API for Python.")
+        """        
             
         try:
             print("Starting MATLAB Engine...")
@@ -133,9 +131,14 @@ class MatRadEngine:
             ct_dimensions = self.eng.eval("size(ct.cube)", nargout=1)
             num_structures = self.eng.eval("numel(cst)", nargout=1)
             
-            # Store patient data in class
+            # Instead of directly accessing the workspace, store references to the variables
+            # The CT structure is usually fine to access directly
             self.ct = self.eng.workspace["ct"]
-            self.cst = self.eng.workspace["cst"]
+            
+            # For the CST, don't try to get it directly as a Python object
+            # Just keep a reference that it exists in the MATLAB workspace
+            self.cst = None  # We'll just use the MATLAB workspace version
+            
             self.current_patient = patient_file
             self.patient_loaded = True
             
@@ -394,8 +397,9 @@ class MatRadEngine:
             print("Generating beam geometry...")
             self.eng.eval("stf = matRad_generateStf(ct,cst,pln);", nargout=0)
             
-            # Store stf in class
-            self.stf = self.eng.workspace["stf"]
+            # Instead of trying to get the entire stf struct, just keep track that it exists
+            # self.stf = self.eng.workspace["stf"]  
+            self.stf = True  # Just mark that stf exists in MATLAB workspace
             
             # Get beam info
             num_beams = self.eng.eval("numel(stf)", nargout=1)
@@ -535,9 +539,6 @@ class MatRadEngine:
             % Add to CST
             cst{{{struct_idx},6}}{{end+1}} = newObj;
             """, nargout=0)
-            
-            # Update CST in class
-            self.cst = self.eng.workspace["cst"]
             
             # Get current number of objectives
             num_objectives = self.eng.eval(f"numel(cst{{{struct_idx},6}})", nargout=1)
