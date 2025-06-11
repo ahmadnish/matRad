@@ -524,9 +524,10 @@ class MatRadEngine:
                 if ~isempty(cst{i,2})
                     structNames{end+1} = cst{i,2};
                 end
-            end
-            structNames
-            """, nargout=1)
+            end            
+            """, nargout=0)
+
+            all_struct_names = self.eng.workspace["structNames"]
             
             # Convert to list of strings
             struct_names_list = [str(name) for name in all_struct_names]
@@ -535,18 +536,19 @@ class MatRadEngine:
             if structure_name not in struct_names_list:
                 return {"success": False, "error": f"Structure '{structure_name}' not found in CST"}
             
-            # Structure index in MATLAB is 1-indexed, so add 1
-            # Also need to account for how the CST cell array is structured
             # Get all indices of rows in CST
-            cst_indices = self.eng.eval("""
+            self.eng.eval("""
             indices = [];
             for i = 1:size(cst,1)
                 if ~isempty(cst{i,2})
                     indices(end+1) = i;
                 end
             end
-            indices
-            """, nargout=1)
+            """, nargout=0)
+            
+            # Access the indices variable from MATLAB workspace
+            cst_indices = self.eng.workspace["indices"]
+            cst_indices = np.array(cst_indices).flatten()
             
             # Find the corresponding index in CST
             struct_idx = cst_indices[struct_names_list.index(structure_name)]
@@ -719,7 +721,7 @@ class MatRadEngine:
             # Instead, calculate DVH directly if a specific structure is requested
             if structure_name:
                 # Find the structure index
-                struct_idx = self.eng.eval(f"""
+                self.eng.eval(f"""
                 structIdx = 0;
                 for i = 1:size(cst,1)
                     if ~isempty(cst{{i,2}}) && strcmp(cst{{i,2}}, '{structure_name}')
@@ -727,14 +729,16 @@ class MatRadEngine:
                         break;
                     end
                 end
-                structIdx
-                """, nargout=1)
+                """, nargout=0)
+                
+                # Access the structIdx variable from MATLAB workspace
+                struct_idx = self.eng.workspace["structIdx"]
                 
                 if int(struct_idx) == 0:
                     return {"success": False, "error": f"Structure '{structure_name}' not found in CST"}
                 
                 # Calculate DVH directly using matRad_calcDVH
-                dvh_data = self.eng.eval(f"""
+                self.eng.eval(f"""
                 % Get dose for this structure
                 dose = resultGUI.physicalDose;
                 
@@ -751,8 +755,10 @@ class MatRadEngine:
                 dvhData = struct();
                 dvhData.dvh = dvh;
                 dvhData.binCenters = binCenters;
-                dvhData
-                """, nargout=1)
+                """, nargout=0)
+                
+                # Access the dvhData variable from MATLAB workspace
+                dvh_data = self.eng.workspace["dvhData"]
                 
                 # Convert to Python lists
                 try:
@@ -863,15 +869,17 @@ class MatRadEngine:
             """, nargout=0)
             
             # Get structure names
-            struct_names = self.eng.eval("""
+            self.eng.eval("""
             names = {};
             for i = 1:size(cst,1)
                 if ~isempty(cst{i,2})
                     names{end+1} = cst{i,2};
                 end
             end
-            names
-            """, nargout=1)
+            """, nargout=0)
+            
+            # Access the names variable from MATLAB workspace
+            struct_names = self.eng.workspace["names"]
             
             # Check if metrics were calculated
             has_metrics = self.eng.eval("isfield(resultGUI, 'metrics')", nargout=1)
