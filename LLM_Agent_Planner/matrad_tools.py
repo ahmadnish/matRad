@@ -168,38 +168,44 @@ class MatRadEngine:
             return {"success": False, "error": "No patient data loaded"}
             
         try:
-            # Extract structure information
-            result = self.eng.eval("""
-            structInfo = struct('targets', {}, 'oars', {}, 'other', {});
+            # First check if cst exists in the MATLAB workspace
+            cst_exists = self.eng.eval("exist('cst', 'var')", nargout=1)
+            if cst_exists != 1:
+                return {"success": False, "error": "CST not found in MATLAB workspace"}
             
-            for i = 1:size(cst,1)
-                if ~isempty(cst{i,2})
-                    name = cst{i,2};
-                    type = cst{i,3};
+            # Get the size of the cst to determine how many structures there are
+            cst_size = self.eng.eval("size(cst, 1)", nargout=1)
+            
+            # Initialize empty lists for the different structure types
+            target_list = []
+            oar_list = []
+            other_list = []
+            
+            # Loop through structures one by one to get names and types
+            for i in range(1, int(cst_size) + 1):
+                # Get the structure name
+                name = self.eng.eval(f"cst{{{i},2}}", nargout=1)
+                
+                # Skip empty structures
+                if not name:
+                    continue
                     
-                    if strcmp(type, 'TARGET')
-                        structInfo.targets{end+1} = name;
-                    elseif strcmp(type, 'OAR')
-                        structInfo.oars{end+1} = name;
-                    else
-                        structInfo.other{end+1} = name;
-                    end
-                end
-            end
-            
-            structInfo
-            """, nargout=1)
-            
-            # Convert MATLAB struct to Python dict
-            targets = [str(target) for target in result.get('targets', [])[0]]
-            oars = [str(oar) for oar in result.get('oars', [])[0]]
-            other = [str(structure) for structure in result.get('other', [])[0]]
+                # Get the structure type
+                struct_type = self.eng.eval(f"cst{{{i},3}}", nargout=1)
+                
+                # Add to appropriate list
+                if struct_type == "TARGET":
+                    target_list.append(str(name))
+                elif struct_type == "OAR":
+                    oar_list.append(str(name))
+                else:
+                    other_list.append(str(name))
             
             return {
                 "success": True,
-                "targets": targets,
-                "oars": oars,
-                "other": other
+                "targets": target_list,
+                "oars": oar_list,
+                "other": other_list
             }
             
         except Exception as e:
@@ -403,11 +409,12 @@ class MatRadEngine:
             
             # Get beam info
             num_beams = self.eng.eval("numel(stf)", nargout=1)
+            num_beams_int = int(num_beams)
             total_bixels = self.eng.eval("sum([stf.totalNumOfBixels])", nargout=1)
             
             # Get individual beam details
             beam_info = []
-            for i in range(1, num_beams + 1):
+            for i in range(1, num_beams_int + 1):
                 gantry = self.eng.eval(f"stf({i}).gantryAngle", nargout=1)
                 couch = self.eng.eval(f"stf({i}).couchAngle", nargout=1)
                 bixels = self.eng.eval(f"stf({i}).totalNumOfBixels", nargout=1)
@@ -420,7 +427,7 @@ class MatRadEngine:
             
             return {
                 "success": True,
-                "num_beams": num_beams,
+                "num_beams": num_beams_int,
                 "total_bixels": total_bixels,
                 "beam_info": beam_info,
                 "message": "Beam geometry generated successfully"
@@ -455,11 +462,12 @@ class MatRadEngine:
             self.eng.eval("dij = matRad_calcDoseInfluence(ct,cst,stf,pln);", nargout=0)
             calc_time = time.time() - start_time
             
-            # Store dij in class
-            self.dij = self.eng.workspace["dij"]
+            # Instead of trying to get the entire dij struct, just keep track that it exists
+            # self.dij = self.eng.workspace["dij"]
+            self.dij = True  # Just mark that dij exists in MATLAB workspace
             
             # Get matrix info
-            dij_dimensions = self.eng.eval("size(dij.physicalDose)", nargout=1)
+            dij_dimensions = self.eng.eval("size(dij.physicalDose{1})", nargout=1)
             num_voxels = self.eng.eval("numel(dij.doseGrid.x) * numel(dij.doseGrid.y) * numel(dij.doseGrid.z)", nargout=1)
             
             return {
@@ -508,40 +516,69 @@ class MatRadEngine:
                 
             obj_class = obj_class_map[obj_type]
             
-            # Find the structure index in the CST
-            struct_idx = self.eng.eval(f"""
-            idx = 0;
-            for i = 1:size(cst, 1)
-                if ~isempty(cst{{i,2}}) && strcmp(cst{{i,2}}, '{structure_name}')
-                    idx = i;
-                    break;
+            # First, find structure index (do this in one step)
+            # Get all structure names from CST
+            all_struct_names = self.eng.eval("""
+            structNames = {};
+            for i = 1:size(cst,1)
+                if ~isempty(cst{i,2})
+                    structNames{end+1} = cst{i,2};
                 end
             end
-            idx
+            structNames
             """, nargout=1)
             
-            if struct_idx == 0:
-                return {"success": False, "error": f"Structure '{structure_name}' not found in CST"}
-                
-            # Add the objective
-            self.eng.eval(f"""
-            % Check if objectives field exists, create if not
-            if ~isfield(cst{{{struct_idx},6}}, 'objectiveType') && isempty(cst{{{struct_idx},6}})
-                cst{{{struct_idx},6}} = {{}};
-            end
+            # Convert to list of strings
+            struct_names_list = [str(name) for name in all_struct_names]
             
-            % Create objective struct
+            # Find the index of the target structure
+            if structure_name not in struct_names_list:
+                return {"success": False, "error": f"Structure '{structure_name}' not found in CST"}
+            
+            # Structure index in MATLAB is 1-indexed, so add 1
+            # Also need to account for how the CST cell array is structured
+            # Get all indices of rows in CST
+            cst_indices = self.eng.eval("""
+            indices = [];
+            for i = 1:size(cst,1)
+                if ~isempty(cst{i,2})
+                    indices(end+1) = i;
+                end
+            end
+            indices
+            """, nargout=1)
+            
+            # Find the corresponding index in CST
+            struct_idx = cst_indices[struct_names_list.index(structure_name)]
+            
+            # Create the objective struct in MATLAB
+            self.eng.eval(f"""
+            % Create new objective
             newObj = struct();
             newObj.className = '{obj_class}';
             newObj.parameters = {{{dose_value}}};
             newObj.penalty = {penalty};
-            
-            % Add to CST
-            cst{{{struct_idx},6}}{{end+1}} = newObj;
             """, nargout=0)
             
-            # Get current number of objectives
-            num_objectives = self.eng.eval(f"numel(cst{{{struct_idx},6}})", nargout=1)
+            # Check if objectives field exists for this structure
+            has_objectives = self.eng.eval(f"~isempty(cst({int(struct_idx)},6))", nargout=1)
+            
+            if not has_objectives:
+                # Initialize empty cell array if no objectives exist
+                self.eng.eval(f"cst({int(struct_idx)},6) = {{}};", nargout=0)
+            
+            # Add the objective to the structure
+            self.eng.eval(f"""
+            % Get current objectives
+            currentObj = cst({int(struct_idx)},6);
+            % Add new objective
+            currentObj{{end+1}} = newObj;
+            % Update CST
+            cst({int(struct_idx)},6) = currentObj;
+            """, nargout=0)
+            
+            # Get the number of objectives
+            num_objectives = self.eng.eval(f"numel(cst({int(struct_idx)},6))", nargout=1)
             
             return {
                 "success": True,
@@ -582,15 +619,19 @@ class MatRadEngine:
             self.eng.eval("resultGUI = matRad_fluenceOptimization(dij,cst,pln);", nargout=0)
             opt_time = time.time() - start_time
             
-            # Store resultGUI in class
-            self.resultGUI = self.eng.workspace["resultGUI"]
+            # Instead of trying to get the entire resultGUI struct, just keep track that it exists
+            # self.resultGUI = self.eng.workspace["resultGUI"]
+            self.resultGUI = True  # Just mark that resultGUI exists in MATLAB workspace
             
-            # Get optimization results
-            obj_val = self.eng.eval("resultGUI.objectiveFunctionValue", nargout=1)
+            # Get optimization result from MATLAB without accessing objectiveFunctionValue
+            # We'll check if the optimization actually completed by verifying the resultGUI exists
+            has_result = self.eng.eval("exist('resultGUI', 'var')", nargout=1)
+            
+            if has_result != 1:
+                return {"success": False, "error": "Optimization failed to produce results"}
             
             return {
                 "success": True,
-                "objective_value": obj_val,
                 "optimization_time_sec": opt_time,
                 "message": "Fluence optimization completed successfully"
             }
@@ -625,9 +666,6 @@ class MatRadEngine:
             start_time = time.time()
             self.eng.eval("resultGUI = matRad_sequencing(resultGUI,stf,dij,pln);", nargout=0)
             seq_time = time.time() - start_time
-            
-            # Update resultGUI in class
-            self.resultGUI = self.eng.workspace["resultGUI"]
             
             # Check if apertureInfo exists
             has_aperture = self.eng.eval("isfield(resultGUI, 'apertureInfo')", nargout=1)
@@ -672,65 +710,93 @@ class MatRadEngine:
             return {"success": False, "error": "No optimization results available. Call optimize_fluence first."}
             
         try:
-            # Calculate DVH
+            # Check if resultGUI has a physicalDose field
+            has_dose = self.eng.eval("isfield(resultGUI, 'physicalDose')", nargout=1)
+            if not has_dose:
+                return {"success": False, "error": "No dose information available in result"}
+            
+            # Skip using matRad_planAnalysis since it's causing issues
+            # Instead, calculate DVH directly if a specific structure is requested
             if structure_name:
                 # Find the structure index
                 struct_idx = self.eng.eval(f"""
-                idx = 0;
-                for i = 1:size(cst, 1)
+                structIdx = 0;
+                for i = 1:size(cst,1)
                     if ~isempty(cst{{i,2}}) && strcmp(cst{{i,2}}, '{structure_name}')
-                        idx = i;
+                        structIdx = i;
                         break;
                     end
                 end
-                idx
+                structIdx
                 """, nargout=1)
                 
-                if struct_idx == 0:
+                if int(struct_idx) == 0:
                     return {"success": False, "error": f"Structure '{structure_name}' not found in CST"}
-                    
-                # Calculate DVH for specific structure
+                
+                # Calculate DVH directly using matRad_calcDVH
                 dvh_data = self.eng.eval(f"""
                 % Get dose for this structure
                 dose = resultGUI.physicalDose;
-                doseInStruct = dose(cst{{{struct_idx},4}}{{1}});
+                
+                % Get indices for this structure
+                structIndices = cst{{{int(struct_idx)},4}}{{1}};
+                
+                % Get dose in structure
+                doseInStruct = dose(structIndices);
                 
                 % Calculate DVH
-                [dvh, binCenters] = matRad_calcDVH(doseInStruct, cst{{{struct_idx},2}}, 0.1, 0);
+                [dvh, binCenters] = matRad_calcDVH(doseInStruct, '{structure_name}', 0.1, 0);
                 
-                % Return data
-                struct('name', cst{{{struct_idx},2}}, 'dvh', dvh, 'binCenters', binCenters)
+                % Create return structure
+                dvhData = struct();
+                dvhData.dvh = dvh;
+                dvhData.binCenters = binCenters;
+                dvhData
                 """, nargout=1)
                 
-                # Convert to Python
-                dvh_values = list(dvh_data['dvh'][0])
-                bin_centers = list(dvh_data['binCenters'][0])
-                
-                return {
-                    "success": True,
-                    "structure": structure_name,
-                    "dvh_values": dvh_values,
-                    "bin_centers": bin_centers,
-                    "message": f"DVH calculated for {structure_name}"
-                }
-                
-            else:
-                # Run plan analysis to get DVH for all structures
-                print("Running plan analysis for all structures...")
-                self.eng.eval("resultGUI = matRad_planAnalysis(resultGUI,ct,cst,stf,pln);", nargout=0)
-                
-                # Update resultGUI in class
-                self.resultGUI = self.eng.workspace["resultGUI"]
-                
-                # Check if DVH exists
-                has_dvh = self.eng.eval("isfield(resultGUI, 'DVH')", nargout=1)
-                
-                if not has_dvh:
-                    return {"success": False, "error": "DVH calculation failed"}
+                # Convert to Python lists
+                try:
+                    dvh_values = list(dvh_data.dvh) if hasattr(dvh_data, 'dvh') else []
+                    bin_centers = list(dvh_data.binCenters) if hasattr(dvh_data, 'binCenters') else []
                     
+                    return {
+                        "success": True,
+                        "structure": structure_name,
+                        "dvh_values": dvh_values,
+                        "bin_centers": bin_centers,
+                        "message": f"DVH calculated for {structure_name}"
+                    }
+                except Exception as e:
+                    return {"success": False, "error": f"Error converting DVH data: {str(e)}"}
+            else:
+                # Calculate basic DVH metrics for all structures
+                self.eng.eval("""
+                % Basic DVH calculation for all structures
+                for i = 1:size(cst,1)
+                    if ~isempty(cst{i,2})
+                        structName = cst{i,2};
+                        structIndices = cst{i,4}{1};
+                        
+                        if ~isempty(structIndices)
+                            % Get dose for this structure
+                            doseInStruct = resultGUI.physicalDose(structIndices);
+                            
+                            % Calculate mean, min, max
+                            if ~isfield(resultGUI, 'DVHMetrics')
+                                resultGUI.DVHMetrics = struct();
+                            end
+                            
+                            resultGUI.DVHMetrics.(structName).meanDose = mean(doseInStruct);
+                            resultGUI.DVHMetrics.(structName).minDose = min(doseInStruct);
+                            resultGUI.DVHMetrics.(structName).maxDose = max(doseInStruct);
+                        end
+                    end
+                end
+                """, nargout=0)
+                
                 return {
                     "success": True,
-                    "message": "DVH calculated for all structures"
+                    "message": "Basic DVH metrics calculated for all structures"
                 }
                 
         except Exception as e:
@@ -753,87 +819,103 @@ class MatRadEngine:
             return {"success": False, "error": "No optimization results available. Call optimize_fluence first."}
             
         try:
-            # Run plan analysis
-            print("Running comprehensive plan analysis...")
-            self.eng.eval("resultGUI = matRad_planAnalysis(resultGUI,ct,cst,stf,pln);", nargout=0)
+            # Check if resultGUI has a physicalDose field
+            has_dose = self.eng.eval("isfield(resultGUI, 'physicalDose')", nargout=1)
+            if not has_dose:
+                return {"success": False, "error": "No dose information available in result"}
             
-            # Update resultGUI in class
-            self.resultGUI = self.eng.workspace["resultGUI"]
-            
-            # Check if QI exists
-            has_qi = self.eng.eval("isfield(resultGUI, 'QI')", nargout=1)
-            
-            if not has_qi:
-                return {"success": False, "error": "Quality indicators calculation failed"}
+            # Calculate simple metrics directly without using matRad_planAnalysis
+            self.eng.eval("""
+            try
+                % Create metrics struct if it doesn't exist
+                if ~isfield(resultGUI, 'metrics')
+                    resultGUI.metrics = struct();
+                end
                 
-            # Extract structure information and quality indicators
-            structure_metrics = self.eng.eval("""
-            metrics = struct('structures', {});
+                % Calculate metrics for each structure
+                for i = 1:size(cst,1)
+                    if ~isempty(cst{i,2})
+                        structName = cst{i,2};
+                        structType = cst{i,3};
+                        
+                        % Get voxel indices for this structure
+                        if ~isempty(cst{i,4}) && ~isempty(cst{i,4}{1})
+                            voxelIndices = cst{i,4}{1};
+                            
+                            % Get dose for this structure
+                            structDose = resultGUI.physicalDose(voxelIndices);
+                            
+                            % Calculate basic metrics
+                            resultGUI.metrics.(structName).mean = mean(structDose);
+                            resultGUI.metrics.(structName).max = max(structDose);
+                            resultGUI.metrics.(structName).min = min(structDose);
+                            resultGUI.metrics.(structName).std = std(structDose);
+                            resultGUI.metrics.(structName).V5 = sum(structDose >= 5) / numel(structDose) * 100;
+                            resultGUI.metrics.(structName).V10 = sum(structDose >= 10) / numel(structDose) * 100;
+                            resultGUI.metrics.(structName).V20 = sum(structDose >= 20) / numel(structDose) * 100;
+                            resultGUI.metrics.(structName).type = structType;
+                        end
+                    end
+                end
+            catch ME
+                warning('Metrics calculation failed: %s', ME.message);
+            end
+            """, nargout=0)
             
-            % Get structure names from CST
-            structNames = {};
+            # Get structure names
+            struct_names = self.eng.eval("""
+            names = {};
             for i = 1:size(cst,1)
                 if ~isempty(cst{i,2})
-                    structNames{end+1} = cst{i,2};
+                    names{end+1} = cst{i,2};
                 end
             end
-            
-            % Get metrics for each structure if available
-            for i = 1:numel(structNames)
-                if isfield(resultGUI.QI, structNames{i})
-                    qi = resultGUI.QI.(structNames{i});
-                    
-                    % Create struct with metrics
-                    structMetrics = struct();
-                    structMetrics.name = structNames{i};
-                    
-                    % Add all available metrics
-                    if isfield(qi, 'D_mean')
-                        structMetrics.mean_dose = qi.D_mean;
-                    end
-                    
-                    if isfield(qi, 'D_max')
-                        structMetrics.max_dose = qi.D_max;
-                    end
-                    
-                    if isfield(qi, 'D_min')
-                        structMetrics.min_dose = qi.D_min;
-                    end
-                    
-                    % Add standard deviation if available
-                    if isfield(qi, 'D_std')
-                        structMetrics.std_dose = qi.D_std;
-                    end
-                    
-                    % Add to metrics collection
-                    metrics.structures{end+1} = structMetrics;
-                end
-            end
-            
-            metrics
+            names
             """, nargout=1)
             
-            # Convert to Python structure
+            # Check if metrics were calculated
+            has_metrics = self.eng.eval("isfield(resultGUI, 'metrics')", nargout=1)
+            
+            if not has_metrics:
+                return {"success": False, "error": "Metrics calculation failed"}
+            
+            # Get metrics for each structure
             metrics_list = []
-            for struct_metric in structure_metrics.get('structures', []):
-                metric_dict = {
-                    'name': str(struct_metric['name']),
-                }
-                
-                # Add available metrics
-                if hasattr(struct_metric, 'mean_dose'):
-                    metric_dict['mean_dose'] = float(struct_metric['mean_dose'])
+            
+            if struct_names:
+                for name in struct_names:
+                    name_str = str(name)
                     
-                if hasattr(struct_metric, 'max_dose'):
-                    metric_dict['max_dose'] = float(struct_metric['max_dose'])
+                    # Check if metrics data exists for this structure
+                    has_struct_metrics = self.eng.eval(f"isfield(resultGUI.metrics, '{name_str}')", nargout=1)
                     
-                if hasattr(struct_metric, 'min_dose'):
-                    metric_dict['min_dose'] = float(struct_metric['min_dose'])
-                    
-                if hasattr(struct_metric, 'std_dose'):
-                    metric_dict['std_dose'] = float(struct_metric['std_dose'])
-                    
-                metrics_list.append(metric_dict)
+                    if has_struct_metrics:
+                        # Get metrics
+                        mean_dose = float(self.eng.eval(f"resultGUI.metrics.{name_str}.mean", nargout=1))
+                        max_dose = float(self.eng.eval(f"resultGUI.metrics.{name_str}.max", nargout=1))
+                        min_dose = float(self.eng.eval(f"resultGUI.metrics.{name_str}.min", nargout=1))
+                        std_dose = float(self.eng.eval(f"resultGUI.metrics.{name_str}.std", nargout=1))
+                        struct_type = str(self.eng.eval(f"resultGUI.metrics.{name_str}.type", nargout=1))
+                        
+                        # Get volume metrics
+                        v5 = float(self.eng.eval(f"resultGUI.metrics.{name_str}.V5", nargout=1))
+                        v10 = float(self.eng.eval(f"resultGUI.metrics.{name_str}.V10", nargout=1))
+                        v20 = float(self.eng.eval(f"resultGUI.metrics.{name_str}.V20", nargout=1))
+                        
+                        # Create metric dict
+                        metric_dict = {
+                            'name': name_str,
+                            'type': struct_type,
+                            'mean_dose': mean_dose,
+                            'max_dose': max_dose,
+                            'min_dose': min_dose,
+                            'std_dose': std_dose,
+                            'V5': v5,
+                            'V10': v10,
+                            'V20': v20
+                        }
+                            
+                        metrics_list.append(metric_dict)
             
             return {
                 "success": True,
