@@ -349,23 +349,8 @@ class MatRadEngine:
             return {"success": False, "error": "No treatment plan created. Call create_empty_plan first."}
             
         try:
-            # Set the optimizer
-            self.eng.eval(f"""
-            if strcmpi('{optimizer_type}', 'fmincon') && matRad_OptimizerFmincon.IsAvailable()
-                pln.propOpt.optimizer = 'fmincon';
-                
-                % Set fmincon parameters
-                pln.propOpt.fmincon.MaxIterations = {max_iterations};
-                pln.propOpt.fmincon.MaxFunctionEvaluations = {max_iterations * 2};
-                pln.propOpt.fmincon.OptimalityTolerance = 1e-3;
-                pln.propOpt.fmincon.StepTolerance = 1e-3;
-                pln.propOpt.fmincon.Display = 'iter';
-            else
-                pln.propOpt.optimizer = 'IPOPT';
-                % Set IPOPT parameters if needed
-            end
-            """, nargout=0)
-            
+            # First set global config max iterations - this is used by all optimizers
+            self.eng.eval(f"matRad_cfg = MatRad_Config.instance(); matRad_cfg.defaults.propOpt.maxIter = {max_iterations};", nargout=0)                    
             # Update plan in class
             self.pln = self.eng.workspace["pln"]
             
@@ -572,11 +557,11 @@ class MatRadEngine:
             # Add the objective to the structure
             self.eng.eval(f"""
             % Get current objectives
-            currentObj = cst({int(struct_idx)},6);
+            currentObj = cst{{{int(struct_idx)},6}};
             % Add new objective
             currentObj{{end+1}} = newObj;
             % Update CST
-            cst({int(struct_idx)},6) = currentObj;
+            cst{{{int(struct_idx)},6}} = currentObj;
             """, nargout=0)
             
             # Get the number of objectives
