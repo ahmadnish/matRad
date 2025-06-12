@@ -1,0 +1,235 @@
+# QUANTEC and ESTRO Dose Guidelines
+# References:
+# - QUANTEC: Bentzen et al., "Quantitative Analyses of Normal Tissue Effects in the Clinic (QUANTEC)", IJROBP, 2010
+# - ESTRO: Meijer et al., "ESTRO consensus guidelines for radiotherapy of non-small cell lung cancer", Radiotherapy and Oncology, 2020
+
+version: 1.0
+last_updated: "2023-05-01"
+
+# Common structure naming variations
+structure_aliases:
+  spinal_cord:
+    - "SPINAL_CORD"
+    - "SpinalCord"
+    - "Cord"
+    - "SC"
+  parotid:
+    - "PAROTID"
+    - "PAROTID_LT"
+    - "PAROTID_RT"
+    - "ParotidLeft"
+    - "ParotidRight"
+  brain_stem:
+    - "BRAIN_STEM"
+    - "BrainStem"
+    - "Brainstem"
+  heart:
+    - "HEART"
+    - "Heart"
+  lung:
+    - "LUNG"
+    - "LUNG_LT"
+    - "LUNG_RT"
+    - "LungLeft"
+    - "LungRight"
+    - "Lungs"
+  liver:
+    - "LIVER"
+    - "Liver"
+  kidney:
+    - "KIDNEY"
+    - "KIDNEY_LT"
+    - "KIDNEY_RT"
+    - "KidneyLeft"
+    - "KidneyRight"
+  ptv:
+    - "PTV"
+    - "PTV70"
+    - "PTV63"
+    - "PTV60"
+    - "PTV54"
+    - "PTV50"
+    - "CTV"
+    - "GTV"
+
+# Target dose guidelines
+targets:
+  standard:
+    prescription_variability:
+      min_dose: 95%  # D95% should be at least 95% of prescription
+      max_dose: 107% # D2% should be no more than 107% of prescription
+    objectives:
+      - type: "min_dose"
+        priority: "high"
+        dose_percent: 95  # 95% of prescription dose
+      - type: "max_dose"
+        priority: "high"
+        dose_percent: 107 # 107% of prescription dose
+      - type: "square_deviation"
+        priority: "high"
+        dose_percent: 100
+  
+  head_and_neck:
+    high_risk:
+      prescription: 70.0  # Gy
+      objectives:
+        - type: "square_deviation"
+          priority: "high"
+          penalty: 1000
+          dose_percent: 100
+    intermediate_risk:
+      prescription: 63.0  # Gy
+      objectives:
+        - type: "square_deviation"
+          priority: "high"
+          penalty: 1000
+          dose_percent: 100
+    low_risk:
+      prescription: 56.0  # Gy
+      objectives:
+        - type: "square_deviation"
+          priority: "high"
+          penalty: 1000
+          dose_percent: 100
+
+# Organ at Risk dose constraints (QUANTEC)
+organs_at_risk:
+  spinal_cord:
+    constraints:
+      - type: "max_dose"
+        limit: 45  # Gy
+        priority: "very_high"
+        endpoint: "myelopathy"
+        complication_rate: "<0.2%"
+      - type: "max_dose"
+        limit: 50  # Gy
+        priority: "very_high"
+        endpoint: "myelopathy"
+        complication_rate: "<5%"
+    objectives:
+      - type: "max_dose"
+        priority: "very_high"
+        penalty: 800
+        dose: 45  # Gy
+  
+  brain_stem:
+    constraints:
+      - type: "max_dose"
+        limit: 54  # Gy
+        priority: "high"
+        endpoint: "necrosis"
+        complication_rate: "<5%"
+    objectives:
+      - type: "max_dose"
+        priority: "high"
+        penalty: 500
+        dose: 54  # Gy
+  
+  parotid:
+    constraints:
+      - type: "mean_dose"
+        limit: 25  # Gy
+        priority: "medium"
+        endpoint: "xerostomia"
+        complication_rate: "<20%"
+      - type: "mean_dose"
+        limit: 20  # Gy
+        priority: "medium"
+        endpoint: "long-term salivary function"
+        complication_rate: "<20%"
+    objectives:
+      - type: "mean_dose"
+        priority: "medium"
+        penalty: 100
+        dose: 25  # Gy
+  
+  heart:
+    constraints:
+      - type: "mean_dose"
+        limit: 26  # Gy
+        priority: "medium"
+        endpoint: "pericarditis"
+        complication_rate: "<15%"
+      - type: "volume_dose"
+        volume: 33  # %
+        dose: 60  # Gy
+        priority: "medium"
+        endpoint: "long-term cardiac mortality"
+    objectives:
+      - type: "mean_dose"
+        priority: "medium"
+        penalty: 100
+        dose: 26  # Gy
+  
+  lung:
+    constraints:
+      - type: "mean_dose"
+        limit: 20  # Gy
+        priority: "medium"
+        endpoint: "pneumonitis"
+        complication_rate: "<20%"
+      - type: "volume_dose"
+        volume: 35  # %
+        dose: 20  # Gy
+        priority: "medium"
+        endpoint: "pneumonitis"
+        complication_rate: "<20%"
+    objectives:
+      - type: "mean_dose"
+        priority: "medium"
+        penalty: 100
+        dose: 20  # Gy
+  
+  liver:
+    constraints:
+      - type: "mean_dose"
+        limit: 30  # Gy
+        priority: "medium"
+        endpoint: "RILD"
+        complication_rate: "<5%"
+      - type: "volume_dose"
+        volume: 50  # %
+        dose: 30  # Gy
+        priority: "medium"
+        endpoint: "RILD"
+    objectives:
+      - type: "mean_dose"
+        priority: "medium"
+        penalty: 100
+        dose: 30  # Gy
+  
+  kidney:
+    constraints:
+      - type: "mean_dose"
+        limit: 18  # Gy
+        priority: "medium"
+        endpoint: "clinical dysfunction"
+        complication_rate: "<5%"
+      - type: "volume_dose"
+        volume: 35  # %
+        dose: 20  # Gy
+        priority: "medium"
+        endpoint: "clinical dysfunction"
+    objectives:
+      - type: "mean_dose"
+        priority: "medium"
+        penalty: 100
+        dose: 18  # Gy
+
+# Treatment site-specific default beam arrangements
+beam_arrangements:
+  head_and_neck:
+    gantry_angles: [0, 72, 144, 216, 288]  # 5-field IMRT setup
+    couch_angles: [0, 0, 0, 0, 0]
+  lung:
+    gantry_angles: [0, 45, 135, 180, 225, 315]  # 6-field IMRT setup
+    couch_angles: [0, 0, 0, 0, 0, 0]
+  prostate:
+    gantry_angles: [0, 40, 80, 120, 240, 280, 320]  # 7-field IMRT setup
+    couch_angles: [0, 0, 0, 0, 0, 0, 0]
+  breast:
+    gantry_angles: [305, 355, 20, 50]  # 4-field tangential setup
+    couch_angles: [0, 0, 0, 0]
+  whole_brain:
+    gantry_angles: [90, 270]  # Opposed lateral fields
+    couch_angles: [0, 0] 
