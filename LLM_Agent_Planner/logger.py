@@ -1,293 +1,282 @@
 """
-Logger for IMRT Planning Agent
+Logger Module for IMRT Planning Agent
 
-This module implements logging functionality for the IMRT planning agent,
-tracking all actions, decisions, and state changes during the planning process.
+This module provides logging functionality to record agent actions,
+optimization changes, and plan metrics during the planning process.
 """
 
-import os
 import json
 import time
+import os
+from typing import Dict, List, Any, Optional
 from datetime import datetime
-from typing import Dict, List, Any, Optional, Union
 from pathlib import Path
 
 
 class PlanningLogger:
-    """
-    Logger for the radiotherapy planning agent.
+    """Logger for recording IMRT planning session activities."""
     
-    Records agent actions, optimization changes, plan metrics, and user interactions
-    during the planning process. Logs are stored as structured JSON.
-    """
-    
-    def __init__(self, log_dir: Optional[str] = None, session_id: Optional[str] = None):
+    def __init__(self, session_id: Optional[str] = None, log_dir: str = "logs"):
         """
-        Initialize the PlanningLogger.
+        Initialize the planning logger.
         
         Args:
-            log_dir: Directory where log files will be stored. If None, 
-                    uses 'logs' directory in the same directory as this module.
-            session_id: Unique identifier for the planning session. If None,
-                       generates a timestamp-based ID.
+            session_id: Unique identifier for the planning session
+            log_dir: Directory to store log files
         """
-        if log_dir is None:
-            # Default to the 'logs' directory in the same directory as this module
-            self.log_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'logs')
-        else:
-            self.log_dir = log_dir
-            
-        # Create logs directory if it doesn't exist
-        os.makedirs(self.log_dir, exist_ok=True)
+        self.session_id = session_id or f"session_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        self.log_dir = Path(log_dir)
+        self.log_dir.mkdir(exist_ok=True)
         
-        # Generate session ID if not provided
-        if session_id is None:
-            self.session_id = f"session_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-        else:
-            self.session_id = session_id
-            
-        # Initialize log data structure
-        self.log_data = {
+        self.log_file = self.log_dir / f"{self.session_id}.json"
+        self.session_data = {
             "session_id": self.session_id,
             "start_time": datetime.now().isoformat(),
-            "patient_id": None,
-            "plan_name": None,
-            "entries": []
+            "patient_info": {},
+            "planning_steps": [],
+            "metrics": [],
+            "objectives": [],
+            "optimization_history": [],
+            "final_results": {}
         }
-        
-        # Path to the JSON log file
-        self.log_file_path = os.path.join(self.log_dir, f"{self.session_id}.json")
         
         # Initialize log file
         self._save_log()
-        
-        # Log session start
-        self.log_action("session_start", "Planning session initialized")
     
-    def set_plan_info(self, patient_id: str, plan_name: str) -> None:
+    def log_action(self, action_type: str, description: str, 
+                   parameters: Optional[Dict] = None, 
+                   result: Optional[Dict] = None) -> None:
         """
-        Set the patient ID and plan name for this planning session.
+        Log an agent action or planning step.
         
         Args:
-            patient_id: Patient identifier
-            plan_name: Name of the treatment plan
-        """
-        self.log_data["patient_id"] = patient_id
-        self.log_data["plan_name"] = plan_name
-        self._save_log()
-        
-        self.log_action("plan_info_set", 
-                        f"Plan info set: Patient {patient_id}, Plan '{plan_name}'",
-                        {"patient_id": patient_id, "plan_name": plan_name})
-    
-    def log_action(self, action_type: str, description: str, data: Optional[Dict[str, Any]] = None) -> None:
-        """
-        Log an agent action.
-        
-        Args:
-            action_type: Type of action (e.g., 'load_patient', 'set_beam_angles', etc.)
+            action_type: Type of action (e.g., 'tool_call', 'optimization', 'evaluation')
             description: Human-readable description of the action
-            data: Optional structured data related to the action
+            parameters: Parameters used for the action
+            result: Result or outcome of the action
         """
-        entry = {
+        step_entry = {
             "timestamp": datetime.now().isoformat(),
-            "type": "action",
+            "step_number": len(self.session_data["planning_steps"]) + 1,
             "action_type": action_type,
             "description": description,
+            "parameters": parameters or {},
+            "result": result or {},
+            "success": result.get("success", True) if result else True
         }
         
-        if data:
-            entry["data"] = data
-            
-        self.log_data["entries"].append(entry)
+        self.session_data["planning_steps"].append(step_entry)
         self._save_log()
     
-    def log_optimization(self, objectives: List[Dict[str, Any]], results: Dict[str, Any]) -> None:
+    def log_patient_info(self, patient_data: Dict[str, Any]) -> None:
         """
-        Log optimization objectives and results.
+        Log patient information.
         
         Args:
-            objectives: List of optimization objectives used
-            results: Results of the optimization (function value, iterations, etc.)
+            patient_data: Dictionary containing patient information
         """
-        entry = {
+        self.session_data["patient_info"] = {
             "timestamp": datetime.now().isoformat(),
-            "type": "optimization",
-            "objectives": objectives,
-            "results": results
+            **patient_data
         }
-        
-        self.log_data["entries"].append(entry)
         self._save_log()
     
-    def log_metrics(self, metrics: Dict[str, Any]) -> None:
+    def log_objective(self, structure_name: str, objective_type: str, 
+                     dose_value: float, penalty: float = 1000.0) -> None:
+        """
+        Log an optimization objective.
+        
+        Args:
+            structure_name: Name of the structure
+            objective_type: Type of objective
+            dose_value: Dose value in Gy
+            penalty: Penalty weight
+        """
+        objective_entry = {
+            "timestamp": datetime.now().isoformat(),
+            "structure_name": structure_name,
+            "objective_type": objective_type,
+            "dose_value": dose_value,
+            "penalty": penalty
+        }
+        
+        self.session_data["objectives"].append(objective_entry)
+        self._save_log()
+    
+    def log_optimization_result(self, iteration: int, convergence_data: Dict[str, Any],
+                               execution_time: float) -> None:
+        """
+        Log optimization results.
+        
+        Args:
+            iteration: Optimization iteration number
+            convergence_data: Data about optimization convergence
+            execution_time: Time taken for optimization
+        """
+        opt_entry = {
+            "timestamp": datetime.now().isoformat(),
+            "iteration": iteration,
+            "execution_time_sec": execution_time,
+            "convergence_data": convergence_data
+        }
+        
+        self.session_data["optimization_history"].append(opt_entry)
+        self._save_log()
+    
+    def log_plan_metrics(self, metrics: Dict[str, Any]) -> None:
         """
         Log plan evaluation metrics.
         
         Args:
-            metrics: Dictionary of plan evaluation metrics
-                    (e.g., DVH points, conformity indices, etc.)
+            metrics: Dictionary containing plan metrics
         """
-        entry = {
+        metrics_entry = {
             "timestamp": datetime.now().isoformat(),
-            "type": "metrics",
             "metrics": metrics
         }
         
-        self.log_data["entries"].append(entry)
+        self.session_data["metrics"].append(metrics_entry)
         self._save_log()
     
-    def log_suggestion(self, suggestion_type: str, suggestion: str, 
-                       reason: str, data: Optional[Dict[str, Any]] = None) -> None:
+    def log_final_results(self, final_data: Dict[str, Any]) -> None:
         """
-        Log a suggestion made by the agent.
+        Log final planning results.
         
         Args:
-            suggestion_type: Type of suggestion (e.g., 'beam_arrangement', 'objective_change')
-            suggestion: The actual suggestion text
-            reason: Reasoning behind the suggestion
-            data: Optional structured data related to the suggestion
+            final_data: Final planning session data
         """
-        entry = {
+        self.session_data["final_results"] = {
             "timestamp": datetime.now().isoformat(),
-            "type": "suggestion",
-            "suggestion_type": suggestion_type,
-            "suggestion": suggestion,
-            "reason": reason
+            "end_time": datetime.now().isoformat(),
+            **final_data
         }
-        
-        if data:
-            entry["data"] = data
-            
-        self.log_data["entries"].append(entry)
         self._save_log()
     
-    def log_user_interaction(self, interaction_type: str, user_input: str, 
-                           agent_response: Optional[str] = None) -> None:
-        """
-        Log user interaction with the agent.
-        
-        Args:
-            interaction_type: Type of interaction (e.g., 'query', 'command', 'feedback')
-            user_input: Input provided by the user
-            agent_response: Optional response from the agent
-        """
-        entry = {
-            "timestamp": datetime.now().isoformat(),
-            "type": "user_interaction",
-            "interaction_type": interaction_type,
-            "user_input": user_input
-        }
-        
-        if agent_response:
-            entry["agent_response"] = agent_response
-            
-        self.log_data["entries"].append(entry)
-        self._save_log()
-    
-    def log_error(self, error_type: str, error_message: str, 
-                stack_trace: Optional[str] = None) -> None:
-        """
-        Log an error that occurred during the planning process.
-        
-        Args:
-            error_type: Type of error
-            error_message: Error message
-            stack_trace: Optional stack trace for debugging
-        """
-        entry = {
-            "timestamp": datetime.now().isoformat(),
-            "type": "error",
-            "error_type": error_type,
-            "error_message": error_message
-        }
-        
-        if stack_trace:
-            entry["stack_trace"] = stack_trace
-            
-        self.log_data["entries"].append(entry)
-        self._save_log()
-    
-    def _save_log(self) -> None:
-        """
-        Save the current log data to the JSON file.
-        """
-        with open(self.log_file_path, 'w') as f:
-            json.dump(self.log_data, f, indent=2)
-    
-    def get_log(self) -> Dict[str, Any]:
+    def get_full_log(self) -> Dict[str, Any]:
         """
         Get the complete log data.
         
         Returns:
-            Dictionary containing all log data
+            Complete session log data
         """
-        return self.log_data
-    
-    def get_entries_by_type(self, entry_type: str) -> List[Dict[str, Any]]:
-        """
-        Get log entries filtered by type.
-        
-        Args:
-            entry_type: Type of entries to retrieve (e.g., 'action', 'metrics', 'suggestion')
-            
-        Returns:
-            List of log entries of the specified type
-        """
-        return [entry for entry in self.log_data["entries"] if entry["type"] == entry_type]
+        return self.session_data.copy()
     
     def print_log_summary(self) -> None:
-        """
-        Print a summary of the log entries.
-        """
-        entry_types = {}
-        for entry in self.log_data["entries"]:
-            entry_type = entry["type"]
-            if entry_type in entry_types:
-                entry_types[entry_type] += 1
-            else:
-                entry_types[entry_type] = 1
+        """Print a summary of the planning session log."""
+        print("\n" + "=" * 60)
+        print(f"📝 PLANNING SESSION LOG SUMMARY")
+        print("=" * 60)
+        print(f"Session ID: {self.session_id}")
+        print(f"Start Time: {self.session_data['start_time']}")
         
-        print(f"Log Summary for Session {self.session_id}:")
-        print(f"  Patient: {self.log_data['patient_id'] or 'Not set'}")
-        print(f"  Plan: {self.log_data['plan_name'] or 'Not set'}")
-        print(f"  Start Time: {self.log_data['start_time']}")
-        print(f"  Total Entries: {len(self.log_data['entries'])}")
-        print("  Entry Types:")
-        for entry_type, count in entry_types.items():
-            print(f"    - {entry_type}: {count}")
+        if self.session_data["patient_info"]:
+            print(f"\n👤 Patient Info:")
+            for key, value in self.session_data["patient_info"].items():
+                if key != "timestamp":
+                    print(f"  {key}: {value}")
+        
+        print(f"\n🔧 Planning Steps: {len(self.session_data['planning_steps'])}")
+        for i, step in enumerate(self.session_data["planning_steps"][-5:], 1):  # Show last 5 steps
+            status = "✅" if step["success"] else "❌"
+            print(f"  {status} {step['action_type']}: {step['description']}")
+        
+        if len(self.session_data["planning_steps"]) > 5:
+            print(f"  ... and {len(self.session_data['planning_steps']) - 5} more steps")
+        
+        print(f"\n🎯 Objectives Added: {len(self.session_data['objectives'])}")
+        for obj in self.session_data["objectives"]:
+            print(f"  • {obj['structure_name']}: {obj['objective_type']} = {obj['dose_value']} Gy")
+        
+        print(f"\n🔄 Optimization Iterations: {len(self.session_data['optimization_history'])}")
+        
+        print(f"\n📊 Metric Evaluations: {len(self.session_data['metrics'])}")
+        
+        if self.session_data["final_results"]:
+            print(f"\n✅ Final Results Available")
+            
+        print(f"\n📁 Log File: {self.log_file}")
     
-    def export_log(self, filepath: Optional[str] = None) -> str:
+    def export_log(self, output_file: str) -> bool:
         """
-        Export the log to a specified JSON file.
+        Export log to a specific file.
         
         Args:
-            filepath: Path where to save the exported log. If None,
-                    uses a timestamped filename in the log directory.
-                    
-        Returns:
-            Path to the exported log file
-        """
-        if filepath is None:
-            export_time = datetime.now().strftime('%Y%m%d_%H%M%S')
-            filepath = os.path.join(self.log_dir, 
-                                   f"export_{self.session_id}_{export_time}.json")
-        
-        with open(filepath, 'w') as f:
-            json.dump(self.log_data, f, indent=2)
+            output_file: Path to export the log
             
-        return filepath
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            with open(output_file, 'w') as f:
+                json.dump(self.session_data, f, indent=2)
+            return True
+        except Exception as e:
+            print(f"Error exporting log: {str(e)}")
+            return False
+    
+    def _save_log(self) -> None:
+        """Save the current log data to file."""
+        try:
+            with open(self.log_file, 'w') as f:
+                json.dump(self.session_data, f, indent=2)
+        except Exception as e:
+            print(f"Warning: Could not save log file: {str(e)}")
 
 
-def create_logger(log_dir: Optional[str] = None, session_id: Optional[str] = None) -> PlanningLogger:
+def load_session_log(log_file: str) -> Optional[Dict[str, Any]]:
     """
-    Convenience function to create a new PlanningLogger instance.
+    Load a planning session log from file.
     
     Args:
-        log_dir: Directory where log files will be stored
-        session_id: Unique identifier for the planning session
+        log_file: Path to the log file
         
     Returns:
-        Initialized PlanningLogger instance
+        Log data dictionary or None if failed
     """
-    return PlanningLogger(log_dir, session_id) 
+    try:
+        with open(log_file, 'r') as f:
+            return json.load(f)
+    except Exception as e:
+        print(f"Error loading log file: {str(e)}")
+        return None
+
+
+def list_session_logs(log_dir: str = "logs") -> List[str]:
+    """
+    List available session log files.
+    
+    Args:
+        log_dir: Directory containing log files
+        
+    Returns:
+        List of log file paths
+    """
+    log_path = Path(log_dir)
+    if not log_path.exists():
+        return []
+    
+    return [str(f) for f in log_path.glob("*.json")]
+
+
+# Example usage functions
+def print_session_summary(log_file: str) -> None:
+    """Print a summary of a specific session log."""
+    log_data = load_session_log(log_file)
+    if log_data:
+        logger = PlanningLogger()
+        logger.session_data = log_data
+        logger.print_log_summary()
+
+
+if __name__ == "__main__":
+    # Example usage
+    logger = PlanningLogger("test_session")
+    
+    # Log some example actions
+    logger.log_action("initialization", "Starting MATLAB engine")
+    logger.log_patient_info({"patient_file": "HEAD_AND_NECK.mat", "num_structures": 15})
+    logger.log_objective("PTV", "min_dose", 50.0, 1000)
+    logger.log_optimization_result(1, {"objective_value": 1234.5}, 45.2)
+    
+    # Print summary
+    logger.print_log_summary() 
