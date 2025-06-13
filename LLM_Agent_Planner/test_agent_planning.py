@@ -8,7 +8,9 @@ to create and iteratively improve an IMRT treatment plan using matRad tools.
 import os
 import json
 import time
-from typing import Dict, Any, List
+import numpy as np
+from typing import Dict, Any, List, Optional, Union
+from pydantic import BaseModel, Field
 from openai import OpenAI
 from matrad_tools import MatRadEngine
 from logger import PlanningLogger
@@ -16,8 +18,144 @@ from logger import PlanningLogger
 # Initialize OpenAI client
 client = OpenAI()
 
+def convert_matlab_types(obj):
+    """
+    Convert MATLAB types to JSON-serializable Python types.
+    
+    Args:
+        obj: Object that may contain MATLAB types
+        
+    Returns:
+        JSON-serializable object
+    """
+    if hasattr(obj, '_data'):  # MATLAB array types
+        return obj._data.tolist() if hasattr(obj._data, 'tolist') else list(obj._data)
+    elif hasattr(obj, 'tolist'):  # numpy arrays
+        return obj.tolist()
+    elif isinstance(obj, (np.integer, np.floating)):
+        return obj.item()
+    elif isinstance(obj, dict):
+        return {key: convert_matlab_types(value) for key, value in obj.items()}
+    elif isinstance(obj, list):
+        return [convert_matlab_types(item) for item in obj]
+    elif isinstance(obj, tuple):
+        return tuple(convert_matlab_types(item) for item in obj)
+    else:
+        return obj
+
+# Pydantic models for structured outputs
+class ToolResult(BaseModel):
+    """Base model for tool execution results."""
+    success: bool
+    message: Optional[str] = None
+    error: Optional[str] = None
+    execution_time_sec: Optional[float] = None
+
+class PatientInfo(BaseModel):
+    """Model for patient loading results."""
+    success: bool
+    patient_file: Optional[str] = None
+    ct_dimensions: Optional[List[int]] = None
+    num_structures: Optional[int] = None
+    message: Optional[str] = None
+    error: Optional[str] = None
+
+class StructureInfo(BaseModel):
+    """Model for structure information."""
+    success: bool
+    targets: Optional[List[str]] = None
+    oars: Optional[List[str]] = None
+    other: Optional[List[str]] = None
+    error: Optional[str] = None
+
+class PlanInfo(BaseModel):
+    """Model for treatment plan information."""
+    success: bool
+    radiation_mode: Optional[str] = None
+    num_fractions: Optional[int] = None
+    num_beams: Optional[int] = None
+    gantry_angles: Optional[List[float]] = None
+    message: Optional[str] = None
+    error: Optional[str] = None
+
+class BeamGeometryInfo(BaseModel):
+    """Model for beam geometry results."""
+    success: bool
+    num_beams: Optional[int] = None
+    total_bixels: Optional[int] = None
+    beam_info: Optional[List[Dict[str, Any]]] = None
+    message: Optional[str] = None
+    error: Optional[str] = None
+
+class DoseMatrixInfo(BaseModel):
+    """Model for dose influence matrix results."""
+    success: bool
+    dimensions: Optional[List[int]] = None
+    num_voxels: Optional[int] = None
+    calc_time_sec: Optional[float] = None
+    message: Optional[str] = None
+    error: Optional[str] = None
+
+class ObjectiveInfo(BaseModel):
+    """Model for optimization objective results."""
+    success: bool
+    structure: Optional[str] = None
+    objective_type: Optional[str] = None
+    dose_value: Optional[float] = None
+    penalty: Optional[float] = None
+    total_objectives: Optional[int] = None
+    message: Optional[str] = None
+    error: Optional[str] = None
+
+class OptimizationInfo(BaseModel):
+    """Model for optimization results."""
+    success: bool
+    optimization_time_sec: Optional[float] = None
+    message: Optional[str] = None
+    error: Optional[str] = None
+
+class StructureMetric(BaseModel):
+    """Model for individual structure metrics."""
+    name: str
+    type: str
+    mean_dose: float
+    max_dose: float
+    min_dose: float
+    std_dose: float
+    V5: float
+    V10: float
+    V20: float
+
+class PlanEvaluationInfo(BaseModel):
+    """Model for plan evaluation results."""
+    success: bool
+    structure_metrics: Optional[List[StructureMetric]] = None
+    message: Optional[str] = None
+    error: Optional[str] = None
+
+class DVHInfo(BaseModel):
+    """Model for DVH calculation results."""
+    success: bool
+    structure: Optional[str] = None
+    dvh_values: Optional[List[float]] = None
+    bin_centers: Optional[List[float]] = None
+    message: Optional[str] = None
+    error: Optional[str] = None
+
+class SaveInfo(BaseModel):
+    """Model for plan saving results."""
+    success: bool
+    output_file: Optional[str] = None
+    message: Optional[str] = None
+    error: Optional[str] = None
+
+class PlanState(BaseModel):
+    """Model for current plan state."""
+    success: bool = True
+    plan_state: Dict[str, Any]
+
 class IMRTPlanningAgent:
-    """LLM Agent for IMRT Planning using OpenAI function calling."""
+    """LLM Agent for IMRT Planning using OpenAI function calling with structured outputs."""
     
     def __init__(self, matrad_path: str = None):
         """Initialize the planning agent with matRad engine."""
@@ -41,14 +179,18 @@ class IMRTPlanningAgent:
                               {"matrad_path": matrad_path})
         
     def get_available_tools(self) -> List[Dict]:
-        """Define the tools available to the LLM agent."""
+        """Define the tools available to the LLM agent with structured outputs."""
         return [
             {
                 "type": "function",
                 "function": {
                     "name": "start_matlab_engine",
                     "description": "Start the MATLAB engine and initialize matRad. Must be called first.",
-                    "parameters": {"type": "object", "properties": {}}
+                    "parameters": {
+                        "type": "object",
+                        "properties": {},
+                        "additionalProperties": False
+                    }
                 }
             },
             {
@@ -59,9 +201,13 @@ class IMRTPlanningAgent:
                     "parameters": {
                         "type": "object",
                         "properties": {
-                            "patient_file": {"type": "string", "description": "Path to patient .mat file"}
+                            "patient_file": {
+                                "type": "string", 
+                                "description": "Path to patient .mat file"
+                            }
                         },
-                        "required": ["patient_file"]
+                        "required": ["patient_file"],
+                        "additionalProperties": False
                     }
                 }
             },
@@ -70,7 +216,11 @@ class IMRTPlanningAgent:
                 "function": {
                     "name": "get_structure_information",
                     "description": "Get information about structures (targets, OARs) in the loaded patient.",
-                    "parameters": {"type": "object", "properties": {}}
+                    "parameters": {
+                        "type": "object",
+                        "properties": {},
+                        "additionalProperties": False
+                    }
                 }
             },
             {
@@ -78,7 +228,11 @@ class IMRTPlanningAgent:
                 "function": {
                     "name": "create_treatment_plan",
                     "description": "Create an empty treatment plan with default settings.",
-                    "parameters": {"type": "object", "properties": {}}
+                    "parameters": {
+                        "type": "object",
+                        "properties": {},
+                        "additionalProperties": False
+                    }
                 }
             },
             {
@@ -89,10 +243,19 @@ class IMRTPlanningAgent:
                     "parameters": {
                         "type": "object",
                         "properties": {
-                            "gantry_angles": {"type": "array", "items": {"type": "number"}, "description": "List of gantry angles in degrees"},
-                            "couch_angles": {"type": "array", "items": {"type": "number"}, "description": "List of couch angles in degrees (optional)"}
+                            "gantry_angles": {
+                                "type": "array",
+                                "items": {"type": "number"},
+                                "description": "List of gantry angles in degrees"
+                            },
+                            "couch_angles": {
+                                "type": "array",
+                                "items": {"type": "number"},
+                                "description": "List of couch angles in degrees (optional)"
+                            }
                         },
-                        "required": ["gantry_angles"]
+                        "required": ["gantry_angles"],
+                        "additionalProperties": False
                     }
                 }
             },
@@ -101,7 +264,11 @@ class IMRTPlanningAgent:
                 "function": {
                     "name": "generate_beam_geometry",
                     "description": "Generate beam geometry (stf) based on the current plan.",
-                    "parameters": {"type": "object", "properties": {}}
+                    "parameters": {
+                        "type": "object",
+                        "properties": {},
+                        "additionalProperties": False
+                    }
                 }
             },
             {
@@ -109,7 +276,11 @@ class IMRTPlanningAgent:
                 "function": {
                     "name": "calculate_dose_influence_matrix",
                     "description": "Calculate the dose influence matrix. This is computationally intensive.",
-                    "parameters": {"type": "object", "properties": {}}
+                    "parameters": {
+                        "type": "object",
+                        "properties": {},
+                        "additionalProperties": False
+                    }
                 }
             },
             {
@@ -120,12 +291,26 @@ class IMRTPlanningAgent:
                     "parameters": {
                         "type": "object",
                         "properties": {
-                            "structure_name": {"type": "string", "description": "Name of the structure"},
-                            "objective_type": {"type": "string", "enum": ["min_dose", "max_dose", "mean_dose", "square_deviation"], "description": "Type of objective"},
-                            "dose_value": {"type": "number", "description": "Dose value in Gy"},
-                            "penalty": {"type": "number", "description": "Penalty weight (default 1000)"}
+                            "structure_name": {
+                                "type": "string",
+                                "description": "Name of the structure"
+                            },
+                            "objective_type": {
+                                "type": "string",
+                                "enum": ["min_dose", "max_dose", "mean_dose", "square_deviation"],
+                                "description": "Type of objective"
+                            },
+                            "dose_value": {
+                                "type": "number",
+                                "description": "Dose value in Gy"
+                            },
+                            "penalty": {
+                                "type": "number",
+                                "description": "Penalty weight (default 1000)"
+                            }
                         },
-                        "required": ["structure_name", "objective_type", "dose_value"]
+                        "required": ["structure_name", "objective_type", "dose_value"],
+                        "additionalProperties": False
                     }
                 }
             },
@@ -134,7 +319,11 @@ class IMRTPlanningAgent:
                 "function": {
                     "name": "optimize_fluence",
                     "description": "Run fluence optimization based on current objectives.",
-                    "parameters": {"type": "object", "properties": {}}
+                    "parameters": {
+                        "type": "object",
+                        "properties": {},
+                        "additionalProperties": False
+                    }
                 }
             },
             {
@@ -142,7 +331,11 @@ class IMRTPlanningAgent:
                 "function": {
                     "name": "evaluate_plan_quality",
                     "description": "Evaluate the current plan and calculate metrics for all structures.",
-                    "parameters": {"type": "object", "properties": {}}
+                    "parameters": {
+                        "type": "object",
+                        "properties": {},
+                        "additionalProperties": False
+                    }
                 }
             },
             {
@@ -153,8 +346,12 @@ class IMRTPlanningAgent:
                     "parameters": {
                         "type": "object",
                         "properties": {
-                            "structure_name": {"type": "string", "description": "Name of structure (optional, if not provided calculates for all)"}
-                        }
+                            "structure_name": {
+                                "type": "string",
+                                "description": "Name of structure (optional, if not provided calculates for all)"
+                            }
+                        },
+                        "additionalProperties": False
                     }
                 }
             },
@@ -166,9 +363,13 @@ class IMRTPlanningAgent:
                     "parameters": {
                         "type": "object",
                         "properties": {
-                            "output_file": {"type": "string", "description": "Path to save the plan"}
+                            "output_file": {
+                                "type": "string",
+                                "description": "Path to save the plan"
+                            }
                         },
-                        "required": ["output_file"]
+                        "required": ["output_file"],
+                        "additionalProperties": False
                     }
                 }
             },
@@ -177,23 +378,32 @@ class IMRTPlanningAgent:
                 "function": {
                     "name": "get_plan_state",
                     "description": "Get the current state of the planning process.",
-                    "parameters": {"type": "object", "properties": {}}
+                    "parameters": {
+                        "type": "object",
+                        "properties": {},
+                        "additionalProperties": False
+                    }
                 }
             }
         ]
     
     def execute_tool(self, tool_name: str, arguments: Dict) -> Dict[str, Any]:
-        """Execute a tool function and return the result."""
+        """Execute a tool function and return the result with proper type conversion."""
         start_time = time.time()
         
         try:
             if tool_name == "start_matlab_engine":
                 result = self.engine.start_engine()
                 self.plan_state["engine_started"] = result
-                result_dict = {"success": result, "message": "MATLAB engine started" if result else "Failed to start MATLAB engine"}
+                result_dict = {
+                    "success": result, 
+                    "message": "MATLAB engine started" if result else "Failed to start MATLAB engine"
+                }
                 
             elif tool_name == "load_patient_data":
                 result_dict = self.engine.load_patient(arguments["patient_file"])
+                # Convert MATLAB types
+                result_dict = convert_matlab_types(result_dict)
                 if result_dict.get("success"):
                     self.plan_state["patient_loaded"] = True
                     # Log patient information
@@ -205,9 +415,11 @@ class IMRTPlanningAgent:
                 
             elif tool_name == "get_structure_information":
                 result_dict = self.engine.get_structure_names()
+                result_dict = convert_matlab_types(result_dict)
                 
             elif tool_name == "create_treatment_plan":
                 result_dict = self.engine.create_empty_plan()
+                result_dict = convert_matlab_types(result_dict)
                 if result_dict.get("success"):
                     self.plan_state["plan_created"] = True
                 
@@ -216,14 +428,17 @@ class IMRTPlanningAgent:
                     arguments["gantry_angles"], 
                     arguments.get("couch_angles")
                 )
+                result_dict = convert_matlab_types(result_dict)
                 
             elif tool_name == "generate_beam_geometry":
                 result_dict = self.engine.generate_beam_geometry()
+                result_dict = convert_matlab_types(result_dict)
                 if result_dict.get("success"):
                     self.plan_state["beam_geometry_generated"] = True
                 
             elif tool_name == "calculate_dose_influence_matrix":
                 result_dict = self.engine.calculate_influence_matrix()
+                result_dict = convert_matlab_types(result_dict)
                 if result_dict.get("success"):
                     self.plan_state["influence_matrix_calculated"] = True
                 
@@ -234,6 +449,7 @@ class IMRTPlanningAgent:
                     arguments["dose_value"],
                     arguments.get("penalty", 1000.0)
                 )
+                result_dict = convert_matlab_types(result_dict)
                 if result_dict.get("success"):
                     objective_info = {
                         "structure": arguments["structure_name"],
@@ -252,6 +468,7 @@ class IMRTPlanningAgent:
                 
             elif tool_name == "optimize_fluence":
                 result_dict = self.engine.optimize_fluence()
+                result_dict = convert_matlab_types(result_dict)
                 if result_dict.get("success"):
                     self.plan_state["optimization_completed"] = True
                     self.plan_state["iteration_count"] += 1
@@ -266,6 +483,7 @@ class IMRTPlanningAgent:
                 
             elif tool_name == "evaluate_plan_quality":
                 result_dict = self.engine.evaluate_plan()
+                result_dict = convert_matlab_types(result_dict)
                 if result_dict.get("success"):
                     self.plan_state["plan_evaluated"] = True
                     
@@ -275,23 +493,29 @@ class IMRTPlanningAgent:
                 
             elif tool_name == "calculate_dvh_analysis":
                 result_dict = self.engine.calculate_dvh(arguments.get("structure_name"))
+                result_dict = convert_matlab_types(result_dict)
                 
             elif tool_name == "save_treatment_plan":
                 result_dict = self.engine.save_plan(arguments["output_file"])
+                result_dict = convert_matlab_types(result_dict)
                 
             elif tool_name == "get_plan_state":
-                result_dict = {"success": True, "plan_state": self.plan_state}
+                result_dict = {"success": True, "plan_state": convert_matlab_types(self.plan_state)}
                 
             else:
                 result_dict = {"success": False, "error": f"Unknown tool: {tool_name}"}
             
-            # Log the action
+            # Add execution time and ensure all types are JSON serializable
             execution_time = time.time() - start_time
+            result_dict["execution_time_sec"] = execution_time
+            result_dict = convert_matlab_types(result_dict)
+            
+            # Log the action
             self.logger.log_action(
                 "tool_call",
                 f"Executed {tool_name}",
                 arguments,
-                {**result_dict, "execution_time_sec": execution_time}
+                result_dict
             )
             
             return result_dict
@@ -299,20 +523,21 @@ class IMRTPlanningAgent:
         except Exception as e:
             error_result = {"success": False, "error": str(e)}
             execution_time = time.time() - start_time
+            error_result["execution_time_sec"] = execution_time
             
             # Log the error
             self.logger.log_action(
                 "tool_error",
                 f"Error executing {tool_name}",
                 arguments,
-                {**error_result, "execution_time_sec": execution_time}
+                error_result
             )
             
             return error_result
     
     def run_planning_session(self, patient_file: str, max_iterations: int = 5) -> Dict[str, Any]:
         """
-        Run a complete planning session with the LLM agent.
+        Run a complete planning session with the LLM agent using structured outputs.
         
         Args:
             patient_file: Path to patient data file
@@ -330,27 +555,33 @@ class IMRTPlanningAgent:
         
         # Initial system prompt
         system_prompt = f"""
-        You are an expert radiation therapy planning agent. Your goal is to create an optimal IMRT treatment plan.
-        
-        Planning Process:
-        1. Start MATLAB engine and load patient data
-        2. Examine structure information to understand targets and OARs
-        3. Create initial treatment plan with appropriate beam angles
-        4. Generate beam geometry and calculate dose influence matrix
-        5. Add optimization objectives for targets and OARs based on clinical guidelines
-        6. Optimize the plan and evaluate quality
-        7. If needed, iteratively improve by adjusting objectives and re-optimizing
-        
-        Clinical Guidelines:
-        - Target structures should receive prescribed dose (typically 50-70 Gy)
-        - OARs should be kept below tolerance doses
-        - Use appropriate beam arrangements (typically 5-9 beams for H&N)
-        - Balance target coverage with OAR sparing
-        
-        Current patient file: {patient_file}
-        Maximum iterations allowed: {max_iterations}
-        
-        Start by getting the current plan state and then proceed step by step.
+            You are an expert radiation therapy planning agent. Your goal is to create an optimal IMRT treatment plan.
+
+            Planning Process:
+            1. Start MATLAB engine and load patient data
+            2. Examine structure information to understand targets and OARs
+            3. Create initial treatment plan with appropriate beam angles
+            4. Generate beam geometry, calculate dose influence matrix
+            5. Add optimization objectives for targets and OARs based on clinical guidelines
+            6. Optimize the plan and evaluate quality
+            7. Then, iteratively:
+            - Choose the appropriate evaluation tool(s) to assess the plan's quality and identify any unmet clinical objectives
+            - If the plan is suboptimal, log the reasons and metrics (e.g., PTV D95 too low, OAR dose too high)
+            - Based on the findings, select and invoke the appropriate tool(s) to add or adjust optimization objectives
+            - Re-optimize the plan and re-evaluate
+            - Repeat this loop until clinical criteria are met or the maximum number of iterations is reached
+
+            Clinical Guidelines:
+            - Target structures should receive prescribed dose (typically 50-70 Gy)
+            - OARs should be kept below tolerance doses
+            - Use appropriate beam arrangements (typically 5–9 beams for H&N)
+            - Balance target coverage with OAR sparing
+
+            Current patient file: {patient_file}  
+            Maximum iterations allowed: {max_iterations}
+
+            Start by getting the current plan state and then proceed step by step.  
+            Always ensure your function calls use valid JSON-serializable parameters.
         """
         
         # Start conversation
@@ -387,11 +618,14 @@ class IMRTPlanningAgent:
                         
                         print(f"   Result: {result.get('message', result)}")
                         
+                        # Convert result to JSON string (now guaranteed to be serializable)
+                        result_json = json.dumps(result, ensure_ascii=False, indent=2)
+                        
                         # Add tool result to conversation
                         tool_message = {
                             "role": "tool",
                             "tool_call_id": tool_call.id,
-                            "content": json.dumps(result)
+                            "content": result_json
                         }
                         messages.append(tool_message)
                 
@@ -427,7 +661,7 @@ class IMRTPlanningAgent:
                 break
         
         # Final evaluation
-        final_state = self.plan_state.copy()
+        final_state = convert_matlab_types(self.plan_state.copy())
         session_results = {
             "success": True,
             "iterations_completed": iteration,
