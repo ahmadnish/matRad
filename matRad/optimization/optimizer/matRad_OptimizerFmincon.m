@@ -92,6 +92,28 @@ classdef matRad_OptimizerFmincon < matRad_Optimizer
                 matRad_cfg.dispWarning('Diagnostics in fmincon will be turned off due to a bug when using lbfgs with specified number of histories!');
                 obj.options.Diagnostics = 'off';
             end
+            
+            % Apply custom fmincon options from plan structure if they exist
+            if evalin('base', 'exist(''pln'', ''var'')')
+                pln = evalin('base', 'pln');
+                if isfield(pln, 'propOpt') && isfield(pln.propOpt, 'fmincon')
+                    customOpts = pln.propOpt.fmincon;
+                    optionNames = fieldnames(customOpts);
+                    
+                    for i = 1:length(optionNames)
+                        optName = optionNames{i};
+                        optValue = customOpts.(optName);
+                        
+                        % Apply the custom option, handling different value types
+                        try
+                            obj.options.(optName) = optValue;
+                            matRad_cfg.dispInfo('Applied custom fmincon option: %s = %s\n', optName, mat2str(optValue));
+                        catch ME
+                            matRad_cfg.dispWarning('Could not apply custom fmincon option %s: %s\n', optName, ME.message);
+                        end
+                    end
+                end
+            end
                 
             
             % Run fmincon.
