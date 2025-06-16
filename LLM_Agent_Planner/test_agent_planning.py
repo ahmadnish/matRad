@@ -422,6 +422,21 @@ class IMRTPlanningAgent:
                 result_dict = convert_matlab_types(result_dict)
                 if result_dict.get("success"):
                     self.plan_state["plan_created"] = True
+                    
+                    # # Configure fmincon tolerances to prevent early stopping
+                    # try:
+                    #     self._configure_fmincon_tolerances()
+                    #     self.logger.log_action(
+                    #         "tolerance_config", 
+                    #         "Configured fmincon tolerances to prevent early stopping",
+                    #         {}
+                    #     )
+                    # except Exception as e:
+                    #     self.logger.log_action(
+                    #         "tolerance_config_error",
+                    #         "Failed to configure fmincon tolerances",
+                    #         {"error": str(e)}
+                    #     )
                 
             elif tool_name == "set_beam_configuration":
                 result_dict = self.engine.set_beam_angles(
@@ -534,6 +549,45 @@ class IMRTPlanningAgent:
             )
             
             return error_result
+    
+    def _configure_fmincon_tolerances(self):
+        """
+        Configure fmincon tolerances to prevent early stopping.
+        This method sets more relaxed tolerances that allow the optimizer to run longer.
+        """
+        if not self.engine.initialized:
+            return
+            
+        try:
+            self.engine.eng.eval("""
+            % Configure fmincon tolerances to prevent early stopping
+            if isfield(pln, 'propOpt') && isfield(pln.propOpt, 'optimizer') && strcmp(pln.propOpt.optimizer, 'fmincon')
+                
+                % Set more relaxed tolerances to prevent early stopping
+                pln.propOpt.fmincon.StepTolerance = 1e-4;           % Increase from default 1e-10
+                pln.propOpt.fmincon.ConstraintTolerance = 1e-3;     % Increase from default 1e-6
+                pln.propOpt.fmincon.OptimalityTolerance = 1e-3;     % Increase from default 1e-6
+                pln.propOpt.fmincon.FunctionTolerance = 1e-4;       % Increase from default 1e-6
+                
+                % Increase iteration limits
+                pln.propOpt.fmincon.MaxIterations = 200;            % Increase from default
+                pln.propOpt.fmincon.MaxFunctionEvaluations = 400;   % Increase from default
+                
+                % Enable detailed display
+                pln.propOpt.fmincon.Display = 'iter';
+                
+                disp('✅ Configured fmincon tolerances to prevent early stopping:');
+                disp(['   StepTolerance: ' num2str(pln.propOpt.fmincon.StepTolerance)]);
+                disp(['   ConstraintTolerance: ' num2str(pln.propOpt.fmincon.ConstraintTolerance)]);
+                disp(['   OptimalityTolerance: ' num2str(pln.propOpt.fmincon.OptimalityTolerance)]);
+                disp(['   FunctionTolerance: ' num2str(pln.propOpt.fmincon.FunctionTolerance)]);
+                disp(['   MaxIterations: ' num2str(pln.propOpt.fmincon.MaxIterations)]);
+                
+            end
+            """, nargout=0)
+            
+        except Exception as e:
+            print(f"Warning: Could not configure fmincon tolerances: {e}")
     
     def run_planning_session(self, patient_file: str, max_iterations: int = 5) -> Dict[str, Any]:
         """
