@@ -681,7 +681,7 @@ class MatRadEngine:
     def calculate_dvh(self, structure_name: Optional[str] = None) -> Dict[str, Any]:
         """
         Calculate DVH (Dose-Volume Histogram) for the specified structure or all structures.
-        Creates visual DVH plots for agent assessment.
+        Creates visual DVH plots and detailed clinical assessments.
         
         Args:
             structure_name: Name of the structure to calculate DVH for. If None, calculates for all structures.
@@ -705,353 +705,486 @@ class MatRadEngine:
                 return {"success": False, "error": "No dose information available in result"}
             
             if structure_name:
-                # Find the structure index
-                self.eng.eval(f"""
-                structIdx = 0;
-                for i = 1:size(cst,1)
-                    if ~isempty(cst{{i,2}}) && strcmp(cst{{i,2}}, '{structure_name}')
-                        structIdx = i;
-                        break;
-                    end
-                end
-                """, nargout=0)
-                
-                # Access the structIdx variable from MATLAB workspace
-                struct_idx = self.eng.workspace["structIdx"]
-                
-                if int(struct_idx) == 0:
-                    return {"success": False, "error": f"Structure '{structure_name}' not found in CST"}
-                
-                # Calculate DVH and quality indicators using matRad's robust function
-                self.eng.eval(f"""
-                % Get the full dose cube (already scaled by fractions from user edit)
-                numOfFractions = pln.numOfFractions;
-                dose = resultGUI.physicalDose * numOfFractions;
-                
-                % Get CST dimensions and create a temporary CST with just this structure
-                [numRows, numCols] = size(cst);
-                tempCst = cell(1, numCols);
-                tempCst(1,:) = cst({int(struct_idx)},:);
-                
-                % Calculate DVH using standard matRad function
-                dvhResult = matRad_calcDVH(tempCst, dose, 'cum');
-                
-                % Calculate quality indicators using matRad's robust function
-                refVol = [2 5 50 95 98];  % For D2, D5, D50, D95, D98
-                refGy = [5 10 20 30 40 50 60];  % For V5Gy, V10Gy, etc.
-                qi = matRad_calcQualityIndicators(tempCst, pln, dose, refGy, refVol);
-                
-                % Extract all data into a simple structure for Python access
-                dvhData = struct();
-                dvhData.structure_name = dvhResult(1).name;
-                dvhData.structure_type = cst{{{int(struct_idx)},3}};
-                dvhData.dvh_values = dvhResult(1).volumePoints;
-                dvhData.bin_centers = dvhResult(1).doseGrid;
-                
-                % Basic quality metrics from matRad QI
-                qiStruct = qi(1);
-                dvhData.mean_dose = qiStruct.mean;
-                dvhData.max_dose = qiStruct.max;
-                dvhData.min_dose = qiStruct.min;
-                dvhData.std_dose = qiStruct.std;
-                dvhData.D95 = qiStruct.D_95;
-                dvhData.D50 = qiStruct.D_50;
-                dvhData.D5 = qiStruct.D_5;
-                dvhData.D2 = qiStruct.D_2;
-                dvhData.D98 = qiStruct.D_98;
-                
-                % V-metrics from matRad QI
-                dvhData.V_5Gy = qiStruct.V_5Gy;
-                dvhData.V_10Gy = qiStruct.V_10Gy;
-                dvhData.V_20Gy = qiStruct.V_20Gy;
-                dvhData.V_30Gy = qiStruct.V_30Gy;
-                dvhData.V_40Gy = qiStruct.V_40Gy;
-                dvhData.V_50Gy = qiStruct.V_50Gy;
-                dvhData.V_60Gy = qiStruct.V_60Gy;
-                
-                % Target-specific metrics (CI/HI) if available
-                if strcmp(cst{{{int(struct_idx)},3}}, 'TARGET')
-                    % Look for CI and HI fields in QI
-                    field_names = fieldnames(qiStruct);
-                    ci_fields = field_names(startsWith(field_names, 'CI_'));
-                    hi_fields = field_names(startsWith(field_names, 'HI_'));
-                    
-                    if ~isempty(ci_fields)
-                        dvhData.CI = qiStruct.(ci_fields{{1}});
-                    else
-                        dvhData.CI = NaN;
-                    end
-                    
-                    if ~isempty(hi_fields)
-                        dvhData.HI = qiStruct.(hi_fields{{1}});
-                    else
-                        dvhData.HI = NaN;
-                    end
-                else
-                    dvhData.CI = NaN;
-                    dvhData.HI = NaN;
-                end
-                
-                % Create DVH plot
-                figure('Position', [100, 100, 800, 600], 'Visible', 'off');
-                plot(dvhData.bin_centers, dvhData.dvh_values, 'LineWidth', 2);
-                xlabel('Dose (Gy)', 'FontSize', 12);
-                ylabel('Volume (%)', 'FontSize', 12);
-                title(['DVH for ' dvhData.structure_name], 'FontSize', 14);
-                grid on;
-                
-                % Add key points
-                hold on;
-                plot(dvhData.D95, 95, 'ro', 'MarkerSize', 8, 'MarkerFaceColor', 'r');
-                plot(dvhData.D50, 50, 'go', 'MarkerSize', 8, 'MarkerFaceColor', 'g');
-                legend({{'DVH Curve', 'D95', 'D50'}}, 'Location', 'best');
-                
-                % Save plot
-                plotFilename = ['dvh_' strrep(dvhData.structure_name, ' ', '_') '.png'];
-                saveas(gcf, plotFilename);
-                close(gcf);
-                dvhData.plot_file = plotFilename;
-                """, nargout=0)
-                
-                # Get the results from MATLAB
-                dvh_data = self.eng.workspace["dvhData"]
-                
-                # Extract data for Python processing
-                structure_name = str(dvh_data['structure_name'])
-                structure_type = str(dvh_data['structure_type'])
-                mean_dose = float(dvh_data['mean_dose'])
-                max_dose = float(dvh_data['max_dose'])
-                min_dose = float(dvh_data['min_dose'])
-                std_dose = float(dvh_data['std_dose'])
-                d95 = float(dvh_data['D95'])
-                d50 = float(dvh_data['D50'])
-                d5 = float(dvh_data['D5'])
-                d2 = float(dvh_data['D2'])
-                d98 = float(dvh_data['D98'])
-                plot_file = str(dvh_data['plot_file'])
-                
-                # V-metrics
-                v_5gy = float(dvh_data['V_5Gy'])
-                v_10gy = float(dvh_data['V_10Gy'])
-                v_20gy = float(dvh_data['V_20Gy'])
-                v_30gy = float(dvh_data['V_30Gy'])
-                v_40gy = float(dvh_data['V_40Gy'])
-                v_50gy = float(dvh_data['V_50Gy'])
-                v_60gy = float(dvh_data['V_60Gy'])
-                
-                # Target metrics
-                ci = dvh_data.get('CI', float('nan'))
-                hi = dvh_data.get('HI', float('nan'))
-                
-                # Create clinical assessment using matRad quality indicators
-                assessment = []
-                assessment.append(f"DVH ASSESSMENT FOR {structure_type}: {structure_name}")
-                assessment.append("=" * 60)
-                assessment.append("QUALITY INDICATORS (matRad_calcQualityIndicators):")
-                assessment.append(f"  Mean Dose: {mean_dose:.1f} Gy")
-                assessment.append(f"  D2: {d2:.1f} Gy | D5: {d5:.1f} Gy | D50: {d50:.1f} Gy | D95: {d95:.1f} Gy | D98: {d98:.1f} Gy")
-                assessment.append(f"  Dose Range: {min_dose:.1f} - {max_dose:.1f} Gy")
-                
-                # V-metrics summary
-                assessment.append(f"VOLUME METRICS:")
-                assessment.append(f"  V5Gy: {v_5gy*100:.1f}% | V10Gy: {v_10gy*100:.1f}% | V20Gy: {v_20gy*100:.1f}%")
-                assessment.append(f"  V30Gy: {v_30gy*100:.1f}% | V40Gy: {v_40gy*100:.1f}% | V50Gy: {v_50gy*100:.1f}% | V60Gy: {v_60gy*100:.1f}%")
-                
-                # Target-specific analysis
-                if structure_type == 'TARGET':
-                    assessment.append(f"TARGET QUALITY ASSESSMENT:")
-                    if not math.isnan(hi):
-                        assessment.append(f"  Homogeneity Index: {hi:.3f}")
-                        if hi < 5:
-                            assessment.append(f"    EXCELLENT homogeneity")
-                        elif hi < 10:
-                            assessment.append(f"    GOOD homogeneity")
-                        else:
-                            assessment.append(f"    Poor homogeneity - optimize plan")
-                    
-                    if not math.isnan(ci):
-                        assessment.append(f"  Conformity Index: {ci:.3f}")
-                        if ci > 0.9:
-                            assessment.append(f"    EXCELLENT conformity")
-                        elif ci > 0.8:
-                            assessment.append(f"    GOOD conformity")
-                        else:
-                            assessment.append(f"    Poor conformity - dose spillage")
-                    
-                    # Coverage analysis
-                    coverage = (d95 / d50) * 100 if d50 > 0 else 0
-                    assessment.append(f"  Coverage: D95 = {coverage:.1f}% of D50")
-                    if coverage >= 95:
-                        assessment.append(f"    EXCELLENT coverage")
-                    elif coverage >= 90:
-                        assessment.append(f"    GOOD coverage")
-                    else:
-                        assessment.append(f"    Poor coverage - underdosage risk")
-                
-                elif structure_type == 'OAR':
-                    assessment.append(f"OAR SPARING ASSESSMENT:")
-                    if max_dose > 50:
-                        assessment.append(f"  HIGH-DOSE OAR: Max dose {max_dose:.1f} Gy")
-                    elif max_dose > 20:
-                        assessment.append(f"  MODERATE-DOSE OAR: Max dose {max_dose:.1f} Gy") 
-                    else:
-                        assessment.append(f"  LOW-DOSE OAR: Max dose {max_dose:.1f} Gy - good sparing")
-                
-                # DVH curve analysis
-                dose_spread = d5 - d95
-                assessment.append(f"DVH CURVE ANALYSIS:")
-                assessment.append(f"  Dose Spread (D5-D95): {dose_spread:.1f} Gy")
-                if structure_type == 'TARGET':
-                    if dose_spread < 5:
-                        assessment.append(f"    STEEP curve - excellent homogeneity")
-                    elif dose_spread < 10:
-                        assessment.append(f"    MODERATE curve - good homogeneity")
-                    else:
-                        assessment.append(f"    SHALLOW curve - dose heterogeneity")
-                
-                assessment.append(f"VISUAL REFERENCE: {plot_file}")
-                
-                assessment_text = "\n".join(assessment)
-                
-                return {
-                    "success": True,
-                    "structure": structure_name,
-                    "structure_type": structure_type,
-                    "dvh_assessment": assessment_text,
-                    "dvh_metrics": {
-                        "D95": d95,
-                        "D50": d50,
-                        "D5": d5,
-                        "D2": d2,
-                        "D98": d98,
-                        "mean_dose": mean_dose,
-                        "max_dose": max_dose,
-                        "min_dose": min_dose,
-                        "std_dose": std_dose,
-                        "V_5Gy": v_5gy,
-                        "V_10Gy": v_10gy,
-                        "V_20Gy": v_20gy,
-                        "V_30Gy": v_30gy,
-                        "V_40Gy": v_40gy,
-                        "V_50Gy": v_50gy,
-                        "V_60Gy": v_60gy,
-                        "HI": hi,
-                        "CI": ci
-                    },
-                    "plot_file": plot_file,
-                    "message": f"DVH analyzed for {structure_name} using matRad quality indicators"
-                }
+                return self._calculate_single_structure_dvh(structure_name)
             else:
-                # Calculate DVH for all structures using robust matRad function
-                self.eng.eval("""
-                % Calculate DVH for all structures
-                numOfFractions = pln.numOfFractions;
-                dose = resultGUI.physicalDose * numOfFractions;
-                dvhResults = matRad_calcDVH(cst, dose, 'cum');
-                
-                % Calculate quality indicators for all structures
-                refVol = [2 5 50 95 98];  % For D2, D5, D50, D95, D98
-                refGy = [5 10 20 30 40 50 60];  % For V5Gy, V10Gy, etc.
-                qi = matRad_calcQualityIndicators(cst, pln, dose, refGy, refVol);
-                
-                % Create comprehensive results with quality indicators
-                allDvhData = struct();
-                allDvhData.num_structures = length(dvhResults);
-                
-                % Create a comprehensive DVH plot for all structures
-                figure('Position', [100, 100, 1200, 800], 'Visible', 'off');
-                colors = lines(length(dvhResults));
-                legendEntries = {};
-                
-                for i = 1:length(dvhResults)
-                    % Plot this structure's DVH
-                    plot(dvhResults(i).doseGrid, dvhResults(i).volumePoints, ...
-                         'Color', colors(i,:), 'LineWidth', 2);
-                    hold on;
-                    legendEntries{end+1} = dvhResults(i).name;
-                    
-                    % Store structure information and quality indicators
-                    structField = ['struct_' num2str(i)];
-                    allDvhData.(structField).name = dvhResults(i).name;
-                    allDvhData.(structField).type = cst{i,3};
-                    allDvhData.(structField).mean_dose = qi(i).mean;
-                    allDvhData.(structField).max_dose = qi(i).max;
-                    allDvhData.(structField).D95 = qi(i).D_95;
-                    allDvhData.(structField).D50 = qi(i).D_50;
-                    allDvhData.(structField).D5 = qi(i).D_5;
-                    
-                    % Add target-specific metrics
-                    if strcmp(cst{i,3}, 'TARGET')
-                        field_names = fieldnames(qi(i));
-                        ci_fields = field_names(startsWith(field_names, 'CI_'));
-                        hi_fields = field_names(startsWith(field_names, 'HI_'));
-                        
-                        if ~isempty(ci_fields)
-                            allDvhData.(structField).CI = qi(i).(ci_fields{1});
-                        end
-                        
-                        if ~isempty(hi_fields)
-                            allDvhData.(structField).HI = qi(i).(hi_fields{1});
-                        end
-                    end
-                end
-                
-                xlabel('Dose (Gy)', 'FontSize', 12);
-                ylabel('Volume (%)', 'FontSize', 12);
-                title('DVH for All Structures', 'FontSize', 14);
-                legend(legendEntries, 'Location', 'bestoutside', 'Interpreter', 'none');
-                grid on;
-                
-                % Save comprehensive plot
-                plotFilename = 'dvh_all_structures.png';
-                saveas(gcf, plotFilename);
-                close(gcf);
-                
-                allDvhData.plot_file = plotFilename;
-                
-                % Create structure names list
-                structure_names = cell(length(dvhResults), 1);
-                for i = 1:length(dvhResults)
-                    structure_names{i} = dvhResults(i).name;
-                end
-                allDvhData.structure_names = structure_names;
-                """, nargout=0)
-                
-                # Get the results from MATLAB
-                all_dvh_data = self.eng.workspace["allDvhData"]
-                num_structures = int(all_dvh_data['num_structures'])
-                plot_file = str(all_dvh_data['plot_file'])
-                structure_names = [str(name) for name in all_dvh_data['structure_names']]
-                
-                # Create overview with quality indicator summary
-                dvh_overview = f"""
-DVH Analysis - Quality Indicators Overview
-
-Total Structures: {num_structures}
-Structures: {', '.join(structure_names)}
-
-Quality Indicators calculated using matRad_calcQualityIndicators:
-- D-metrics: D2, D5, D50, D95, D98 (dose to X% volume)
-- V-metrics: V5-V60Gy (volume receiving X Gy)
-- Target metrics: Conformity Index (CI), Homogeneity Index (HI)
-- Statistical metrics: mean, max, min, std
-
-Visual Plot: {plot_file}
-
-Use calculate_dvh_analysis with specific structure names for detailed clinical assessment
-                """
-                
-                return {
-                    "success": True,
-                    "num_structures": num_structures,
-                    "structure_names": structure_names,
-                    "dvh_overview": dvh_overview.strip(),
-                    "plot_file": plot_file,
-                    "message": f"DVH plotted for all {num_structures} structures using matRad quality indicators"
-                }
+                return self._calculate_all_structures_dvh()
                 
         except Exception as e:
             return {"success": False, "error": str(e)}
+    
+    def _calculate_single_structure_dvh(self, structure_name: str) -> Dict[str, Any]:
+        """Calculate DVH for a single structure with detailed assessment."""
+        
+        # Find the structure index
+        self.eng.eval(f"""
+        structIdx = 0;
+        for i = 1:size(cst,1)
+            if ~isempty(cst{{i,2}}) && strcmp(cst{{i,2}}, '{structure_name}')
+                structIdx = i;
+                break;
+            end
+        end
+        """, nargout=0)
+        
+        # Access the structIdx variable from MATLAB workspace
+        struct_idx = self.eng.workspace["structIdx"]
+        
+        if int(struct_idx) == 0:
+            return {"success": False, "error": f"Structure '{structure_name}' not found in CST"}
+        
+        # Calculate DVH and quality indicators using matRad's robust function
+        dvh_data = self._calculate_structure_metrics(int(struct_idx))
+        
+        # Create detailed clinical assessment
+        assessment = self._generate_clinical_assessment(dvh_data)
+        
+        # Create individual DVH plot
+        plot_file = self._create_single_structure_plot(dvh_data)
+        
+        return {
+            "success": True,
+            "structure": dvh_data["structure_name"],
+            "structure_type": dvh_data["structure_type"],
+            "dvh_assessment": assessment,
+            "dvh_metrics": {
+                "D95": dvh_data["D95"],
+                "D50": dvh_data["D50"],
+                "D5": dvh_data["D5"],
+                "D2": dvh_data["D2"],
+                "D98": dvh_data["D98"],
+                "mean_dose": dvh_data["mean_dose"],
+                "max_dose": dvh_data["max_dose"],
+                "min_dose": dvh_data["min_dose"],
+                "std_dose": dvh_data["std_dose"],
+                "V_5Gy": dvh_data["V_5Gy"],
+                "V_10Gy": dvh_data["V_10Gy"],
+                "V_20Gy": dvh_data["V_20Gy"],
+                "V_30Gy": dvh_data["V_30Gy"],
+                "V_40Gy": dvh_data["V_40Gy"],
+                "V_50Gy": dvh_data["V_50Gy"],
+                "V_60Gy": dvh_data["V_60Gy"],
+                "HI": dvh_data["HI"],
+                "CI": dvh_data["CI"]
+            },
+            "plot_file": plot_file,
+            "message": f"DVH analyzed for {structure_name} using matRad quality indicators"
+        }
+    
+    def _calculate_all_structures_dvh(self) -> Dict[str, Any]:
+        """Calculate DVH for all structures with detailed assessments."""
+        
+        # Get structure information
+        self.eng.eval("""
+        numOfFractions = pln.numOfFractions;
+        dose = resultGUI.physicalDose * numOfFractions;
+        
+        % Calculate DVH for all structures
+        dvhResults = matRad_calcDVH(cst, dose, 'cum');
+        
+        % Calculate quality indicators for all structures
+        refVol = [2 5 50 95 98];  % For D2, D5, D50, D95, D98
+        refGy = [5 10 20 30 40 50 60];  % For V5Gy, V10Gy, etc.
+        qi = matRad_calcQualityIndicators(cst, pln, dose, refGy, refVol);
+        
+        % Store all structure indices that have data
+        validStructIndices = [];
+        for i = 1:size(cst,1)
+            if ~isempty(cst{i,2}) && ~isempty(cst{i,4})
+                validStructIndices(end+1) = i;
+            end
+        end
+        """, nargout=0)
+        
+        # Get valid structure indices and handle matlab.double array
+        matlab_indices = self.eng.workspace["validStructIndices"]
+        
+        # Convert matlab.double array to Python list
+        if hasattr(matlab_indices, '_data'):
+            # matlab.double array - extract the underlying data
+            valid_indices = [int(idx) for idx in matlab_indices._data]
+        elif isinstance(matlab_indices, (list, tuple)):
+            # Already a Python list/tuple
+            valid_indices = [int(idx) for idx in matlab_indices]
+        else:
+            # Single value
+            valid_indices = [int(matlab_indices)]
+        
+        # Calculate metrics for each structure
+        all_structures_data = []
+        structure_names = []
+        
+        for idx in valid_indices:
+            dvh_data = self._calculate_structure_metrics(idx)
+            assessment = self._generate_clinical_assessment(dvh_data)
+            
+            structure_result = {
+                "structure_name": dvh_data["structure_name"],
+                "structure_type": dvh_data["structure_type"],
+                "dvh_assessment": assessment,
+                "dvh_metrics": {
+                    "D95": dvh_data["D95"],
+                    "D50": dvh_data["D50"],
+                    "D5": dvh_data["D5"],
+                    "D2": dvh_data["D2"],
+                    "D98": dvh_data["D98"],
+                    "mean_dose": dvh_data["mean_dose"],
+                    "max_dose": dvh_data["max_dose"],
+                    "min_dose": dvh_data["min_dose"],
+                    "std_dose": dvh_data["std_dose"],
+                    "V_5Gy": dvh_data["V_5Gy"],
+                    "V_10Gy": dvh_data["V_10Gy"],
+                    "V_20Gy": dvh_data["V_20Gy"],
+                    "V_30Gy": dvh_data["V_30Gy"],
+                    "V_40Gy": dvh_data["V_40Gy"],
+                    "V_50Gy": dvh_data["V_50Gy"],
+                    "V_60Gy": dvh_data["V_60Gy"],
+                    "HI": dvh_data["HI"],
+                    "CI": dvh_data["CI"]
+                }
+            }
+            all_structures_data.append(structure_result)
+            structure_names.append(dvh_data["structure_name"])
+        
+        # Create comprehensive plot
+        plot_file = self._create_all_structures_plot(valid_indices)
+        
+        # Generate summary assessment
+        summary_assessment = self._generate_summary_assessment(all_structures_data)
+        
+        return {
+            "success": True,
+            "num_structures": len(all_structures_data),
+            "structure_names": structure_names,
+            "structures_data": all_structures_data,
+            "dvh_assessment": summary_assessment,
+            "plot_file": plot_file,
+            "message": f"DVH analyzed for all {len(all_structures_data)} structures using matRad quality indicators"
+        }
+    
+    def _calculate_structure_metrics(self, struct_idx: int) -> Dict[str, Any]:
+        """Calculate comprehensive metrics for a single structure using matRad quality indicators."""
+        
+        self.eng.eval(f"""
+        % Get the full dose cube (already scaled by fractions)
+        numOfFractions = pln.numOfFractions;
+        dose = resultGUI.physicalDose * numOfFractions;
+        
+        % Get CST dimensions and create a temporary CST with just this structure
+        [numRows, numCols] = size(cst);
+        tempCst = cell(1, numCols);
+        tempCst(1,:) = cst({struct_idx},:);
+        
+        % Calculate DVH using standard matRad function
+        dvhResult = matRad_calcDVH(tempCst, dose, 'cum');
+        
+        % Calculate quality indicators using matRad's robust function
+        refVol = [2 5 50 95 98];  % For D2, D5, D50, D95, D98
+        refGy = [5 10 20 30 40 50 60];  % For V5Gy, V10Gy, etc.
+        qi = matRad_calcQualityIndicators(tempCst, pln, dose, refGy, refVol);
+        
+        % Extract all data into a simple structure for Python access
+        dvhData = struct();
+        dvhData.structure_name = dvhResult(1).name;
+        dvhData.structure_type = cst{{{struct_idx},3}};
+        dvhData.dvh_values = dvhResult(1).volumePoints;
+        dvhData.bin_centers = dvhResult(1).doseGrid;
+        
+        % Basic quality metrics from matRad QI
+        qiStruct = qi(1);
+        dvhData.mean_dose = qiStruct.mean;
+        dvhData.max_dose = qiStruct.max;
+        dvhData.min_dose = qiStruct.min;
+        dvhData.std_dose = qiStruct.std;
+        dvhData.D95 = qiStruct.D_95;
+        dvhData.D50 = qiStruct.D_50;
+        dvhData.D5 = qiStruct.D_5;
+        dvhData.D2 = qiStruct.D_2;
+        dvhData.D98 = qiStruct.D_98;
+        
+        % V-metrics from matRad QI
+        dvhData.V_5Gy = qiStruct.V_5Gy;
+        dvhData.V_10Gy = qiStruct.V_10Gy;
+        dvhData.V_20Gy = qiStruct.V_20Gy;
+        dvhData.V_30Gy = qiStruct.V_30Gy;
+        dvhData.V_40Gy = qiStruct.V_40Gy;
+        dvhData.V_50Gy = qiStruct.V_50Gy;
+        dvhData.V_60Gy = qiStruct.V_60Gy;
+        
+        % Target-specific metrics (CI/HI) if available
+        if strcmp(cst{{{struct_idx},3}}, 'TARGET')
+            % Look for CI and HI fields in QI
+            field_names = fieldnames(qiStruct);
+            ci_fields = field_names(startsWith(field_names, 'CI_'));
+            hi_fields = field_names(startsWith(field_names, 'HI_'));
+            
+            if ~isempty(ci_fields)
+                dvhData.CI = qiStruct.(ci_fields{{1}});
+            else
+                dvhData.CI = NaN;
+            end
+            
+            if ~isempty(hi_fields)
+                dvhData.HI = qiStruct.(hi_fields{{1}});
+            else
+                dvhData.HI = NaN;
+            end
+        else
+            dvhData.CI = NaN;
+            dvhData.HI = NaN;
+        end
+        """, nargout=0)
+        
+        # Get the results from MATLAB and convert to Python dict
+        matlab_dvh_data = self.eng.workspace["dvhData"]
+        
+        # Helper function to safely extract values from matlab objects
+        def safe_extract(value):
+            if hasattr(value, '_data'):
+                # matlab.double - extract underlying data
+                return float(value._data[0]) if len(value._data) > 0 else float('nan')
+            elif hasattr(value, '__float__'):
+                return float(value)
+            else:
+                return float('nan')
+        
+        # Helper function to extract arrays from matlab objects
+        def safe_extract_array(value):
+            if hasattr(value, '_data'):
+                # matlab.double array - extract the underlying data
+                return list(value._data)
+            elif isinstance(value, (list, tuple)):
+                return list(value)
+            else:
+                return [float(value)] if value is not None else []
+        
+        return {
+            "structure_name": str(matlab_dvh_data['structure_name']),
+            "structure_type": str(matlab_dvh_data['structure_type']),
+            "mean_dose": safe_extract(matlab_dvh_data['mean_dose']),
+            "max_dose": safe_extract(matlab_dvh_data['max_dose']),
+            "min_dose": safe_extract(matlab_dvh_data['min_dose']),
+            "std_dose": safe_extract(matlab_dvh_data['std_dose']),
+            "D95": safe_extract(matlab_dvh_data['D95']),
+            "D50": safe_extract(matlab_dvh_data['D50']),
+            "D5": safe_extract(matlab_dvh_data['D5']),
+            "D2": safe_extract(matlab_dvh_data['D2']),
+            "D98": safe_extract(matlab_dvh_data['D98']),
+            "V_5Gy": safe_extract(matlab_dvh_data['V_5Gy']),
+            "V_10Gy": safe_extract(matlab_dvh_data['V_10Gy']),
+            "V_20Gy": safe_extract(matlab_dvh_data['V_20Gy']),
+            "V_30Gy": safe_extract(matlab_dvh_data['V_30Gy']),
+            "V_40Gy": safe_extract(matlab_dvh_data['V_40Gy']),
+            "V_50Gy": safe_extract(matlab_dvh_data['V_50Gy']),
+            "V_60Gy": safe_extract(matlab_dvh_data['V_60Gy']),
+            "HI": safe_extract(matlab_dvh_data.get('HI', float('nan'))),
+            "CI": safe_extract(matlab_dvh_data.get('CI', float('nan'))),
+            "dvh_values": safe_extract_array(matlab_dvh_data['dvh_values']),
+            "bin_centers": safe_extract_array(matlab_dvh_data['bin_centers'])
+        }
+    
+    def _generate_clinical_assessment(self, dvh_data: Dict[str, Any]) -> str:
+        """Generate detailed clinical assessment for a structure."""
+        import math
+        
+        structure_name = dvh_data["structure_name"]
+        structure_type = dvh_data["structure_type"]
+        mean_dose = dvh_data["mean_dose"]
+        max_dose = dvh_data["max_dose"]
+        min_dose = dvh_data["min_dose"]
+        std_dose = dvh_data["std_dose"]
+        d2 = dvh_data["D2"]
+        d5 = dvh_data["D5"]
+        d50 = dvh_data["D50"]
+        d95 = dvh_data["D95"]
+        d98 = dvh_data["D98"]
+        
+        # V-metrics
+        v_5gy = dvh_data["V_5Gy"]
+        v_10gy = dvh_data["V_10Gy"]
+        v_20gy = dvh_data["V_20Gy"]
+        v_30gy = dvh_data["V_30Gy"]
+        v_40gy = dvh_data["V_40Gy"]
+        v_50gy = dvh_data["V_50Gy"]
+        v_60gy = dvh_data["V_60Gy"]
+        
+        # Target metrics
+        ci = dvh_data["CI"]
+        hi = dvh_data["HI"]
+        
+        assessment = []
+        assessment.append(f"DVH ASSESSMENT FOR {structure_type}: {structure_name}")
+        assessment.append("=" * 60)
+        assessment.append("QUALITY INDICATORS (matRad_calcQualityIndicators):")
+        assessment.append(f"  Mean Dose: {mean_dose:.1f} Gy")
+        assessment.append(f"  D2: {d2:.1f} Gy | D5: {d5:.1f} Gy | D50: {d50:.1f} Gy | D95: {d95:.1f} Gy | D98: {d98:.1f} Gy")
+        assessment.append(f"  Dose Range: {min_dose:.1f} - {max_dose:.1f} Gy")
+        
+        # V-metrics summary
+        assessment.append(f"VOLUME METRICS:")
+        assessment.append(f"  V5Gy: {v_5gy*100:.1f}% | V10Gy: {v_10gy*100:.1f}% | V20Gy: {v_20gy*100:.1f}%")
+        assessment.append(f"  V30Gy: {v_30gy*100:.1f}% | V40Gy: {v_40gy*100:.1f}% | V50Gy: {v_50gy*100:.1f}% | V60Gy: {v_60gy*100:.1f}%")
+        
+        # Target-specific analysis
+        if structure_type == 'TARGET':
+            assessment.append(f"TARGET QUALITY ASSESSMENT:")
+            if not math.isnan(hi):
+                assessment.append(f"  Homogeneity Index: {hi:.3f}")
+                if hi < 5:
+                    assessment.append(f"    EXCELLENT homogeneity")
+                elif hi < 10:
+                    assessment.append(f"    GOOD homogeneity")
+                else:
+                    assessment.append(f"    Poor homogeneity - optimize plan")
+            
+            if not math.isnan(ci):
+                assessment.append(f"  Conformity Index: {ci:.3f}")
+                if ci > 0.9:
+                    assessment.append(f"    EXCELLENT conformity")
+                elif ci > 0.8:
+                    assessment.append(f"    GOOD conformity")
+                else:
+                    assessment.append(f"    Poor conformity - dose spillage")
+            
+            # Coverage analysis
+            coverage = (d95 / d50) * 100 if d50 > 0 else 0
+            assessment.append(f"  Coverage: D95 = {coverage:.1f}% of D50")
+            if coverage >= 95:
+                assessment.append(f"    EXCELLENT coverage")
+            elif coverage >= 90:
+                assessment.append(f"    GOOD coverage")
+            else:
+                assessment.append(f"    Poor coverage - underdosage risk")
+        
+        elif structure_type == 'OAR':
+            assessment.append(f"OAR SPARING ASSESSMENT:")
+            if max_dose > 50:
+                assessment.append(f"  HIGH-DOSE OAR: Max dose {max_dose:.1f} Gy")
+            elif max_dose > 20:
+                assessment.append(f"  MODERATE-DOSE OAR: Max dose {max_dose:.1f} Gy") 
+            else:
+                assessment.append(f"  LOW-DOSE OAR: Max dose {max_dose:.1f} Gy - good sparing")
+        
+        # DVH curve analysis
+        dose_spread = d5 - d95
+        assessment.append(f"DVH CURVE ANALYSIS:")
+        assessment.append(f"  Dose Spread (D5-D95): {dose_spread:.1f} Gy")
+        if structure_type == 'TARGET':
+            if dose_spread < 5:
+                assessment.append(f"    STEEP curve - excellent homogeneity")
+            elif dose_spread < 10:
+                assessment.append(f"    MODERATE curve - good homogeneity")
+            else:
+                assessment.append(f"    SHALLOW curve - dose heterogeneity")
+        
+        return "\n".join(assessment)
+    
+    def _create_single_structure_plot(self, dvh_data: Dict[str, Any]) -> str:
+        """Create DVH plot for a single structure."""
+        structure_name = dvh_data["structure_name"]
+        d95 = dvh_data["D95"]
+        d50 = dvh_data["D50"]
+        
+        self.eng.eval(f"""
+        % Create DVH plot
+        figure('Position', [100, 100, 800, 600], 'Visible', 'off');
+        plot(dvhData.bin_centers, dvhData.dvh_values, 'LineWidth', 2);
+        xlabel('Dose (Gy)', 'FontSize', 12);
+        ylabel('Volume (%)', 'FontSize', 12);
+        title(['DVH for ' dvhData.structure_name], 'FontSize', 14);
+        grid on;
+        
+        % Add key points
+        hold on;
+        plot({d95}, 95, 'ro', 'MarkerSize', 8, 'MarkerFaceColor', 'r');
+        plot({d50}, 50, 'go', 'MarkerSize', 8, 'MarkerFaceColor', 'g');
+        legend({{'DVH Curve', 'D95', 'D50'}}, 'Location', 'best');
+        
+        % Save plot
+        plotFilename = ['dvh_' strrep(dvhData.structure_name, ' ', '_') '.png'];
+        saveas(gcf, plotFilename);
+        close(gcf);
+        """, nargout=0)
+        
+        plot_filename = f"dvh_{structure_name.replace(' ', '_')}.png"
+        return plot_filename
+    
+    def _create_all_structures_plot(self, valid_indices: List[int]) -> str:
+        """Create comprehensive DVH plot for all structures."""
+        self.eng.eval(f"""
+        % Get structure data for plotting
+        numOfFractions = pln.numOfFractions;
+        dose = resultGUI.physicalDose * numOfFractions;
+        dvhResults = matRad_calcDVH(cst, dose, 'cum');
+        
+        % Create a comprehensive DVH plot for all structures
+        figure('Position', [100, 100, 1200, 800], 'Visible', 'off');
+        colors = lines(length(dvhResults));
+        legendEntries = {{}};
+        
+        for i = 1:length(dvhResults)
+            % Plot this structure's DVH
+            plot(dvhResults(i).doseGrid, dvhResults(i).volumePoints, ...
+                 'Color', colors(i,:), 'LineWidth', 2);
+            hold on;
+            legendEntries{{end+1}} = dvhResults(i).name;
+        end
+        
+        xlabel('Dose (Gy)', 'FontSize', 12);
+        ylabel('Volume (%)', 'FontSize', 12);
+        title('DVH for All Structures', 'FontSize', 14);
+        legend(legendEntries, 'Location', 'bestoutside', 'Interpreter', 'none');
+        grid on;
+        
+        % Save comprehensive plot
+        plotFilename = 'dvh_all_structures.png';
+        saveas(gcf, plotFilename);
+        close(gcf);
+        """, nargout=0)
+        
+        return 'dvh_all_structures.png'
+    
+    def _generate_summary_assessment(self, all_structures_data: List[Dict[str, Any]]) -> str:
+        """Generate summary assessment for all structures."""
+        
+        num_structures = len(all_structures_data)
+        structure_names = [data["structure_name"] for data in all_structures_data]
+        targets = [data for data in all_structures_data if data["structure_type"] == 'TARGET']
+        oars = [data for data in all_structures_data if data["structure_type"] == 'OAR']
+        
+        summary = []
+        summary.append(f"DVH ANALYSIS SUMMARY - ALL STRUCTURES")
+        summary.append("=" * 60)
+        summary.append(f"Total Structures Analyzed: {num_structures}")
+        summary.append(f"Targets: {len(targets)} | OARs: {len(oars)}")
+        summary.append(f"Structures: {', '.join(structure_names)}")
+        summary.append("")
+        
+        # Target summary
+        if targets:
+            summary.append("TARGET SUMMARY:")
+            for target in targets:
+                metrics = target["dvh_metrics"]
+                summary.append(f"  {target['structure_name']}:")
+                summary.append(f"    Coverage: D95={metrics['D95']:.1f}Gy, Mean={metrics['mean_dose']:.1f}Gy")
+                if not math.isnan(metrics['HI']):
+                    summary.append(f"    Quality: HI={metrics['HI']:.2f}, CI={metrics['CI']:.2f}")
+                summary.append("")
+        
+        # OAR summary
+        if oars:
+            summary.append("OAR SUMMARY:")
+            for oar in oars:
+                metrics = oar["dvh_metrics"]
+                summary.append(f"  {oar['structure_name']}:")
+                summary.append(f"    Sparing: Max={metrics['max_dose']:.1f}Gy, Mean={metrics['mean_dose']:.1f}Gy")
+                summary.append(f"    Low-dose spill: V5Gy={metrics['V_5Gy']*100:.1f}%, V20Gy={metrics['V_20Gy']*100:.1f}%")
+                summary.append("")
+        
+        summary.append("DETAILED ASSESSMENTS:")
+        summary.append("Use the structures_data field for individual structure analysis.")
+        summary.append("Each structure includes comprehensive DVH metrics and clinical assessment.")
+        
+        return "\n".join(summary)
     
     def evaluate_plan(self) -> Dict[str, Any]:
         """
