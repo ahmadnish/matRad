@@ -60,12 +60,24 @@ class PatientInfo(BaseModel):
     message: Optional[str] = None
     error: Optional[str] = None
 
+class ExistingObjective(BaseModel):
+    """Model for existing optimization objectives."""
+    structure_name: str
+    structure_type: str
+    objective_type: str
+    class_name: str
+    parameters: List[float]
+    dose_value: Optional[float] = None
+    penalty: float
+
 class StructureInfo(BaseModel):
     """Model for structure information."""
     success: bool
     targets: Optional[List[str]] = None
     oars: Optional[List[str]] = None
     other: Optional[List[str]] = None
+    existing_objectives: Optional[List[ExistingObjective]] = None
+    num_existing_objectives: Optional[int] = None
     error: Optional[str] = None
 
 class PlanInfo(BaseModel):
@@ -153,16 +165,6 @@ class PlanState(BaseModel):
     """Model for current plan state."""
     success: bool = True
     plan_state: Dict[str, Any]
-
-class StructuredDecisionLog(BaseModel):
-    """Model for structured decision logging by the LLM agent."""
-    success: bool = True
-    reason: str = Field(description="Explanation of the decision being made")
-    tool_used: Optional[str] = Field(None, description="Name of the matRad function being invoked")
-    inputs: Optional[Dict[str, Any]] = Field(None, description="Parameters being given to the tool")
-    expected_outcome: Optional[str] = Field(None, description="Expected results from this action")
-    next_action: str = Field(description="Planned next step in the treatment planning process")
-    clinical_rationale: Optional[str] = Field(None, description="Clinical reasoning behind this decision")
 
 class IMRTPlanningAgent:
     """LLM Agent for IMRT Planning using OpenAI function calling with structured outputs."""
@@ -319,7 +321,7 @@ class IMRTPlanningAgent:
                                 "description": "Penalty weight (default 1000)"
                             }
                         },
-                        "required": ["structure_name", "objective_type", "dose_value"],
+                        "required": ["structure_name", "objective_type", "dose_value", "penalty"],
                         "additionalProperties": False
                     }
                 }
@@ -391,44 +393,6 @@ class IMRTPlanningAgent:
                     "parameters": {
                         "type": "object",
                         "properties": {},
-                        "additionalProperties": False
-                    }
-                }
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "log_decision_reasoning",
-                    "description": "Log structured reasoning for planning decisions. Use this to explain why you're taking specific actions, what you expect to achieve, and what you plan to do next. This should be called before major planning steps.",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "reason": {
-                                "type": "string",
-                                "description": "Clear explanation of why this decision is being made"
-                            },
-                            "tool_used": {
-                                "type": "string",
-                                "description": "Name of the matRad function about to be invoked (if applicable)"
-                            },
-                            "inputs": {
-                                "type": "object",
-                                "description": "Parameters that will be given to the tool (if applicable)"
-                            },
-                            "expected_outcome": {
-                                "type": "string",
-                                "description": "What you expect this action to achieve"
-                            },
-                            "next_action": {
-                                "type": "string",
-                                "description": "What you plan to do after this step"
-                            },
-                            "clinical_rationale": {
-                                "type": "string",
-                                "description": "Clinical reasoning behind this decision (if applicable)"
-                            }
-                        },
-                        "required": ["reason", "next_action"],
                         "additionalProperties": False
                     }
                 }
@@ -565,42 +529,6 @@ class IMRTPlanningAgent:
             elif tool_name == "get_plan_state":
                 result_dict = {"success": True, "plan_state": convert_matlab_types(self.plan_state)}
                 
-            elif tool_name == "log_decision_reasoning":
-                # This tool allows the LLM to provide structured reasoning
-                reasoning_log = {
-                    "reason": arguments["reason"],
-                    "next_action": arguments["next_action"],
-                    "tool_used": arguments.get("tool_used"),
-                    "inputs": arguments.get("inputs"),
-                    "expected_outcome": arguments.get("expected_outcome"),
-                    "clinical_rationale": arguments.get("clinical_rationale")
-                }
-                
-                # Log this reasoning using the existing logger
-                self.logger.log_action(
-                    "llm_reasoning",
-                    "LLM provided structured decision reasoning",
-                    {},
-                    reasoning_log
-                )
-                
-                result_dict = {
-                    "success": True, 
-                    "message": f"Logged reasoning: {arguments['reason']}",
-                    "reasoning_logged": reasoning_log
-                }
-                
-                # Print the reasoning for immediate visibility
-                print(f"\n🧠 Agent Reasoning:")
-                print(f"   Why: {arguments['reason']}")
-                if arguments.get("clinical_rationale"):
-                    print(f"   Clinical: {arguments['clinical_rationale']}")
-                if arguments.get("tool_used"):
-                    print(f"   Next Tool: {arguments['tool_used']}")
-                if arguments.get("expected_outcome"):
-                    print(f"   Expected: {arguments['expected_outcome']}")
-                print(f"   Then: {arguments['next_action']}")
-                
             else:
                 result_dict = {"success": False, "error": f"Unknown tool: {tool_name}"}
             
@@ -697,26 +625,22 @@ class IMRTPlanningAgent:
 
             Your goal is to create an optimal treatment plan that achieves target coverage while minimizing dose to organs at risk (OARs), following clinical best practices. You have access to tools for beam setup, dose calculation, optimization, and plan evaluation.
 
-            CRITICAL: You MUST use the 'log_decision_reasoning' tool before every major planning step to explain your thought process, clinical rationale, and planning strategy. This is mandatory for transparency and clinical validation.
-
             Planning Process:
-            1. Start by logging your overall planning strategy using log_decision_reasoning
-            2. Start the MATLAB engine and load patient data.
-            3. Examine the structure information to identify targets and OARs.
-            4. Log your beam angle selection strategy, then create an initial treatment plan with appropriate beam angles.
-            5. Generate the beam geometry and calculate the dose influence matrix.
-            6. Log your objective selection rationale, then add optimization objectives for targets and OARs, based on clinical guidelines.
-            7. Optimize the plan and evaluate quality.
-            8. Then iteratively:
+            1. Start the MATLAB engine and load patient data.
+            2. Examine the structure information to identify targets and OARs.
+            3. Create an initial treatment plan with appropriate beam angles.
+            4. Generate the beam geometry and calculate the dose influence matrix.
+            5. Add optimization objectives for targets and OARs, based on clinical guidelines.
+            6. Optimize the plan and evaluate quality.
+            7. Then iteratively:
             - Use evaluation tools to assess plan quality and check for any unmet clinical objectives.
-            - If the plan is suboptimal, use log_decision_reasoning to document:
+            - If the plan is suboptimal, log:
                 - Why the plan is suboptimal (e.g., PTV D95 too low, OAR dose too high)
                 - Key metrics (e.g., D95, Dmax, HI, CI)
                 - Your rationale for improvement
-                - What specific changes you will make
             - Based on this rationale, adjust or add optimization objectives using the appropriate tool.
-            - Re-optimize the plan and re-evaluate.
-            - Log your assessment after each iteration.
+            - Re-optimize the plan and re-evaluate. 
+            - After each optimization, save the plan via save_treatment_plan with corresponding iteration number.
             - Repeat this loop until either clinical criteria are met, plan quality plateaus, or the maximum number of iterations is reached.
             - If optimal, save the plan and exit.
             - If not, summarize the steps taken and restart from step 3 using different beam angles or objective functions.
@@ -724,7 +648,8 @@ class IMRTPlanningAgent:
             Clinical Guidelines:
             - Target structures (PTVs) should receive 95% of the prescribed dose (typically 50–70 Gy).
             - OARs should remain below tolerance doses per QUANTEC guidelines.
-            - Dose values in objective functions are total dose over all fractions; per-fraction doses apply for plan evaluation.
+            - Keep a 30 Gy max dose for the BODY (Skin structure).
+            - Dose values in objective functions are total dose over all fractions.
             - Use appropriate beam arrangements: typically 5–9 beams for H&N cases.
             - Prioritize in case of conflict:
                 - 1st: PTV coverage
@@ -740,32 +665,23 @@ class IMRTPlanningAgent:
             Termination Conditions:
             - A plan is optimal if all clinical thresholds are met.
             - Do not iterate further if:
-            - Plan quality plateaus over 2 iterations
-            - All objective changes result in equivalent or worse tradeoffs
-            - Do not re-run dose calculation unless:
-            - Beam geometry or optimization objectives change
-            - Limit re-optimization to a maximum of 5 iterations, unless a >3% improvement in key metrics is expected.
+                - Plan quality plateaus over 3 iterations
+                - All objective changes result in equivalent or worse tradeoffs
+            - Do not re-run dose calculation unless beam geometry or machine parameters change.
 
-            Structured Decision Logging (MANDATORY):
-            You MUST call 'log_decision_reasoning' before each major step to document:
-            - "reason": Clear explanation of why you're taking this action
-            - "tool_used": The specific matRad function you're about to call
-            - "inputs": The parameters you'll provide to that function
-            - "expected_outcome": What you expect this action to achieve
-            - "next_action": What you plan to do after this step
-            - "clinical_rationale": Clinical justification for your decision
 
-            Examples of when to log:
-            - Before starting the planning process (overall strategy)
-            - Before selecting beam angles (geometric rationale)
-            - Before adding optimization objectives (clinical rationale)
-            - After evaluating plan quality (assessment and next steps)
-            - Before making any adjustments (improvement strategy)
+            Logging (Structured):
+            Each planning decision should be logged in a structured JSON format with:
+            - "reason": Explanation of the decision
+            - "tool_used": Name of the matRad function invoked
+            - "inputs": Parameters given to the tool
+            - "outcome": Metrics after action (e.g., D95 = 93.2%, Parotid Dmean = 26.1 Gy)
+            - "next_action": Planned next step
 
             Current patient file: {patient_file}  
             Maximum iterations allowed: {max_iterations}
 
-            Start by using log_decision_reasoning to explain your overall planning approach, then get the current plan state and proceed step by step.  
+            Start by getting the current plan state and then proceed step by step.  
             Always ensure your function calls use valid JSON-serializable parameters.
         """
         
@@ -878,7 +794,7 @@ def main():
         print("\n🤖 Starting LLM-guided planning session...")
         
         # Run planning session
-        session_results = agent.run_planning_session(patient_file, max_iterations=10)
+        session_results = agent.run_planning_session(patient_file, max_iterations=80)
         
         print("\n" + "=" * 50)
         print("📋 PLANNING SESSION RESULTS")
