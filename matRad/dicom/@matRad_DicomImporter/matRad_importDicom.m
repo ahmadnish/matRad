@@ -147,7 +147,7 @@ else
 end
 
 %% import stf
-if 0 %~isempty(obj.importFiles.rtplan)
+if ~isempty(obj.importFiles.rtplan)
     if ~(cellfun(@isempty,obj.importFiles.rtplan(1,:)))
         if (strcmp(obj.pln.radiationMode,'protons') || strcmp(obj.pln.radiationMode,'carbon'))
             %% import steering file
