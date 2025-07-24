@@ -773,19 +773,8 @@ class MatRadEngine:
     def _calculate_all_structures_dvh(self) -> Dict[str, Any]:
         """Calculate DVH for all structures with detailed assessments."""
         
-        # Get structure information
+        # Just get structure information - let individual calls handle DVH/QI calculations
         self.eng.eval("""
-        numOfFractions = pln.numOfFractions;
-        dose = resultGUI.physicalDose * numOfFractions;
-        
-        % Calculate DVH for all structures
-        dvhResults = matRad_calcDVH(cst, dose, 'cum');
-        
-        % Calculate quality indicators for all structures
-        refVol = [2 5 50 95 98];  % For D2, D5, D50, D95, D98
-        refGy = [5 10 20 30 40 50 60];  % For V5Gy, V10Gy, etc.
-        qi = matRad_calcQualityIndicators(cst, pln, dose, refGy, refVol);
-        
         % Store all structure indices that have data
         validStructIndices = [];
         for i = 1:size(cst,1)
@@ -937,25 +926,28 @@ class MatRadEngine:
         # Get the results from MATLAB and convert to Python dict
         matlab_dvh_data = self.eng.workspace["dvhData"]
         
-        # Helper function to safely extract values from matlab objects
+        # Helper function to safely extract values from matlab objects and format to 2 decimal places
         def safe_extract(value):
             if hasattr(value, '_data'):
                 # matlab.double - extract underlying data
-                return float(value._data[0]) if len(value._data) > 0 else float('nan')
+                val = float(value._data[0]) if len(value._data) > 0 else float('nan')
             elif hasattr(value, '__float__'):
-                return float(value)
+                val = float(value)
             else:
-                return float('nan')
+                val = float('nan')
+            
+            # Format to 2 decimal places unless it's NaN
+            return round(val, 2) if not (val != val) else val  # val != val checks for NaN
         
-        # Helper function to extract arrays from matlab objects
+        # Helper function to extract arrays from matlab objects and format to 2 decimal places
         def safe_extract_array(value):
             if hasattr(value, '_data'):
-                # matlab.double array - extract the underlying data
-                return list(value._data)
+                # matlab.double array - extract the underlying data and format to 2 decimal places
+                return [round(float(x), 2) for x in value._data]
             elif isinstance(value, (list, tuple)):
-                return list(value)
+                return [round(float(x), 2) for x in value]
             else:
-                return [float(value)] if value is not None else []
+                return [round(float(value), 2)] if value is not None else []
         
         return {
             "structure_name": str(matlab_dvh_data['structure_name']),
@@ -1015,20 +1007,20 @@ class MatRadEngine:
         assessment.append(f"DVH ASSESSMENT FOR {structure_type}: {structure_name}")
         assessment.append("=" * 60)
         assessment.append("QUALITY INDICATORS (matRad_calcQualityIndicators):")
-        assessment.append(f"  Mean Dose: {mean_dose:.1f} Gy")
-        assessment.append(f"  D2: {d2:.1f} Gy | D5: {d5:.1f} Gy | D50: {d50:.1f} Gy | D95: {d95:.1f} Gy | D98: {d98:.1f} Gy")
-        assessment.append(f"  Dose Range: {min_dose:.1f} - {max_dose:.1f} Gy")
+        assessment.append(f"  Mean Dose: {mean_dose:.2f} Gy")
+        assessment.append(f"  D2: {d2:.2f} Gy | D5: {d5:.2f} Gy | D50: {d50:.2f} Gy | D95: {d95:.2f} Gy | D98: {d98:.2f} Gy")
+        assessment.append(f"  Dose Range: {min_dose:.2f} - {max_dose:.2f} Gy")
         
         # V-metrics summary
         assessment.append(f"VOLUME METRICS:")
-        assessment.append(f"  V5Gy: {v_5gy*100:.1f}% | V10Gy: {v_10gy*100:.1f}% | V20Gy: {v_20gy*100:.1f}%")
-        assessment.append(f"  V30Gy: {v_30gy*100:.1f}% | V40Gy: {v_40gy*100:.1f}% | V50Gy: {v_50gy*100:.1f}% | V60Gy: {v_60gy*100:.1f}%")
+        assessment.append(f"  V5Gy: {v_5gy*100:.2f}% | V10Gy: {v_10gy*100:.2f}% | V20Gy: {v_20gy*100:.2f}%")
+        assessment.append(f"  V30Gy: {v_30gy*100:.2f}% | V40Gy: {v_40gy*100:.2f}% | V50Gy: {v_50gy*100:.2f}% | V60Gy: {v_60gy*100:.2f}%")
         
         # Target-specific analysis
         if structure_type == 'TARGET':
             assessment.append(f"TARGET QUALITY ASSESSMENT:")
             if not math.isnan(hi):
-                assessment.append(f"  Homogeneity Index: {hi:.3f}")
+                assessment.append(f"  Homogeneity Index: {hi:.2f}")
                 if hi < 5:
                     assessment.append(f"    EXCELLENT homogeneity")
                 elif hi < 10:
@@ -1037,7 +1029,7 @@ class MatRadEngine:
                     assessment.append(f"    Poor homogeneity - optimize plan")
             
             if not math.isnan(ci):
-                assessment.append(f"  Conformity Index: {ci:.3f}")
+                assessment.append(f"  Conformity Index: {ci:.2f}")
                 if ci > 0.9:
                     assessment.append(f"    EXCELLENT conformity")
                 elif ci > 0.8:
@@ -1047,7 +1039,7 @@ class MatRadEngine:
             
             # Coverage analysis
             coverage = (d95 / d50) * 100 if d50 > 0 else 0
-            assessment.append(f"  Coverage: D95 = {coverage:.1f}% of D50")
+            assessment.append(f"  Coverage: D95 = {coverage:.2f}% of D50")
             if coverage >= 95:
                 assessment.append(f"    EXCELLENT coverage")
             elif coverage >= 90:
@@ -1058,16 +1050,16 @@ class MatRadEngine:
         elif structure_type == 'OAR':
             assessment.append(f"OAR SPARING ASSESSMENT:")
             if max_dose > 50:
-                assessment.append(f"  HIGH-DOSE OAR: Max dose {max_dose:.1f} Gy")
+                assessment.append(f"  HIGH-DOSE OAR: Max dose {max_dose:.2f} Gy")
             elif max_dose > 20:
-                assessment.append(f"  MODERATE-DOSE OAR: Max dose {max_dose:.1f} Gy") 
+                assessment.append(f"  MODERATE-DOSE OAR: Max dose {max_dose:.2f} Gy") 
             else:
-                assessment.append(f"  LOW-DOSE OAR: Max dose {max_dose:.1f} Gy - good sparing")
+                assessment.append(f"  LOW-DOSE OAR: Max dose {max_dose:.2f} Gy - good sparing")
         
         # DVH curve analysis
         dose_spread = d5 - d95
         assessment.append(f"DVH CURVE ANALYSIS:")
-        assessment.append(f"  Dose Spread (D5-D95): {dose_spread:.1f} Gy")
+        assessment.append(f"  Dose Spread (D5-D95): {dose_spread:.2f} Gy")
         if structure_type == 'TARGET':
             if dose_spread < 5:
                 assessment.append(f"    STEEP curve - excellent homogeneity")
