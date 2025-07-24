@@ -145,12 +145,47 @@ class PlanEvaluationInfo(BaseModel):
     message: Optional[str] = None
     error: Optional[str] = None
 
+class DVHMetrics(BaseModel):
+    """Model for comprehensive DVH metrics."""
+    D95: float
+    D50: float
+    D5: float
+    D2: float
+    D98: float
+    mean_dose: float
+    max_dose: float
+    min_dose: float
+    std_dose: float
+    V_5Gy: float
+    V_10Gy: float
+    V_20Gy: float
+    V_30Gy: float
+    V_40Gy: float
+    V_50Gy: float
+    V_60Gy: float
+    HI: Optional[float] = None
+    CI: Optional[float] = None
+
+class StructureDVHData(BaseModel):
+    """Model for individual structure DVH data."""
+    structure_name: str
+    structure_type: str
+    dvh_assessment: str
+    dvh_metrics: DVHMetrics
+
 class DVHInfo(BaseModel):
     """Model for DVH calculation results."""
     success: bool
+    # Single structure fields
     structure: Optional[str] = None
-    dvh_values: Optional[List[float]] = None
-    bin_centers: Optional[List[float]] = None
+    structure_type: Optional[str] = None
+    dvh_assessment: Optional[str] = None
+    dvh_metrics: Optional[DVHMetrics] = None
+    plot_file: Optional[str] = None
+    # All structures fields
+    num_structures: Optional[int] = None
+    structure_names: Optional[List[str]] = None
+    structures_data: Optional[List[StructureDVHData]] = None
     message: Optional[str] = None
     error: Optional[str] = None
 
@@ -354,13 +389,13 @@ class IMRTPlanningAgent:
                 "type": "function",
                 "function": {
                     "name": "calculate_dvh_analysis",
-                    "description": "Calculate DVH for a specific structure or all structures.",
+                    "description": "Calculate comprehensive DVH analysis with detailed clinical assessment. For single structure: returns detailed DVH metrics (D95, D50, D5, D2, D98, V-metrics, HI/CI for targets), clinical assessment text, and individual plot. For all structures: returns summary assessment plus individual data for each structure with same detailed metrics.",
                     "parameters": {
                         "type": "object",
                         "properties": {
                             "structure_name": {
                                 "type": "string",
-                                "description": "Name of structure (optional, if not provided calculates for all)"
+                                "description": "Name of specific structure to analyze (optional). If provided, returns detailed analysis for that structure only. If omitted, analyzes all structures and returns comprehensive summary plus individual structure data."
                             }
                         },
                         "additionalProperties": False
@@ -633,28 +668,38 @@ class IMRTPlanningAgent:
             5. Add optimization objectives for targets and OARs, based on clinical guidelines.
             6. Optimize the plan and evaluate quality.
             7. Then iteratively:
-            - Use evaluation tools to assess plan quality and check for any unmet clinical objectives.
+            - Use DVH analysis tools to assess plan quality in detail and check for any unmet clinical objectives:
+                - calculate_dvh_analysis() without structure_name: Gets comprehensive summary of all structures
+                - calculate_dvh_analysis(structure_name="PTV") for detailed target analysis with D95, D50, HI, CI metrics
+                - calculate_dvh_analysis(structure_name="OAR_name") for detailed OAR sparing analysis
             - If the plan is suboptimal, log:
                 - Why the plan is suboptimal (e.g., PTV D95 too low, OAR dose too high)
-                - Key metrics (e.g., D95, Dmax, HI, CI)
+                - Key metrics from DVH analysis (D95, D50, D2, D98, V-metrics, HI, CI)
+                - Clinical assessment from the DVH analysis text
                 - Your rationale for improvement
             - Based on this rationale, adjust or add optimization objectives using the appropriate tool.
             - Re-optimize the plan and re-evaluate. 
             - After each optimization, save the plan via save_treatment_plan with corresponding iteration number.
             - Repeat this loop until either clinical criteria are met, plan quality plateaus, or the maximum number of iterations is reached.
             - If optimal, save the plan and exit.
-            - If not, summarize the steps taken and restart from step 3 using different beam angles or objective functions.
+            - If not, summarize the steps taken and restart from step 3 using different objective functions (preferable; Keep an eye on the already added objectives), beam angles, or even more impinging angles.
 
             Clinical Guidelines:
             - Target structures (PTVs) should receive 95% of the prescribed dose (typically 50–70 Gy).
-            - OARs should remain below tolerance doses per QUANTEC guidelines.
-            - Keep a 30 Gy max dose for the BODY (Skin structure).
+            - OARs should remain below tolerance doses per following guidelines:
+                - Parotid: 25 Gy
+                - Mandible: 26 Gy
+                - Spinal Cord: 25 Gy
+                - Optic Nerve: 35 Gy
+                - Brainstem: 35 Gy
+                - Larynx: 35 Gy
+            - Keep a 30 Gy max dose for the "BODY" structure (or the "Skin" structure).
             - Dose values in objective functions are total dose over all fractions.
-            - Use appropriate beam arrangements: typically 5–9 beams for H&N cases.
+            - Use appropriate beam arrangements.
             - Prioritize in case of conflict:
                 - 1st: PTV coverage
                 - 2nd: Critical OAR sparing
-                - 3rd: Non-critical structure sparing
+                - 3rd: Non-critical structure sparing (Body/Skin)
             - Acceptable plan thresholds:
                 - PTV D95 ≥ 95% of prescription
                 - Homogeneity Index (HI) < 0.2
@@ -662,24 +707,45 @@ class IMRTPlanningAgent:
                 - OAR doses below maximum and mean tolerances
 
 
+            DVH Analysis Tools:
+            - calculate_dvh_analysis() returns comprehensive analysis for all structures:
+                - "structures_data": List of individual structure analyses with detailed metrics
+                - "dvh_assessment": Summary assessment for all structures
+                - "structure_names": List of all analyzed structures
+            - calculate_dvh_analysis(structure_name="PTV63") returns detailed single structure analysis:
+                - "dvh_metrics": Complete metrics (D95, D50, D5, D2, D98, V_5Gy through V_60Gy, HI, CI)
+                - "dvh_assessment": Detailed clinical assessment text with recommendations
+                - "plot_file": Individual DVH plot filename
+            - All metrics use matRad_calcQualityIndicators for clinical accuracy
+
             Termination Conditions:
-            - A plan is optimal if all clinical thresholds are met.
+            - A plan is optimal if all clinical thresholds are met (use DVH metrics to verify).
             - Do not iterate further if:
-                - Plan quality plateaus over 3 iterations
+                - Plan quality plateaus over 5 iterations (compare DVH key metrics)
                 - All objective changes result in equivalent or worse tradeoffs
             - Do not re-run dose calculation unless beam geometry or machine parameters change.
-
 
             Logging (Structured):
             Each planning decision should be logged in a structured JSON format with:
             - "reason": Explanation of the decision
             - "tool_used": Name of the matRad function invoked
             - "inputs": Parameters given to the tool
-            - "outcome": Metrics after action (e.g., D95 = 93.2%, Parotid Dmean = 26.1 Gy)
+            - "outcome": Metrics after action from DVH analysis (e.g., D95 = 93.2%, HI = 0.15, Parotid Dmean = 26.1 Gy, V30Gy = 45%)
+            - "clinical_assessment": Key findings from dvh_assessment text
             - "next_action": Planned next step
 
             Current patient file: {patient_file}  
             Maximum iterations allowed: {max_iterations}
+
+            DVH Analysis Examples:
+            1. Overall assessment: calculate_dvh_analysis() → Returns summary + structures_data array
+            2. Target analysis: calculate_dvh_analysis(structure_name="PTV63") → Returns detailed metrics + clinical assessment
+            3. OAR analysis: calculate_dvh_analysis(structure_name="Parotid_L") → Returns sparing assessment + V-metrics
+
+            Key DVH Metrics to Monitor:
+            - Targets: D95 (coverage), D50 (median), CI (conformity), HI (homogeneity)
+            - OARs: max_dose, mean_dose, V30Gy, V20Gy (volume metrics)
+            - All: std_dose (dose uniformity), D2/D98 (dose extremes)
 
             Start by getting the current plan state and then proceed step by step.  
             Always ensure your function calls use valid JSON-serializable parameters.
@@ -782,7 +848,7 @@ def main():
     
     # Configuration
     matrad_path = "/Users/ahmadneishabouri/matRad"  # Update this path as needed
-    patient_file = "HEAD_AND_NECK.mat"  # Adjust based on available patient data
+    patient_file = "HandN_4Agent_noconstraints.mat"  # Adjust based on available patient data
     
     try:
         # Create planning agent
