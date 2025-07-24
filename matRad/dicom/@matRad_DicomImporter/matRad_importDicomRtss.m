@@ -121,16 +121,16 @@ for i = 1:numOfContStructs % loop over every structure
         structZ = 1e-10*round(1e10*structZ);
         
         % sanity check 1
-        if numel(unique(structZ)) > 1
-            matRad_cfg.dispError('Detected contour points outside of single slice\n');
-        end
-        
+        % if numel(unique(structZ)) > 1
+        %     matRad_cfg.dispError('Detected contour points outside of single slice\n');
+        % end
+        obj.importRtss.structures(i).item(j).points = [structX, structY, structZ];
         % sanity check 2
-         if unique(structZ) > max(obj.ct.dicomInfo.SlicePositions) || unique(structZ) < min(obj.ct.dicomInfo.SlicePositions)
-            matRad_cfg.dispWarning(['Omitting contour data for ' obj.importRtss.structures(i).structName ' at slice position ' num2str(unique(structZ)) 'mm - no ct data available.\n']);
-        else
-            obj.importRtss.structures(i).item(j).points = [structX, structY, structZ];
-        end
+        %  if unique(structZ) > max(obj.ct.dicomInfo.SlicePositions) || unique(structZ) < min(obj.ct.dicomInfo.SlicePositions)
+        %     matRad_cfg.dispWarning(['Omitting contour data for ' obj.importRtss.structures(i).structName ' at slice position ' num2str(unique(structZ)) 'mm - no ct data available.\n']);
+        % else
+        %     obj.importRtss.structures(i).item(j).points = [structX, structY, structZ];
+        % end
             
     end
     
