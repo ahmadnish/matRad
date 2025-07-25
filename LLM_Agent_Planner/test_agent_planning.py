@@ -208,10 +208,15 @@ class IMRTPlanningAgent:
                 "type": "function",
                 "function": {
                     "name": "optimize_fluence",
-                    "description": "Run fluence optimization based on current objectives.",
+                    "description": "Run fluence optimization based on current objectives. Can use previous optimization results as starting point for improved convergence.",
                     "parameters": {
                         "type": "object",
-                        "properties": {},
+                        "properties": {
+                            "use_previous_weights": {
+                                "type": "boolean",
+                                "description": "If true, use weights from previous optimization as initial values for warm-start (default: false)"
+                            }
+                        },
                         "additionalProperties": False
                     }
                 }
@@ -372,17 +377,25 @@ class IMRTPlanningAgent:
                     )
                 
             elif tool_name == "optimize_fluence":
-                result_dict = self.engine.optimize_fluence()
+                use_previous_weights = arguments.get("use_previous_weights", False)
+                result_dict = self.engine.optimize_fluence(use_previous_weights=use_previous_weights)
                 result_dict = convert_matlab_types(result_dict)
                 if result_dict.get("success"):
                     self.plan_state["optimization_completed"] = True
                     self.plan_state["iteration_count"] += 1
                     
-                    # Log optimization result
+                    # Log optimization result with warm-start information
                     execution_time = time.time() - start_time
+                    optimization_info = {
+                        "optimization_successful": True,
+                        "start_type": result_dict.get("start_type", "unknown"),
+                        "weights_stored": result_dict.get("weights_stored", False),
+                        "weights_count": result_dict.get("weights_count", 0),
+                        "used_previous_weights": use_previous_weights
+                    }
                     self.logger.log_optimization_result(
                         self.plan_state["iteration_count"],
-                        {"optimization_successful": True},
+                        optimization_info,
                         execution_time
                     )
                 
@@ -526,6 +539,14 @@ class IMRTPlanningAgent:
             - Repeat this loop until either clinical criteria are met, plan quality plateaus, or the maximum number of iterations is reached.
             - If optimal, save the plan and exit.
             - If not, summarize the steps taken and restart from step 3 using different objective functions (preferable; Keep an eye on the already added objectives), beam angles, or even more impinging angles.
+
+            Optimization Strategy:
+            - For the first optimization: Use optimize_fluence() without parameters (cold-start from default weights)
+            - For subsequent optimizations: Use optimize_fluence(use_previous_weights=true) to warm-start from previous results
+            - Warm-start optimization typically converges faster and may find better local optima
+            - The system automatically stores optimized weights after each successful optimization
+            - Use warm-start when refining objectives or making incremental improvements
+            - Use cold-start only when making major changes to beam configuration or starting fresh
 
             Clinical Guidelines:
             - Target structures (PTVs) should receive 95% of the prescribed dose (typically 50–70 Gy).

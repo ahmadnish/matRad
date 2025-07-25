@@ -39,6 +39,10 @@ class MatRadEngine:
         self.dij = None
         self.resultGUI = None
         
+        # Store optimized weights for warm-start
+        self.optimized_weights = None
+        self.weights_available = False
+        
     def start_engine(self) -> bool:
         """
         Start the MATLAB Engine and initialize matRad.
@@ -318,12 +322,17 @@ class MatRadEngine:
             # Update plan in class
             self.pln = self.eng.workspace["pln"]
             
+            # Clear optimized weights since beam configuration changed
+            self.optimized_weights = None
+            self.weights_available = False
+            
             return {
                 "success": True,
                 "num_beams": len(gantry_angles),
                 "gantry_angles": gantry_angles,
                 "couch_angles": couch_angles,
-                "message": "Beam angles set successfully"
+                "weights_cleared": True,
+                "message": "Beam angles set successfully. Previous optimization weights cleared."
             }
             
         except Exception as e:
@@ -581,9 +590,13 @@ class MatRadEngine:
         except Exception as e:
             return {"success": False, "error": str(e)}
     
-    def optimize_fluence(self) -> Dict[str, Any]:
+    def optimize_fluence(self, use_previous_weights: bool = False) -> Dict[str, Any]:
         """
         Run fluence optimization based on the current plan and objectives.
+        
+        Args:
+            use_previous_weights: If True and previous weights are available, 
+                                use them as initial weights for warm-start optimization.
         
         Returns:
             Dict with optimization results or error status.
@@ -601,10 +614,21 @@ class MatRadEngine:
             return {"success": False, "error": "No influence matrix calculated. Call calculate_influence_matrix first."}
             
         try:
+            # Determine optimization command based on whether to use previous weights
+            if use_previous_weights and self.weights_available and self.optimized_weights is not None:
+                print("Running fluence optimization with previous weights for warm-start...")
+                # Set the wInit variable in MATLAB workspace
+                
+                optimization_cmd = "resultGUI = matRad_fluenceOptimization(dij,cst,pln,wInit);"
+                start_type = "warm-start"
+            else:
+                print("Running fluence optimization from scratch...")
+                optimization_cmd = "resultGUI = matRad_fluenceOptimization(dij,cst,pln);"
+                start_type = "cold-start"
+            
             # Run fluence optimization
-            print("Running fluence optimization...")
             start_time = time.time()
-            self.eng.eval("resultGUI = matRad_fluenceOptimization(dij,cst,pln);", nargout=0)
+            self.eng.eval(optimization_cmd, nargout=0)
             opt_time = time.time() - start_time
             
             # Instead of trying to get the entire resultGUI struct, just keep track that it exists
@@ -618,14 +642,46 @@ class MatRadEngine:
             if has_result != 1:
                 return {"success": False, "error": "Optimization failed to produce results"}
             
+            # Store the optimized weights for future use
+            try:
+                # Extract optimized weights from resultGUI.wUnsequenced
+                self.eng.workspace['wInit'] = self.eng.eval("resultGUI.w", nargout=1)
+                # Convert from MATLAB array to numpy array
+                self.optimized_weights = self.eng.workspace['wInit']
+                self.weights_available = True
+                weights_stored = True
+                weights_count = len(self.optimized_weights)
+                print(f"Stored {weights_count} optimized weights for future warm-start")
+            except Exception as e:
+                print(f"Warning: Could not store optimized weights: {e}")
+                weights_stored = False
+                weights_count = 0
+            
             return {
                 "success": True,
                 "optimization_time_sec": opt_time,
-                "message": "Fluence optimization completed successfully"
+                "start_type": start_type,
+                "weights_stored": weights_stored,
+                "weights_count": weights_count,
+                "message": f"Fluence optimization completed successfully ({start_type})"
             }
             
         except Exception as e:
             return {"success": False, "error": str(e)}
+    
+    def clear_optimized_weights(self) -> Dict[str, Any]:
+        """
+        Clear stored optimized weights. Useful when beam configuration changes significantly.
+        
+        Returns:
+            Dict with operation status.
+        """
+        self.optimized_weights = None
+        self.weights_available = False
+        return {
+            "success": True,
+            "message": "Optimized weights cleared. Next optimization will use cold-start."
+        }
     
     def run_sequencing(self) -> Dict[str, Any]:
         """
