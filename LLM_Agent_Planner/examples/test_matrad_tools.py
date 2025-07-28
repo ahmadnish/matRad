@@ -51,7 +51,8 @@ def run_complete_planning_workflow():
         print_result(result, "Create Plan")
         
         # 4. Set beam angles
-        beam_angles = [0, 72, 144, 216, 288]  # 5-field IMRT setup
+        #beam_angles = [0, 72, 144, 216, 288]  # 5-field IMRT setup
+        beam_angles = [72]
         result = engine.set_beam_angles(beam_angles)
         print_result(result, "Set Beam Angles")
         
