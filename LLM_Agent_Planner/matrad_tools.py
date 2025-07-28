@@ -736,14 +736,25 @@ class MatRadEngine:
     
     def calculate_dvh(self, structure_name: Optional[str] = None) -> Dict[str, Any]:
         """
-        Calculate DVH (Dose-Volume Histogram) for the specified structure or all structures.
-        Creates visual DVH plots and detailed clinical assessments.
+        **SPECIALIZED TOOL FOR FOCUSED DVH ANALYSIS**
+        
+        Calculate DVH (Dose-Volume Histogram) for specific structure analysis using matRad's quality indicators.
+        Creates detailed DVH plots and structure-specific clinical assessments.
+        
+        **USE THIS FOR:**
+        - Focused analysis of a specific structure's dose distribution
+        - Detailed DVH curve examination for individual structures
+        - Structure-specific quality indicator deep-dive
+        - When you need detailed DVH plots for specific structures
+        - Follow-up analysis after comprehensive plan evaluation
+        
+        **NOTE:** For overall plan evaluation, use evaluate_plan() instead.
         
         Args:
             structure_name: Name of the structure to calculate DVH for. If None, calculates for all structures.
             
         Returns:
-            Dict with DVH analysis and plot information.
+            Dict with detailed DVH analysis and structure-specific clinical assessment.
         """
         if not self.initialized:
             return {"success": False, "error": "MATLAB Engine not initialized"}
@@ -1236,10 +1247,27 @@ class MatRadEngine:
     
     def evaluate_plan(self) -> Dict[str, Any]:
         """
-        Evaluate the current treatment plan with quality indicators.
+        **PRIMARY TOOL FOR COMPREHENSIVE PLAN EVALUATION**
+        
+        Comprehensive evaluation of the current treatment plan using matRad's official quality indicators.
+        Includes DVH analysis, quality metrics, clinical assessments, and visual plots for ALL structures.
+        
+        **USE THIS FOR:**
+        - Overall plan quality assessment
+        - Treatment plan approval/rejection decisions
+        - Comparing different treatment plans
+        - Getting complete clinical summary of the plan
+        - Plan-level quality scoring and recommendations
+        
+        **Returns comprehensive data including:**
+        - Plan-level quality assessment with clinical recommendations
+        - Quality indicators for all structures (D95, D50, HI, CI, etc.)
+        - DVH data and plots for all structures
+        - Plan quality score (0-100)
+        - Target coverage and OAR sparing summaries
         
         Returns:
-            Dict with plan evaluation metrics or error status.
+            Dict with comprehensive plan evaluation including DVH, quality indicators, and clinical assessments.
         """
         if not self.initialized:
             return {"success": False, "error": "MATLAB Engine not initialized"}
@@ -1256,109 +1284,288 @@ class MatRadEngine:
             if not has_dose:
                 return {"success": False, "error": "No dose information available in result"}
             
-            # Calculate simple metrics directly without using matRad_planAnalysis
+            # Get all valid structure indices
             self.eng.eval("""
-            try
-                % Create metrics struct if it doesn't exist
-                if ~isfield(resultGUI, 'metrics')
-                    resultGUI.metrics = struct();
-                end
-                
-                % Calculate metrics for each structure
-                for i = 1:size(cst,1)
-                    if ~isempty(cst{i,2})
-                        structName = cst{i,2};
-                        structType = cst{i,3};
-                        
-                        % Get voxel indices for this structure
-                        if ~isempty(cst{i,4}) && ~isempty(cst{i,4}{1})
-                            voxelIndices = cst{i,4}{1};
-                            
-                            % Get dose for this structure
-                            structDose = resultGUI.physicalDose(voxelIndices);
-                            
-                            % Calculate basic metrics
-                            resultGUI.metrics.(structName).mean = mean(structDose);
-                            resultGUI.metrics.(structName).max = max(structDose);
-                            resultGUI.metrics.(structName).min = min(structDose);
-                            resultGUI.metrics.(structName).std = std(structDose);
-                            resultGUI.metrics.(structName).V5 = sum(structDose >= 5) / numel(structDose) * 100;
-                            resultGUI.metrics.(structName).V10 = sum(structDose >= 10) / numel(structDose) * 100;
-                            resultGUI.metrics.(structName).V20 = sum(structDose >= 20) / numel(structDose) * 100;
-                            resultGUI.metrics.(structName).type = structType;
-                        end
-                    end
-                end
-            catch ME
-                warning('Metrics calculation failed: %s', ME.message);
-            end
-            """, nargout=0)
-            
-            # Get structure names
-            self.eng.eval("""
-            names = {};
+            % Store all structure indices that have data
+            validStructIndices = [];
             for i = 1:size(cst,1)
-                if ~isempty(cst{i,2})
-                    names{end+1} = cst{i,2};
+                if ~isempty(cst{i,2}) && ~isempty(cst{i,4})
+                    validStructIndices(end+1) = i;
                 end
             end
             """, nargout=0)
             
-            # Access the names variable from MATLAB workspace
-            struct_names = self.eng.workspace["names"]
+            # Get valid structure indices and handle matlab.double array
+            matlab_indices = self.eng.workspace["validStructIndices"]
             
-            # Check if metrics were calculated
-            has_metrics = self.eng.eval("isfield(resultGUI, 'metrics')", nargout=1)
+            # Convert matlab.double array to Python list
+            if hasattr(matlab_indices, '_data'):
+                valid_indices = [int(idx) for idx in matlab_indices._data]
+            elif isinstance(matlab_indices, (list, tuple)):
+                valid_indices = [int(idx) for idx in matlab_indices]
+            else:
+                valid_indices = [int(matlab_indices)]
             
-            if not has_metrics:
-                return {"success": False, "error": "Metrics calculation failed"}
+            # Calculate comprehensive quality indicators and DVH for all structures
+            all_structures_data = []
+            structure_names = []
             
-            # Get metrics for each structure
-            metrics_list = []
+            for idx in valid_indices:
+                # Calculate comprehensive metrics using matRad's official quality indicators
+                dvh_data = self._calculate_structure_metrics(idx)
+                assessment = self._generate_clinical_assessment(dvh_data)
+                
+                structure_result = {
+                    "structure_name": dvh_data["structure_name"],
+                    "structure_type": dvh_data["structure_type"],
+                    "clinical_assessment": assessment,
+                    "quality_indicators": {
+                        "D95": dvh_data["D95"],
+                        "D50": dvh_data["D50"],
+                        "D5": dvh_data["D5"],
+                        "D2": dvh_data["D2"],
+                        "D98": dvh_data["D98"],
+                        "mean_dose": dvh_data["mean_dose"],
+                        "max_dose": dvh_data["max_dose"],
+                        "min_dose": dvh_data["min_dose"],
+                        "std_dose": dvh_data["std_dose"],
+                        "V_5Gy": dvh_data["V_5Gy"],
+                        "V_10Gy": dvh_data["V_10Gy"],
+                        "V_20Gy": dvh_data["V_20Gy"],
+                        "V_30Gy": dvh_data["V_30Gy"],
+                        "V_40Gy": dvh_data["V_40Gy"],
+                        "V_50Gy": dvh_data["V_50Gy"],
+                        "V_60Gy": dvh_data["V_60Gy"],
+                        "HI": dvh_data["HI"],
+                        "CI": dvh_data["CI"]
+                    },
+                    "dvh_data": {
+                        "dvh_values": dvh_data["dvh_values"],
+                        "bin_centers": dvh_data["bin_centers"]
+                    }
+                }
+                all_structures_data.append(structure_result)
+                structure_names.append(dvh_data["structure_name"])
             
-            if struct_names:
-                for name in struct_names:
-                    name_str = str(name)
-                    
-                    # Check if metrics data exists for this structure
-                    has_struct_metrics = self.eng.eval(f"isfield(resultGUI.metrics, '{name_str}')", nargout=1)
-                    
-                    if has_struct_metrics:
-                        # Get metrics
-                        mean_dose = float(self.eng.eval(f"resultGUI.metrics.{name_str}.mean", nargout=1))
-                        max_dose = float(self.eng.eval(f"resultGUI.metrics.{name_str}.max", nargout=1))
-                        min_dose = float(self.eng.eval(f"resultGUI.metrics.{name_str}.min", nargout=1))
-                        std_dose = float(self.eng.eval(f"resultGUI.metrics.{name_str}.std", nargout=1))
-                        struct_type = str(self.eng.eval(f"resultGUI.metrics.{name_str}.type", nargout=1))
-                        
-                        # Get volume metrics
-                        v5 = float(self.eng.eval(f"resultGUI.metrics.{name_str}.V5", nargout=1))
-                        v10 = float(self.eng.eval(f"resultGUI.metrics.{name_str}.V10", nargout=1))
-                        v20 = float(self.eng.eval(f"resultGUI.metrics.{name_str}.V20", nargout=1))
-                        
-                        # Create metric dict
-                        metric_dict = {
-                            'name': name_str,
-                            'type': struct_type,
-                            'mean_dose': mean_dose,
-                            'max_dose': max_dose,
-                            'min_dose': min_dose,
-                            'std_dose': std_dose,
-                            'V5': v5,
-                            'V10': v10,
-                            'V20': v20
-                        }
-                            
-                        metrics_list.append(metric_dict)
+            # Create comprehensive DVH plot for all structures
+            plot_file = self._create_all_structures_plot(valid_indices)
+            
+            # Generate overall plan assessment
+            plan_assessment = self._generate_plan_assessment(all_structures_data)
+            
+            # Separate targets and OARs for summary
+            targets = [data for data in all_structures_data if data["structure_type"] == 'TARGET']
+            oars = [data for data in all_structures_data if data["structure_type"] == 'OAR']
+            
+            # Calculate plan-level metrics
+            plan_metrics = self._calculate_plan_level_metrics(targets, oars)
             
             return {
                 "success": True,
-                "structure_metrics": metrics_list,
-                "message": "Plan evaluation completed successfully"
+                "plan_assessment": plan_assessment,
+                "plan_metrics": plan_metrics,
+                "num_structures": len(all_structures_data),
+                "num_targets": len(targets),
+                "num_oars": len(oars),
+                "structure_names": structure_names,
+                "structures_evaluation": all_structures_data,
+                "dvh_plot": plot_file,
+                "message": f"Comprehensive plan evaluation completed using matRad quality indicators for {len(all_structures_data)} structures"
             }
             
         except Exception as e:
             return {"success": False, "error": str(e)}
+    
+    def _generate_plan_assessment(self, all_structures_data: List[Dict[str, Any]]) -> str:
+        """Generate overall plan assessment summary."""
+        import math
+        
+        targets = [data for data in all_structures_data if data["structure_type"] == 'TARGET']
+        oars = [data for data in all_structures_data if data["structure_type"] == 'OAR']
+        
+        assessment = []
+        assessment.append("COMPREHENSIVE TREATMENT PLAN EVALUATION")
+        assessment.append("=" * 60)
+        assessment.append(f"Evaluated using matRad_calcQualityIndicators")
+        assessment.append(f"Total Structures: {len(all_structures_data)} (Targets: {len(targets)}, OARs: {len(oars)})")
+        assessment.append("")
+        
+        # TARGET EVALUATION
+        if targets:
+            assessment.append("TARGET EVALUATION:")
+            assessment.append("-" * 30)
+            
+            excellent_targets = 0
+            good_targets = 0
+            poor_targets = 0
+            
+            for target in targets:
+                qi = target["quality_indicators"]
+                name = target["structure_name"]
+                
+                assessment.append(f"{name}:")
+                assessment.append(f"  Prescription Coverage: D95={qi['D95']:.1f}Gy, D98={qi['D98']:.1f}Gy")
+                assessment.append(f"  Dose Statistics: Mean={qi['mean_dose']:.1f}Gy, Max={qi['max_dose']:.1f}Gy")
+                
+                # Coverage assessment
+                coverage_ratio = qi['D95'] / qi['D50'] if qi['D50'] > 0 else 0
+                if coverage_ratio >= 0.95:
+                    assessment.append(f"  ✓ EXCELLENT coverage ({coverage_ratio*100:.1f}%)")
+                    excellent_targets += 1
+                elif coverage_ratio >= 0.90:
+                    assessment.append(f"  ○ GOOD coverage ({coverage_ratio*100:.1f}%)")
+                    good_targets += 1
+                else:
+                    assessment.append(f"  ✗ POOR coverage ({coverage_ratio*100:.1f}%) - Risk of underdosage")
+                    poor_targets += 1
+                
+                # Homogeneity assessment
+                if not math.isnan(qi['HI']):
+                    if qi['HI'] < 5:
+                        assessment.append(f"  ✓ EXCELLENT homogeneity (HI={qi['HI']:.2f})")
+                    elif qi['HI'] < 10:
+                        assessment.append(f"  ○ GOOD homogeneity (HI={qi['HI']:.2f})")
+                    else:
+                        assessment.append(f"  ✗ POOR homogeneity (HI={qi['HI']:.2f})")
+                
+                # Conformity assessment
+                if not math.isnan(qi['CI']):
+                    if qi['CI'] > 0.9:
+                        assessment.append(f"  ✓ EXCELLENT conformity (CI={qi['CI']:.2f})")
+                    elif qi['CI'] > 0.8:
+                        assessment.append(f"  ○ GOOD conformity (CI={qi['CI']:.2f})")
+                    else:
+                        assessment.append(f"  ✗ POOR conformity (CI={qi['CI']:.2f}) - Dose spillage")
+                
+                assessment.append("")
+            
+            # Target summary
+            assessment.append(f"TARGET SUMMARY: {excellent_targets} excellent, {good_targets} good, {poor_targets} poor")
+            assessment.append("")
+        
+        # OAR EVALUATION
+        if oars:
+            assessment.append("OAR SPARING EVALUATION:")
+            assessment.append("-" * 30)
+            
+            well_spared = 0
+            moderate_dose = 0
+            high_dose = 0
+            
+            for oar in oars:
+                qi = oar["quality_indicators"]
+                name = oar["structure_name"]
+                
+                assessment.append(f"{name}:")
+                assessment.append(f"  Dose Statistics: Max={qi['max_dose']:.1f}Gy, Mean={qi['mean_dose']:.1f}Gy")
+                assessment.append(f"  Volume Metrics: V5Gy={qi['V_5Gy']*100:.1f}%, V20Gy={qi['V_20Gy']*100:.1f}%, V50Gy={qi['V_50Gy']*100:.1f}%")
+                
+                # Sparing assessment
+                if qi['max_dose'] < 10:
+                    assessment.append(f"  ✓ EXCELLENT sparing (Max dose <10Gy)")
+                    well_spared += 1
+                elif qi['max_dose'] < 30:
+                    assessment.append(f"  ○ MODERATE exposure (Max dose {qi['max_dose']:.1f}Gy)")
+                    moderate_dose += 1
+                else:
+                    assessment.append(f"  ⚠ HIGH dose exposure (Max dose {qi['max_dose']:.1f}Gy)")
+                    high_dose += 1
+                
+                assessment.append("")
+            
+            # OAR summary
+            assessment.append(f"OAR SUMMARY: {well_spared} well-spared, {moderate_dose} moderate dose, {high_dose} high dose")
+            assessment.append("")
+        
+        # Overall plan assessment
+        assessment.append("OVERALL PLAN QUALITY:")
+        assessment.append("-" * 30)
+        
+        if targets:
+            target_quality = excellent_targets / len(targets)
+            if target_quality >= 0.8:
+                assessment.append("✓ TARGET COVERAGE: EXCELLENT")
+            elif target_quality >= 0.6:
+                assessment.append("○ TARGET COVERAGE: GOOD")
+            else:
+                assessment.append("✗ TARGET COVERAGE: NEEDS IMPROVEMENT")
+        
+        if oars:
+            oar_quality = well_spared / len(oars)
+            if oar_quality >= 0.8:
+                assessment.append("✓ OAR SPARING: EXCELLENT")
+            elif oar_quality >= 0.6:
+                assessment.append("○ OAR SPARING: GOOD")
+            else:
+                assessment.append("⚠ OAR SPARING: NEEDS IMPROVEMENT")
+        
+        assessment.append("")
+        assessment.append("RECOMMENDATION:")
+        if targets and oars:
+            overall_quality = (excellent_targets + well_spared) / (len(targets) + len(oars))
+            if overall_quality >= 0.8:
+                assessment.append("✓ Plan is clinically acceptable - proceed with treatment")
+            elif overall_quality >= 0.6:
+                assessment.append("○ Plan is adequate but could benefit from minor optimization")
+            else:
+                assessment.append("✗ Plan needs significant reoptimization before clinical use")
+        
+        return "\n".join(assessment)
+    
+    def _calculate_plan_level_metrics(self, targets: List[Dict], oars: List[Dict]) -> Dict[str, Any]:
+        """Calculate plan-level summary metrics."""
+        import math
+        
+        plan_metrics = {
+            "target_summary": {},
+            "oar_summary": {},
+            "plan_quality_score": 0.0
+        }
+        
+        if targets:
+            # Target metrics
+            mean_target_coverage = sum([t["quality_indicators"]["D95"] for t in targets]) / len(targets)
+            mean_target_homogeneity = sum([t["quality_indicators"]["HI"] for t in targets if not math.isnan(t["quality_indicators"]["HI"])]) / max(1, len([t for t in targets if not math.isnan(t["quality_indicators"]["HI"])]))
+            mean_target_conformity = sum([t["quality_indicators"]["CI"] for t in targets if not math.isnan(t["quality_indicators"]["CI"])]) / max(1, len([t for t in targets if not math.isnan(t["quality_indicators"]["CI"])]))
+            
+            plan_metrics["target_summary"] = {
+                "mean_D95": round(mean_target_coverage, 2),
+                "mean_homogeneity_index": round(mean_target_homogeneity, 2),
+                "mean_conformity_index": round(mean_target_conformity, 2),
+                "num_targets": len(targets)
+            }
+        
+        if oars:
+            # OAR metrics
+            mean_oar_max_dose = sum([o["quality_indicators"]["max_dose"] for o in oars]) / len(oars)
+            mean_oar_mean_dose = sum([o["quality_indicators"]["mean_dose"] for o in oars]) / len(oars)
+            mean_v20 = sum([o["quality_indicators"]["V_20Gy"] for o in oars]) / len(oars)
+            
+            plan_metrics["oar_summary"] = {
+                "mean_max_dose": round(mean_oar_max_dose, 2),
+                "mean_mean_dose": round(mean_oar_mean_dose, 2),
+                "mean_V20Gy": round(mean_v20 * 100, 2),
+                "num_oars": len(oars)
+            }
+        
+        # Calculate overall quality score (0-100)
+        quality_score = 0
+        if targets:
+            # Target score based on coverage and homogeneity
+            target_score = min(100, (mean_target_coverage / 60) * 50)  # Up to 50 points for coverage
+            if not math.isnan(mean_target_homogeneity):
+                homogeneity_score = max(0, 25 - mean_target_homogeneity * 2.5)  # Up to 25 points for homogeneity
+                target_score += homogeneity_score
+            quality_score += target_score
+        
+        if oars:
+            # OAR score based on sparing (lower doses = higher score)
+            oar_score = max(0, 25 - (mean_oar_max_dose / 60) * 25)  # Up to 25 points for OAR sparing
+            quality_score += oar_score
+        
+        plan_metrics["plan_quality_score"] = round(quality_score, 1)
+        
+        return plan_metrics
     
     def save_plan(self, output_file: str) -> Dict[str, Any]:
         """
