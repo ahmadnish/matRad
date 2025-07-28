@@ -453,6 +453,71 @@ class IMRTPlanningAgent:
             
             return error_result
     
+    def _summarize_tool_result(self, function_name: str, result: Dict[str, Any]) -> str:
+        """Summarize tool results to reduce message size while preserving key information."""
+        if not result.get("success"):
+            return f"❌ {function_name} failed: {result.get('error', 'Unknown error')}"
+        
+        if function_name == "evaluate_plan_quality":
+            # Summarize comprehensive evaluation
+            summary = f"✅ Plan evaluation completed\n"
+            if "plan_metrics" in result:
+                pm = result["plan_metrics"]
+                if "target_summary" in pm:
+                    ts = pm["target_summary"]
+                    summary += f"Targets: D95={ts.get('mean_D95', 'N/A')}Gy, HI={ts.get('mean_homogeneity_index', 'N/A')}, CI={ts.get('mean_conformity_index', 'N/A')}\n"
+                if "oar_summary" in pm:
+                    os = pm["oar_summary"] 
+                    summary += f"OARs: MaxDose={os.get('mean_max_dose', 'N/A')}Gy, V20={os.get('mean_V20Gy', 'N/A')}%\n"
+                summary += f"Quality Score: {pm.get('plan_quality_score', 'N/A')}/100"
+            return summary
+            
+        elif function_name == "optimize_fluence":
+            opt_time = result.get("optimization_time_sec", 0)
+            start_type = result.get("start_type", "unknown")
+            return f"✅ Optimization completed ({start_type}) in {opt_time:.1f}s"
+            
+        elif function_name == "add_optimization_objective":
+            struct = result.get("structure", "unknown")
+            obj_type = result.get("objective_type", "unknown")
+            dose = result.get("dose_value", "unknown")
+            return f"✅ Added {obj_type} objective: {struct} = {dose}Gy"
+            
+        elif function_name in ["load_patient_data", "create_treatment_plan", "generate_beam_geometry", "calculate_dose_influence_matrix"]:
+            return f"✅ {function_name} completed: {result.get('message', 'Success')}"
+            
+        else:
+            # Generic summary
+            message = result.get("message", "Success")
+            return f"✅ {function_name}: {message}"
+    
+    def _compress_conversation_history(self, messages: List[Dict], max_messages: int = 20) -> List[Dict]:
+        """Compress conversation history to prevent context length issues."""
+        if len(messages) <= max_messages:
+            return messages
+        
+        # Keep system prompt, first few messages, and recent messages
+        system_msgs = [msg for msg in messages if msg["role"] == "system"]
+        other_msgs = [msg for msg in messages if msg["role"] != "system"]
+        
+        if len(other_msgs) <= max_messages - len(system_msgs):
+            return messages
+            
+        # Keep first 5 and last 10 messages, add compression note
+        keep_first = 5
+        keep_last = max_messages - len(system_msgs) - keep_first - 1  # -1 for compression note
+        
+        compressed = system_msgs + other_msgs[:keep_first]
+        
+        # Add compression summary
+        compressed.append({
+            "role": "user", 
+            "content": f"[Conversation compressed: Kept first {keep_first} and last {keep_last} messages out of {len(other_msgs)} total messages to save context]"
+        })
+        
+        compressed.extend(other_msgs[-keep_last:])
+        return compressed
+    
     def _configure_fmincon_tolerances(self):
         """
         Configure fmincon tolerances to prevent early stopping.
@@ -633,9 +698,14 @@ class IMRTPlanningAgent:
                     tool_choice="auto"
                 )
                 
-                # Add assistant message
+                # Add assistant message (simplified version)
                 assistant_message = response.choices[0].message
-                messages.append(assistant_message.model_dump())
+                simplified_assistant = {
+                    "role": "assistant",
+                    "content": assistant_message.content,
+                    "tool_calls": assistant_message.tool_calls
+                }
+                messages.append(simplified_assistant)
                 
                 # Check if LLM wants to call functions
                 if assistant_message.tool_calls:
@@ -645,20 +715,25 @@ class IMRTPlanningAgent:
                         
                         print(f"\n🔧 Agent calling: {function_name}")
                         print(f"   Arguments: {arguments}")
-                        
+
                         # Execute the tool
                         result = self.execute_tool(function_name, arguments)
                         
                         print(f"   Result: {result.get('message', result)}")
                         
-                        # Convert result to JSON string (now guaranteed to be serializable)
-                        result_json = json.dumps(result, ensure_ascii=False, indent=2)
+                        # Use summarized result instead of full JSON to save context
+                        summarized_result = self._summarize_tool_result(function_name, result)
+                        
+                        # For critical evaluation results, include key metrics in full detail
+                        if function_name == "evaluate_plan_quality" and result.get("success"):
+                            if "plan_assessment" in result:
+                                summarized_result += f"\n\nClinical Assessment:\n{result['plan_assessment']}"
                         
                         # Add tool result to conversation
                         tool_message = {
                             "role": "tool",
                             "tool_call_id": tool_call.id,
-                            "content": result_json
+                            "content": summarized_result
                         }
                         messages.append(tool_message)
                 
@@ -682,6 +757,13 @@ class IMRTPlanningAgent:
                     messages.append({"role": "user", "content": "What should we do next?"})
                 
                 iteration += 1
+                
+                # Compress conversation history every 10 iterations to prevent context overflow
+                if iteration % 50 == 0:
+                    old_length = len(messages)
+                    messages = self._compress_conversation_history(messages, max_messages=25)
+                    if len(messages) < old_length:
+                        print(f"📝 Compressed conversation: {old_length} → {len(messages)} messages")
                 
             except Exception as e:
                 print(f"❌ Error in iteration {iteration}: {str(e)}")
@@ -727,7 +809,7 @@ def main():
         print("\n🤖 Starting LLM-guided planning session...")
         
         # Run planning session
-        session_results = agent.run_planning_session(patient_file, max_iterations=80)
+        session_results = agent.run_planning_session(patient_file, max_iterations=200)
         
         print("\n" + "=" * 50)
         print("📋 PLANNING SESSION RESULTS")
