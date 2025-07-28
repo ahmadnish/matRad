@@ -524,14 +524,12 @@ class IMRTPlanningAgent:
             5. Add optimization objectives for targets and OARs, based on clinical guidelines.
             6. Optimize the plan and evaluate quality.
             7. Then iteratively:
-            - Use DVH analysis tools to assess plan quality in detail and check for any unmet clinical objectives:
-                - calculate_dvh_analysis() without structure_name: Gets comprehensive summary of all structures
-                - calculate_dvh_analysis(structure_name="PTV") for detailed target analysis with D95, D50, HI, CI metrics
-                - calculate_dvh_analysis(structure_name="OAR_name") for detailed OAR sparing analysis
+            - Use evaluate_plan_quality() to assess overall plan quality and get comprehensive clinical assessment for all structures
             - If the plan is suboptimal, log:
                 - Why the plan is suboptimal (e.g., PTV D95 too low, OAR dose too high)
-                - Key metrics from DVH analysis (D95, D50, D2, D98, V-metrics, HI, CI)
-                - Clinical assessment from the DVH analysis text
+                - Key metrics from plan evaluation (D95, D50, D2, D98, V-metrics, HI, CI)
+                - Clinical assessment from the plan evaluation text
+                - Plan quality score and recommendations
                 - Your rationale for improvement
             - Based on this rationale, adjust or add optimization objectives using the appropriate tool.
             - Re-optimize the plan and re-evaluate. 
@@ -547,6 +545,22 @@ class IMRTPlanningAgent:
             - The system automatically stores optimized weights after each successful optimization
             - Use warm-start when refining objectives or making incremental improvements
             - Use cold-start only when making major changes to beam configuration or starting fresh
+
+            ## Treatment Plan Evaluation Tools
+
+            **For comprehensive plan evaluation, use `evaluate_plan_quality()`:**
+            - This is your PRIMARY tool for overall plan assessment
+            - Provides complete quality indicators, DVH analysis, and clinical recommendations for all structures
+            - Use this for plan approval/rejection decisions and comparing different plans
+            - Returns plan-level quality scoring and comprehensive clinical assessment
+            - Includes matRad's official quality indicators (D95, D50, HI, CI, V-metrics, etc.)
+
+            **For focused structure analysis, use `calculate_dvh_analysis(structure_name)`:**
+            - Use this ONLY when you need detailed analysis of a specific structure
+            - For follow-up investigation after comprehensive evaluation
+            - When you need structure-specific DVH plots or deep-dive analysis
+
+            **AVOID calling both methods redundantly** - `evaluate_plan_quality()` already includes comprehensive DVH analysis for all structures.
 
             Clinical Guidelines:
             - Target structures (PTVs) should receive 95% of the prescribed dose (typically 50–70 Gy).
@@ -571,21 +585,14 @@ class IMRTPlanningAgent:
                 - OAR doses below maximum and mean tolerances
 
 
-            DVH Analysis Tools:
-            - calculate_dvh_analysis() returns comprehensive analysis for all structures:
-                - "structures_data": List of individual structure analyses with detailed metrics
-                - "dvh_assessment": Summary assessment for all structures
-                - "structure_names": List of all analyzed structures
-            - calculate_dvh_analysis(structure_name="PTV63") returns detailed single structure analysis:
-                - "dvh_metrics": Complete metrics (D95, D50, D5, D2, D98, V_5Gy through V_60Gy, HI, CI)
-                - "dvh_assessment": Detailed clinical assessment text with recommendations
-                - "plot_file": Individual DVH plot filename
-            - All metrics use matRad_calcQualityIndicators for clinical accuracy
+            Plan Evaluation Workflow:
+            1. Primary: Use evaluate_plan_quality() for comprehensive plan assessment (all structures, quality scoring, clinical recommendations)
+            2. Optional: Use calculate_dvh_analysis(structure_name) only for focused analysis of specific structures if needed
 
             Termination Conditions:
-            - A plan is optimal if all clinical thresholds are met (use DVH metrics to verify).
+            - A plan is optimal if all clinical thresholds are met (use plan evaluation metrics to verify).
             - Do not iterate further if:
-                - Plan quality plateaus over 5 iterations (compare DVH key metrics)
+                - Plan quality plateaus over 5 iterations (compare plan quality scores and key metrics)
                 - All objective changes result in equivalent or worse tradeoffs
             - Do not re-run dose calculation unless beam geometry or machine parameters change.
 
@@ -594,22 +601,18 @@ class IMRTPlanningAgent:
             - "reason": Explanation of the decision
             - "tool_used": Name of the matRad function invoked
             - "inputs": Parameters given to the tool
-            - "outcome": Metrics after action from DVH analysis (e.g., D95 = 93.2%, HI = 0.15, Parotid Dmean = 26.1 Gy, V30Gy = 45%)
-            - "clinical_assessment": Key findings from dvh_assessment text
+            - "outcome": Metrics after action from plan evaluation (e.g., D95 = 93.2%, HI = 0.15, Parotid Dmean = 26.1 Gy, V30Gy = 45%)
+            - "clinical_assessment": Key findings from plan assessment text
             - "next_action": Planned next step
 
             Current patient file: {patient_file}  
             Maximum iterations allowed: {max_iterations}
 
-            DVH Analysis Examples:
-            1. Overall assessment: calculate_dvh_analysis() → Returns summary + structures_data array
-            2. Target analysis: calculate_dvh_analysis(structure_name="PTV63") → Returns detailed metrics + clinical assessment
-            3. OAR analysis: calculate_dvh_analysis(structure_name="Parotid_L") → Returns sparing assessment + V-metrics
-
-            Key DVH Metrics to Monitor:
+            Key Quality Metrics to Monitor (from evaluate_plan_quality):
             - Targets: D95 (coverage), D50 (median), CI (conformity), HI (homogeneity)
             - OARs: max_dose, mean_dose, V30Gy, V20Gy (volume metrics)
             - All: std_dose (dose uniformity), D2/D98 (dose extremes)
+            - Plan-level: quality score (0-100), clinical recommendations
 
             Start by getting the current plan state and then proceed step by step.  
             Always ensure your function calls use valid JSON-serializable parameters.
