@@ -798,6 +798,7 @@ def main():
     # Configuration
     matrad_path = "/Users/ahmadneishabouri/matRad"  # Update this path as needed
     patient_file = "HandN_4Agent_noconstraints.mat"  # Adjust based on available patient data
+    #patient_file = "HEAD_AND_NECK.mat"
     
     try:
         # Create planning agent

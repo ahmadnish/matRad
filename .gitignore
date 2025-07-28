@@ -6,3 +6,5 @@ coverage.json
 *.asv
 build/
 matRad-technical-documentation/
+*.png
+*.jpg

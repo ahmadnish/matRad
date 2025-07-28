@@ -630,6 +630,7 @@ class MatRadEngine:
             start_time = time.time()
             self.eng.eval(optimization_cmd, nargout=0)
             opt_time = time.time() - start_time
+            self.eng.eval("save('resultGUI.mat')", nargout=0)
             
             # Instead of trying to get the entire resultGUI struct, just keep track that it exists
             # self.resultGUI = self.eng.workspace["resultGUI"]
