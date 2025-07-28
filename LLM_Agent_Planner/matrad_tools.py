@@ -1338,10 +1338,6 @@ class MatRadEngine:
                         "V_60Gy": dvh_data["V_60Gy"],
                         "HI": dvh_data["HI"],
                         "CI": dvh_data["CI"]
-                    },
-                    "dvh_data": {
-                        "dvh_values": dvh_data["dvh_values"],
-                        "bin_centers": dvh_data["bin_centers"]
                     }
                 }
                 all_structures_data.append(structure_result)
