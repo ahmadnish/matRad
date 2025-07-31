@@ -332,7 +332,7 @@ class IMRTPlanningAgent:
                     #         "Failed to configure fmincon tolerances",
                     #         {"error": str(e)}
                     #     )
-                
+
             elif tool_name == "set_beam_configuration":
                 result_dict = self.engine.set_beam_angles(
                     arguments["gantry_angles"], 
@@ -377,6 +377,21 @@ class IMRTPlanningAgent:
                     )
                 
             elif tool_name == "optimize_fluence":
+                # Configure fmincon tolerances BEFORE optimization runs
+                try:
+                    self._configure_fmincon_tolerances()
+                    self.logger.log_action(
+                        "tolerance_config", 
+                        "Configured fmincon tolerances to prevent early stopping",
+                        {}
+                    )
+                except Exception as e:
+                    self.logger.log_action(
+                        "tolerance_config_error",
+                        "Failed to configure fmincon tolerances",
+                        {"error": str(e)}
+                    )
+                
                 use_previous_weights = arguments.get("use_previous_weights", False)
                 result_dict = self.engine.optimize_fluence(use_previous_weights=use_previous_weights)
                 result_dict = convert_matlab_types(result_dict)
@@ -491,7 +506,18 @@ class IMRTPlanningAgent:
         try:
             self.engine.eng.eval("""
             % Configure fmincon tolerances to prevent early stopping
-            if isfield(pln, 'propOpt') && isfield(pln.propOpt, 'optimizer') && strcmp(pln.propOpt.optimizer, 'fmincon')
+            % First ensure pln exists and has the right structure
+            if exist('pln', 'var') && isfield(pln, 'propOpt')
+                
+                % Force optimizer to be fmincon if not already set
+                if ~isfield(pln.propOpt, 'optimizer')
+                    pln.propOpt.optimizer = 'fmincon';
+                end
+                
+                % Initialize fmincon options struct if it doesn't exist
+                if ~isfield(pln.propOpt, 'fmincon')
+                    pln.propOpt.fmincon = struct();
+                end
                 
                 % Set more relaxed tolerances to prevent early stopping
                 pln.propOpt.fmincon.StepTolerance = 1e-4;           % Increase from default 1e-10
@@ -507,12 +533,19 @@ class IMRTPlanningAgent:
                 pln.propOpt.fmincon.Display = 'iter';
                 
                 disp('✅ Configured fmincon tolerances to prevent early stopping:');
+                disp(['   Optimizer: ' pln.propOpt.optimizer]);
                 disp(['   StepTolerance: ' num2str(pln.propOpt.fmincon.StepTolerance)]);
                 disp(['   ConstraintTolerance: ' num2str(pln.propOpt.fmincon.ConstraintTolerance)]);
                 disp(['   OptimalityTolerance: ' num2str(pln.propOpt.fmincon.OptimalityTolerance)]);
                 disp(['   FunctionTolerance: ' num2str(pln.propOpt.fmincon.FunctionTolerance)]);
                 disp(['   MaxIterations: ' num2str(pln.propOpt.fmincon.MaxIterations)]);
                 
+                % Make sure the plan is saved to the base workspace
+                assignin('base', 'pln', pln);
+                
+            else
+                disp('❌ Warning: pln variable not found or missing propOpt field');
+                disp('   Cannot configure fmincon tolerances');
             end
             """, nargout=0)
             
@@ -754,7 +787,7 @@ def main():
     
     # Configuration
     matrad_path = "/Users/ahmadneishabouri/matRad"  # Update this path as needed
-    patient_file = "HandN_4Agent_noconstraints.mat"  # Adjust based on available patient data
+    patient_file = "/Users/ahmadneishabouri/matRad/HandN_4Agent_noconstraints.mat"  # Absolute path
     #patient_file = "HEAD_AND_NECK.mat"
     
     try:
