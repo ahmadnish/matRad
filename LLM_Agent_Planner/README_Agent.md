@@ -11,13 +11,19 @@ This project implements an intelligent Large Language Model (LLM) agent that can
 - **Adaptive Workflows**: Dynamically adjusts planning strategy based on anatomy and results
 - **Clinical Reasoning**: Applies radiotherapy guidelines and best practices
 - **Iterative Improvement**: Automatically refines plans based on quality metrics
+- **Smart Convergence Monitoring**: Analyzes optimization convergence patterns to prevent stagnation
+- **Objective Learning**: Learns from previous optimization outcomes to avoid ineffective strategies
 
 ### 🔧 Comprehensive Tool Suite
 - **MATLAB Integration**: Full integration with matRad radiotherapy planning system
 - **Patient Loading**: Automatic CT and structure data processing
 - **Beam Optimization**: Intelligent beam angle selection based on anatomy
 - **Dose Calculation**: Dose influence matrix computation
-- **Objective Management**: Clinical guideline-based optimization objectives
+- **Smart Objective Management**: 
+  - View, add, remove, and clear optimization objectives
+  - Intelligent detection of redundant and conflicting objectives
+  - Adaptive objective simplification when optimization stagnates
+- **Optimization Monitoring**: Real-time capture and analysis of MATLAB optimizer output
 - **Plan Evaluation**: DVH analysis and quality metrics calculation
 
 ### 📊 Advanced Logging
@@ -143,6 +149,77 @@ LENS: Max ≤ 25 Gy
 - **`max_dose`**: Maximum dose constraint (overdosing penalty)  
 - **`mean_dose`**: Mean dose objective
 - **`square_deviation`**: Target dose with squared deviation penalty
+
+### Enhanced Objective Management Tools
+
+| Tool | Description | Parameters | Purpose |
+|------|-------------|------------|---------|
+| `get_current_objectives` | View all existing objectives | None | Check for redundancies before adding new objectives |
+| `remove_optimization_objective` | Remove specific objective | `structure_name`, `objective_index`, `objective_type`, `dose_value` | Eliminate conflicting or redundant objectives |
+| `clear_all_objectives` | Clear objectives for structure(s) | `structure_name` (optional) | Reset when objectives prevent convergence |
+
+## 🚀 Enhanced Agent Capabilities
+
+### Smart Optimization Monitoring
+
+The agent now captures and analyzes MATLAB optimizer console output in real-time, providing detailed convergence analysis:
+
+```python
+# Example optimization analysis output
+{
+  "convergence_analysis": {
+    "convergence_quality": "poor",
+    "objective_stagnation": true,
+    "small_step_sizes": true,
+    "relative_improvement": 0.002,
+    "convergence_reason": "Optimization stagnated with very small step sizes"
+  },
+  "optimization_trajectory": [
+    {"iteration": 1, "objective": 29503.46, "alpha_pr": 0.0138},
+    {"iteration": 14, "objective": 1450.79, "alpha_pr": 8.62e-16}
+  ],
+  "summary": "❌ Convergence quality: POOR\n⚠️ WARNING: Objective value stagnated in recent iterations"
+}
+```
+
+### Intelligent Objective Management
+
+The agent employs sophisticated strategies to prevent over-constraining:
+
+#### **Before Adding Objectives:**
+- Always checks existing objectives using `get_current_objectives()`
+- Identifies redundant or conflicting constraints
+- Maintains total objective count ≤ 8-12 across all structures
+
+#### **During Optimization:**
+- Monitors convergence quality (good/moderate/poor)
+- Detects stagnation patterns and tiny step sizes
+- Analyzes relative improvement percentages
+
+#### **Adaptive Response to Poor Convergence:**
+- **Stagnation detected** → Simplify objective set
+- **Tiny step sizes (<1e-12)** → Remove redundant objectives  
+- **Low improvement (<1%)** → Clear conflicting constraints
+- **Multiple failures** → Reset and restart with minimal objectives
+
+### Learning and Memory
+
+The agent learns from optimization patterns:
+
+```python
+# Pattern Recognition Examples
+- Multiple min_dose + max_dose on same structure → Often redundant
+- >3 objectives per structure → Usually over-constrained
+- Dose values <2Gy apart → Likely conflicting
+- Very high penalties (>10000) → Can cause numerical issues
+```
+
+### Enhanced Termination Logic
+
+**Stop conditions based on convergence patterns:**
+- 2+ consecutive optimizations with poor convergence → Simplify objectives
+- Optimization consistently stops at <20 iterations → Over-constraining
+- Step sizes consistently <1e-12 → Numerically ill-conditioned
 
 ## Example Usage
 

@@ -176,6 +176,18 @@ class IMRTPlanningAgent:
             {
                 "type": "function",
                 "function": {
+                    "name": "get_current_objectives",
+                    "description": "Get all current optimization objectives for all structures. Essential for understanding what objectives are already set before adding new ones or making modifications.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {},
+                        "additionalProperties": False
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
                     "name": "add_optimization_objective",
                     "description": "Add an optimization objective for a structure.",
                     "parameters": {
@@ -200,6 +212,54 @@ class IMRTPlanningAgent:
                             }
                         },
                         "required": ["structure_name", "objective_type", "dose_value", "penalty"],
+                        "additionalProperties": False
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "remove_optimization_objective",
+                    "description": "Remove a specific optimization objective from a structure. Use this to eliminate redundant or counterproductive objectives identified during optimization analysis.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "structure_name": {
+                                "type": "string",
+                                "description": "Name of the structure"
+                            },
+                            "objective_index": {
+                                "type": "integer",
+                                "description": "Specific index of objective to remove (1-based, optional)"
+                            },
+                            "objective_type": {
+                                "type": "string",
+                                "enum": ["min_dose", "max_dose", "mean_dose", "square_deviation"],
+                                "description": "Type of objective to remove (optional, removes first match)"
+                            },
+                            "dose_value": {
+                                "type": "number",
+                                "description": "Dose value to match for removal (optional, for additional specificity)"
+                            }
+                        },
+                        "required": ["structure_name"],
+                        "additionalProperties": False
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "clear_all_objectives",
+                    "description": "Clear all optimization objectives for a specific structure or all structures. Use when starting fresh or when current objectives are preventing convergence.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "structure_name": {
+                                "type": "string",
+                                "description": "Name of specific structure to clear (optional, clears all structures if omitted)"
+                            }
+                        },
                         "additionalProperties": False
                     }
                 }
@@ -352,6 +412,10 @@ class IMRTPlanningAgent:
                 if result_dict.get("success"):
                     self.plan_state["influence_matrix_calculated"] = True
                 
+            elif tool_name == "get_current_objectives":
+                result_dict = self.engine.get_current_objectives()
+                result_dict = convert_matlab_types(result_dict)
+                
             elif tool_name == "add_optimization_objective":
                 result_dict = self.engine.add_optimization_objective(
                     arguments["structure_name"],
@@ -375,6 +439,32 @@ class IMRTPlanningAgent:
                         arguments["dose_value"],
                         arguments.get("penalty", 1000.0)
                     )
+                    
+            elif tool_name == "remove_optimization_objective":
+                result_dict = self.engine.remove_optimization_objective(
+                    arguments["structure_name"],
+                    arguments.get("objective_index"),
+                    arguments.get("objective_type"),
+                    arguments.get("dose_value")
+                )
+                result_dict = convert_matlab_types(result_dict)
+                
+            elif tool_name == "clear_all_objectives":
+                result_dict = self.engine.clear_all_objectives(
+                    arguments.get("structure_name")
+                )
+                result_dict = convert_matlab_types(result_dict)
+                if result_dict.get("success"):
+                    # Update plan state to reflect cleared objectives
+                    if arguments.get("structure_name"):
+                        # Remove objectives for specific structure
+                        self.plan_state["objectives_added"] = [
+                            obj for obj in self.plan_state["objectives_added"] 
+                            if obj["structure"] != arguments["structure_name"]
+                        ]
+                    else:
+                        # Clear all objectives
+                        self.plan_state["objectives_added"] = []
                 
             elif tool_name == "optimize_fluence":
                 # Configure fmincon tolerances BEFORE optimization runs
@@ -572,39 +662,59 @@ class IMRTPlanningAgent:
         
         # Initial system prompt
         system_prompt = f"""
-            You are a clinically experienced radiotherapy planning agent, specializing in IMRT optimization using matRad.
+            You are a clinically experienced radiotherapy planning agent, specializing in IMRT optimization using matRad with advanced objective management and optimization monitoring capabilities.
 
-            Your goal is to create an optimal treatment plan that achieves target coverage while minimizing dose to organs at risk (OARs), following clinical best practices. You have access to tools for beam setup, dose calculation, optimization, and plan evaluation.
+            Your goal is to create an optimal treatment plan that achieves target coverage while minimizing dose to organs at risk (OARs), following clinical best practices. You have access to tools for beam setup, dose calculation, optimization, plan evaluation, AND IMPORTANTLY, intelligent objective management with optimization convergence monitoring.
 
-            Planning Process:
+            ## Enhanced Planning Process with Smart Objective Management:
+
+            ### Initial Setup (Steps 1-4):
             1. Start the MATLAB engine and load patient data.
             2. Examine the structure information to identify targets and OARs.
             3. Create an initial treatment plan with appropriate beam angles.
             4. Generate the beam geometry and calculate the dose influence matrix.
-            5. Add optimization objectives for targets and OARs, based on clinical guidelines.
-            6. Optimize the plan and evaluate quality.
-            7. Then iteratively:
-            - Use evaluate_plan_quality() to assess overall plan quality and get comprehensive clinical assessment for all structures
-            - If the plan is suboptimal, log:
-                - Why the plan is suboptimal (e.g., PTV D95 too low, OAR dose too high)
-                - Key metrics from plan evaluation (D95, D50, D2, D98, V-metrics, HI, CI)
-                - Clinical assessment from the plan evaluation text
-                - Plan quality score and recommendations
-                - Your rationale for improvement
-            - Based on this rationale, adjust or add optimization objectives using the appropriate tool.
-            - Re-optimize the plan and re-evaluate. 
-            - After each optimization, save the plan via save_treatment_plan with corresponding iteration number.
-            - Repeat this loop until either clinical criteria are met, plan quality plateaus, or the maximum number of iterations is reached.
-            - If optimal, save the plan and exit.
-            - If not, summarize the steps taken and restart from step 3 using different objective functions (preferable; Keep an eye on the already added objectives), beam angles, or even more impinging angles.
 
-            Optimization Strategy:
-            - For the first optimization: Use optimize_fluence() without parameters (cold-start from default weights)
-            - For subsequent optimizations: Use optimize_fluence(use_previous_weights=true) to warm-start from previous results
-            - Warm-start optimization typically converges faster and may find better local optima
-            - The system automatically stores optimized weights after each successful optimization
-            - Use warm-start when refining objectives or making incremental improvements
-            - Use cold-start only when making major changes to beam configuration or starting fresh
+            ### Intelligent Objective Management Workflow (Steps 5+):
+            
+            **BEFORE adding any objectives:**
+            - ALWAYS use get_current_objectives() to check what objectives already exist
+            - Analyze existing objectives for redundancy, conflicts, or excessive constraints
+            - Only add objectives if they serve a clear clinical purpose and don't duplicate existing ones
+
+            **Optimization and Monitoring Loop:**
+            1. Add initial clinically-guided objectives for targets and OARs
+            2. Run optimize_fluence() and CAREFULLY analyze the optimization_analysis results:
+               - Monitor convergence quality (good/moderate/poor)
+               - Check for objective stagnation and very small step sizes
+               - Evaluate relative improvement percentage
+               - Read optimization summary for warnings
+            3. Evaluate plan quality and clinical metrics
+            4. **CRITICAL DECISION POINT:** Based on optimization convergence AND plan quality:
+
+            **If optimization shows POOR convergence (stagnation, tiny steps):**
+            - This often indicates too many conflicting/redundant objectives
+            - Use get_current_objectives() to review all current objectives  
+            - Strategically remove redundant or conflicting objectives using remove_optimization_objective()
+            - Consider clear_all_objectives() for specific structures if overwhelmed with objectives
+            - Re-optimize with simplified objective set
+            
+            **If optimization converges well but plan quality is suboptimal:**
+            - Add targeted objectives for specific clinical deficiencies
+            - Use remove_optimization_objective() to replace ineffective objectives rather than accumulating them
+            - Monitor that total objective count doesn't exceed ~8-12 across all structures
+            
+            **If both optimization and plan quality are good:**
+            - Save plan and complete or make minor refinements only
+
+            ### Optimization Strategy with Convergence Monitoring:
+            - First optimization: Use optimize_fluence() (cold-start)
+            - Subsequent optimizations: Use optimize_fluence(use_previous_weights=true) for warm-start
+            - **ANALYZE optimization_analysis output every time:**
+              - convergence_quality: "good" = continue, "moderate" = cautious, "poor" = simplify objectives
+              - objective_stagnation: true = too many constraints, reduce objectives
+              - small_step_sizes: true = optimization struggling, simplify problem
+              - relative_improvement: <1% = likely over-constrained
+            - If optimization stagnates for 2+ consecutive iterations, clear problematic objectives
 
             ## Treatment Plan Evaluation Tools
 
@@ -656,14 +766,54 @@ class IMRTPlanningAgent:
                 - All objective changes result in equivalent or worse tradeoffs
             - Do not re-run dose calculation unless beam geometry or machine parameters change.
 
-            Logging (Structured):
+            ## Learning and Memory Management:
+
+            **Maintain Optimization Memory Across Iterations:**
+            - Track which objective combinations led to poor convergence (stagnation, tiny steps)
+            - Remember which objective modifications improved both convergence AND plan quality
+            - If an objective set caused convergence issues, don't repeat the same pattern
+            - Document your reasoning for objective changes in structured format
+
+            **Pattern Recognition for Optimization Issues:**
+            - Multiple min_dose + max_dose objectives on same structure = often redundant
+            - Too many objectives (>3) on single structure = usually over-constrained  
+            - Very high penalty weights (>10000) = can cause numerical issues
+            - Objectives with dose values too close together (<2Gy difference) = often conflicting
+
+            **Adaptive Strategy Based on Convergence History:**
+            - If 2+ consecutive optimizations show poor convergence → Simplify objective set
+            - If optimizer consistently stops at <20 iterations → Objectives likely over-constraining
+            - If step sizes drop to <1e-12 → Problem is numerically ill-conditioned
+            - If objective function barely improves (<1%) → Too many competing constraints
+
+            ## Enhanced Termination Conditions:
+
+            **Plan is optimal when:**
+            - Optimization convergence quality is "good" or "moderate" 
+            - Clinical thresholds are met (PTV D95 ≥95%, OAR doses below limits)
+            - Plan quality score >80 or meets clinical requirements
+
+            **Stop iteration if:**
+            - Plan quality plateaus over 3 iterations WITH good optimization convergence
+            - Optimization shows poor convergence for 3+ consecutive iterations despite objective simplification
+            - Maximum iterations reached
+
+            **Never continue if:**
+            - Optimization consistently stagnates with tiny step sizes
+            - Adding/removing objectives doesn't improve convergence pattern
+            - Numerical optimization breakdown (no convergence analysis available)
+
+            Logging (Enhanced Structured Format):
             Each planning decision should be logged in a structured JSON format with:
             - "reason": Explanation of the decision
             - "tool_used": Name of the matRad function invoked
             - "inputs": Parameters given to the tool
             - "outcome": Metrics after action from plan evaluation (e.g., D95 = 93.2%, HI = 0.15, Parotid Dmean = 26.1 Gy, V30Gy = 45%)
             - "clinical_assessment": Key findings from plan assessment text
-            - "next_action": Planned next step
+            - "optimization_convergence": Convergence quality, stagnation status, step sizes, relative improvement
+            - "objectives_status": Current number of objectives per structure, recent modifications
+            - "learning": What was learned from this iteration for future objective management
+            - "next_action": Planned next step with rationale
 
             Current patient file: {patient_file}  
             Maximum iterations allowed: {max_iterations}

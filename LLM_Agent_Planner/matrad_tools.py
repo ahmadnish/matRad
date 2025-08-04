@@ -476,6 +476,290 @@ class MatRadEngine:
         except Exception as e:
             return {"success": False, "error": str(e)}
     
+    def get_current_objectives(self) -> Dict[str, Any]:
+        """
+        Get all current optimization objectives for all structures.
+        
+        Returns:
+            Dict with current objectives information organized by structure.
+        """
+        if not self.initialized:
+            return {"success": False, "error": "MATLAB Engine not initialized"}
+            
+        if not self.patient_loaded:
+            return {"success": False, "error": "No patient data loaded"}
+            
+        try:
+            # Get all structures and their objectives
+            self.eng.eval("""
+            current_objectives = struct();
+            objective_count = 0;
+            
+            for i = 1:size(cst,1)
+                if ~isempty(cst{i,2})  % Structure has a name
+                    struct_name = cst{i,2};
+                    objectives = cst{i,6};
+                    
+                    if ~isempty(objectives)
+                        for j = 1:length(objectives)
+                            objective_count = objective_count + 1;
+                            obj = objectives{j};
+                            
+                            % Extract objective information
+                            obj_info = struct();
+                            obj_info.structure_name = struct_name;
+                            obj_info.structure_index = i;
+                            obj_info.objective_index = j;
+                            obj_info.className = obj.className;
+                            obj_info.penalty = obj.penalty;
+                            
+                            % Extract parameters (dose values)
+                            if isfield(obj, 'parameters') && ~isempty(obj.parameters)
+                                if iscell(obj.parameters)
+                                    obj_info.dose_value = obj.parameters{1};
+                                else
+                                    obj_info.dose_value = obj.parameters(1);
+                                end
+                            else
+                                obj_info.dose_value = NaN;
+                            end
+                            
+                            % Map className to readable type
+                            switch obj.className
+                                case 'DoseObjectives.matRad_SquaredUnderdosing'
+                                    obj_info.objective_type = 'min_dose';
+                                case 'DoseObjectives.matRad_SquaredOverdosing'
+                                    obj_info.objective_type = 'max_dose';
+                                case 'DoseObjectives.matRad_MeanDose'
+                                    obj_info.objective_type = 'mean_dose';
+                                case 'DoseObjectives.matRad_SquaredDeviation'
+                                    obj_info.objective_type = 'square_deviation';
+                                case 'DoseObjectives.matRad_EUD'
+                                    obj_info.objective_type = 'eud';
+                                otherwise
+                                    obj_info.objective_type = 'unknown';
+                            end
+                            
+                            current_objectives.(['obj_' num2str(objective_count)]) = obj_info;
+                        end
+                    end
+                end
+            end
+            
+            current_objectives.total_objectives = objective_count;
+            """, nargout=0)
+            
+            # Get the results from MATLAB workspace
+            objectives_struct = self.eng.workspace["current_objectives"]
+            
+            # Convert to Python dict structure
+            objectives_dict = {}
+            total_count = 0
+            
+            if hasattr(objectives_struct, '_fieldnames'):
+                for field_name in objectives_struct._fieldnames:
+                    if field_name.startswith('obj_'):
+                        obj_data = getattr(objectives_struct, field_name)
+                        total_count += 1
+                        
+                        struct_name = str(obj_data.structure_name)
+                        if struct_name not in objectives_dict:
+                            objectives_dict[struct_name] = []
+                            
+                        objective_info = {
+                            "structure_index": int(obj_data.structure_index),
+                            "objective_index": int(obj_data.objective_index),
+                            "objective_type": str(obj_data.objective_type),
+                            "dose_value": float(obj_data.dose_value) if not math.isnan(float(obj_data.dose_value)) else None,
+                            "penalty": float(obj_data.penalty),
+                            "className": str(obj_data.className)
+                        }
+                        objectives_dict[struct_name].append(objective_info)
+            
+            return {
+                "success": True,
+                "objectives_by_structure": objectives_dict,
+                "total_objectives": total_count,
+                "message": f"Found {total_count} objectives across {len(objectives_dict)} structures"
+            }
+            
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    def remove_optimization_objective(self, structure_name: str, objective_index: int = None, 
+                                    objective_type: str = None, dose_value: float = None) -> Dict[str, Any]:
+        """
+        Remove a specific optimization objective from a structure.
+        
+        Args:
+            structure_name: Name of the structure
+            objective_index: Specific index of objective to remove (1-based, optional)
+            objective_type: Type of objective to remove (optional, removes first match)
+            dose_value: Dose value to match for removal (optional, for additional specificity)
+            
+        Returns:
+            Dict with removal status and information.
+        """
+        if not self.initialized:
+            return {"success": False, "error": "MATLAB Engine not initialized"}
+            
+        if not self.patient_loaded:
+            return {"success": False, "error": "No patient data loaded"}
+            
+        try:
+            # Map objective types to matRad objective classes
+            obj_class_map = {
+                'min_dose': 'DoseObjectives.matRad_SquaredUnderdosing',
+                'max_dose': 'DoseObjectives.matRad_SquaredOverdosing',
+                'mean_dose': 'DoseObjectives.matRad_MeanDose',
+                'square_deviation': 'DoseObjectives.matRad_SquaredDeviation',
+                'eud': 'DoseObjectives.matRad_EUD'
+            }
+            
+            target_class = obj_class_map.get(objective_type) if objective_type else None
+            
+            # First, find structure index
+            self.eng.eval(f"""
+            struct_idx = 0;
+            for i = 1:size(cst,1)
+                if ~isempty(cst{{i,2}}) && strcmp(cst{{i,2}}, '{structure_name}')
+                    struct_idx = i;
+                    break;
+                end
+            end
+            """, nargout=0)
+            
+            struct_idx = int(self.eng.workspace["struct_idx"])
+            if struct_idx == 0:
+                return {"success": False, "error": f"Structure '{structure_name}' not found"}
+            
+            # Remove objective based on criteria
+            if objective_index is not None:
+                # Remove by specific index
+                self.eng.eval(f"""
+                objectives = cst{{{struct_idx},6}};
+                if length(objectives) >= {objective_index}
+                    removed_obj = objectives{{{objective_index}}};
+                    objectives({objective_index}) = [];
+                    cst{{{struct_idx},6}} = objectives;
+                    removal_success = true;
+                    remaining_count = length(objectives);
+                else
+                    removal_success = false;
+                    remaining_count = length(objectives);
+                end
+                """, nargout=0)
+            else:
+                # Remove by type and/or dose value
+                dose_condition = f"&& abs(obj.parameters{{1}} - {dose_value}) < 1e-6" if dose_value is not None else ""
+                class_condition = f"&& strcmp(obj.className, '{target_class}')" if target_class else ""
+                
+                self.eng.eval(f"""
+                objectives = cst{{{struct_idx},6}};
+                removal_success = false;
+                removed_idx = 0;
+                
+                for j = 1:length(objectives)
+                    obj = objectives{{j}};
+                    if true {class_condition} {dose_condition}
+                        removed_obj = obj;
+                        objectives(j) = [];
+                        removal_success = true;
+                        removed_idx = j;
+                        break;
+                    end
+                end
+                
+                cst{{{struct_idx},6}} = objectives;
+                remaining_count = length(objectives);
+                """, nargout=0)
+            
+            removal_success = bool(self.eng.workspace["removal_success"])
+            remaining_count = int(self.eng.workspace["remaining_count"])
+            
+            if removal_success:
+                return {
+                    "success": True,
+                    "structure": structure_name,
+                    "remaining_objectives": remaining_count,
+                    "message": f"Removed objective from {structure_name}. {remaining_count} objectives remaining."
+                }
+            else:
+                return {
+                    "success": False, 
+                    "error": f"No matching objective found for removal in {structure_name}"
+                }
+                
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    def clear_all_objectives(self, structure_name: str = None) -> Dict[str, Any]:
+        """
+        Clear all optimization objectives for a structure or all structures.
+        
+        Args:
+            structure_name: Name of specific structure to clear (optional, clears all if None)
+            
+        Returns:
+            Dict with clearing status and information.
+        """
+        if not self.initialized:
+            return {"success": False, "error": "MATLAB Engine not initialized"}
+            
+        if not self.patient_loaded:
+            return {"success": False, "error": "No patient data loaded"}
+            
+        try:
+            if structure_name:
+                # Clear objectives for specific structure
+                self.eng.eval(f"""
+                struct_idx = 0;
+                for i = 1:size(cst,1)
+                    if ~isempty(cst{{i,2}}) && strcmp(cst{{i,2}}, '{structure_name}')
+                        struct_idx = i;
+                        break;
+                    end
+                end
+                
+                if struct_idx > 0
+                    cst{{struct_idx,6}} = {{}};
+                    cleared_success = true;
+                else
+                    cleared_success = false;
+                end
+                """, nargout=0)
+                
+                cleared_success = bool(self.eng.workspace["cleared_success"])
+                if cleared_success:
+                    return {
+                        "success": True,
+                        "structure": structure_name,
+                        "message": f"Cleared all objectives for {structure_name}"
+                    }
+                else:
+                    return {"success": False, "error": f"Structure '{structure_name}' not found"}
+            else:
+                # Clear all objectives for all structures
+                self.eng.eval("""
+                cleared_count = 0;
+                for i = 1:size(cst,1)
+                    if ~isempty(cst{i,6})
+                        cleared_count = cleared_count + length(cst{i,6});
+                        cst{i,6} = {};
+                    end
+                end
+                """, nargout=0)
+                
+                cleared_count = int(self.eng.workspace["cleared_count"])
+                return {
+                    "success": True,
+                    "cleared_objectives": cleared_count,
+                    "message": f"Cleared all {cleared_count} objectives from all structures"
+                }
+                
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
     def add_optimization_objective(self, structure_name: str, obj_type: str, 
                                   dose_value: float, penalty: float = 1000.0) -> Dict[str, Any]:
         """
@@ -592,14 +876,14 @@ class MatRadEngine:
     
     def optimize_fluence(self, use_previous_weights: bool = False) -> Dict[str, Any]:
         """
-        Run fluence optimization based on the current plan and objectives.
+        Run fluence optimization with detailed monitoring and console output capture.
         
         Args:
             use_previous_weights: If True and previous weights are available, 
                                 use them as initial weights for warm-start optimization.
         
         Returns:
-            Dict with optimization results or error status.
+            Dict with optimization results, convergence analysis, and console output.
         """
         if not self.initialized:
             return {"success": False, "error": "MATLAB Engine not initialized"}
@@ -617,8 +901,6 @@ class MatRadEngine:
             # Determine optimization command based on whether to use previous weights
             if use_previous_weights and self.weights_available and self.optimized_weights is not None:
                 print("Running fluence optimization with previous weights for warm-start...")
-                # Set the wInit variable in MATLAB workspace
-                
                 optimization_cmd = "resultGUI = matRad_fluenceOptimization(dij,cst,pln,wInit);"
                 start_type = "warm-start"
             else:
@@ -626,49 +908,344 @@ class MatRadEngine:
                 optimization_cmd = "resultGUI = matRad_fluenceOptimization(dij,cst,pln);"
                 start_type = "cold-start"
             
-            # Run fluence optimization
-            start_time = time.time()
-            self.eng.eval(optimization_cmd, nargout=0)
-            opt_time = time.time() - start_time
-            self.eng.eval("save('resultGUI.mat')", nargout=0)
+            # Set up diary to capture console output
+            import tempfile
+            temp_dir = tempfile.gettempdir()
+            diary_file = os.path.join(temp_dir, f"matrad_opt_log_{int(time.time())}.txt")
             
-            # Instead of trying to get the entire resultGUI struct, just keep track that it exists
-            # self.resultGUI = self.eng.workspace["resultGUI"]
-            self.resultGUI = True  # Just mark that resultGUI exists in MATLAB workspace
+            self.eng.eval(f"""
+            % Start diary to capture optimization output
+            diary('{diary_file}');
+            diary on;
             
-            # Get optimization result from MATLAB without accessing objectiveFunctionValue
-            # We'll check if the optimization actually completed by verifying the resultGUI exists
-            has_result = self.eng.eval("exist('resultGUI', 'var')", nargout=1)
+            % Store start time
+            opt_start_time = tic;
             
-            if has_result != 1:
-                return {"success": False, "error": "Optimization failed to produce results"}
+            fprintf('\\n=== OPTIMIZATION STARTING ===\\n');
+            fprintf('Start type: {start_type}\\n');
+            fprintf('==============================\\n\\n');
+            """, nargout=0)
             
-            # Store the optimized weights for future use
             try:
-                # Extract optimized weights from resultGUI.wUnsequenced
-                self.eng.workspace['wInit'] = self.eng.eval("resultGUI.w", nargout=1)
-                # Convert from MATLAB array to numpy array
-                self.optimized_weights = self.eng.workspace['wInit']
-                self.weights_available = True
-                weights_stored = True
-                weights_count = len(self.optimized_weights)
-                print(f"Stored {weights_count} optimized weights for future warm-start")
+                # Run optimization with output capture
+                start_time = time.time()
+                self.eng.eval(f"""
+                try
+                    fprintf('Optimzation initiating...\\n');
+                    {optimization_cmd}
+                    opt_success = true;
+                    opt_error = '';
+                    save('resultGUI.mat');
+                catch ME
+                    opt_success = false;
+                    opt_error = ME.message;
+                    fprintf('Optimization failed: %s\\n', ME.message);
+                end
+                
+                opt_duration = toc(opt_start_time);
+                fprintf('\\n=== OPTIMIZATION COMPLETED ===\\n');
+                fprintf('Duration: %.2f seconds\\n', opt_duration);
+                fprintf('Success: %s\\n', mat2str(opt_success));
+                fprintf('===============================\\n');
+                
+                % Stop diary
+                diary off;
+                """, nargout=0)
+                
+                opt_time = time.time() - start_time
+                
+                # Check if optimization was successful
+                opt_success = bool(self.eng.workspace["opt_success"])
+                
+                if not opt_success:
+                    opt_error = str(self.eng.workspace["opt_error"])
+                    
+                    # Read and parse the diary output even for failed optimization
+                    optimization_analysis = self._parse_optimization_output(diary_file)
+                    
+                    # Clean up diary file
+                    try:
+                        os.remove(diary_file)
+                    except:
+                        pass
+                    
+                    return {
+                        "success": False, 
+                        "error": f"Optimization failed: {opt_error}",
+                        "optimization_time_sec": opt_time,
+                        "start_type": start_type,
+                        "optimization_analysis": optimization_analysis
+                    }
+                
+                # Mark that resultGUI exists in MATLAB workspace
+                self.resultGUI = True
+                
+                # Verify optimization completed
+                has_result = self.eng.eval("exist('resultGUI', 'var')", nargout=1)
+                if has_result != 1:
+                    return {"success": False, "error": "Optimization failed to produce results"}
+                
+                # Store the optimized weights for future use
+                try:
+                    # Extract optimized weights from resultGUI.w
+                    self.eng.workspace['wInit'] = self.eng.eval("resultGUI.w", nargout=1)
+                    # Convert from MATLAB array to numpy array
+                    self.optimized_weights = self.eng.workspace['wInit']
+                    self.weights_available = True
+                    weights_stored = True
+                    weights_count = len(self.optimized_weights)
+                    print(f"Stored {weights_count} optimized weights for future warm-start")
+                except Exception as e:
+                    print(f"Warning: Could not store optimized weights: {e}")
+                    weights_stored = False
+                    weights_count = 0
+                
+                # Read and parse the diary output
+                optimization_analysis = self._parse_optimization_output(diary_file)
+                
+                # Clean up diary file
+                try:
+                    os.remove(diary_file)
+                except:
+                    pass
+                
+                return {
+                    "success": True,
+                    "optimization_time_sec": opt_time,
+                    "start_type": start_type,
+                    "weights_stored": weights_stored,
+                    "weights_count": weights_count,
+                    "optimization_analysis": optimization_analysis,
+                    "message": f"Fluence optimization completed successfully ({start_type})"
+                }
+                
             except Exception as e:
-                print(f"Warning: Could not store optimized weights: {e}")
-                weights_stored = False
-                weights_count = 0
-            
-            return {
-                "success": True,
-                "optimization_time_sec": opt_time,
-                "start_type": start_type,
-                "weights_stored": weights_stored,
-                "weights_count": weights_count,
-                "message": f"Fluence optimization completed successfully ({start_type})"
-            }
+                # Make sure diary is turned off
+                try:
+                    self.eng.eval("diary off;", nargout=0)
+                except:
+                    pass
+                raise e
             
         except Exception as e:
             return {"success": False, "error": str(e)}
+
+    def _parse_optimization_output(self, diary_file: str) -> Dict[str, Any]:
+        """
+        Parse the optimization console output to extract key metrics and convergence information.
+        
+        Args:
+            diary_file: Path to the diary file containing optimization output
+            
+        Returns:
+            Dict with parsed optimization metrics and analysis
+        """
+        try:
+            with open(diary_file, 'r') as f:
+                output = f.read()
+            
+            analysis = {
+                "raw_output": output,
+                "convergence_analysis": {},
+                "final_status": {},
+                "optimization_trajectory": [],
+                "warnings": [],
+                "summary": ""
+            }
+            
+            # Parse IPOPT output if present
+            lines = output.split('\n')
+            iterations = []
+            
+            for line in lines:
+                line = line.strip()
+                
+                # Look for iteration lines (IPOPT format)
+                if line.startswith('iter') and 'objective' in line:
+                    # Header line - skip
+                    continue
+                elif len(line.split()) >= 10 and line.split()[0].isdigit():
+                    # Iteration data line
+                    parts = line.split()
+                    try:
+                        iteration_data = {
+                            "iteration": int(parts[0]),
+                            "objective": float(parts[1]),
+                            "inf_pr": float(parts[2]),
+                            "inf_du": float(parts[3]),
+                            "lg_mu": float(parts[4]),
+                            "norm_d": float(parts[5]),
+                            "lg_rg": parts[6],
+                            "alpha_du": float(parts[7]),
+                            "alpha_pr": float(parts[8]),
+                            "ls": int(parts[9]) if parts[9].isdigit() else 0
+                        }
+                        iterations.append(iteration_data)
+                    except (ValueError, IndexError):
+                        continue
+                
+                # Look for final statistics
+                elif "Number of Iterations" in line:
+                    try:
+                        analysis["final_status"]["total_iterations"] = int(line.split(':')[1].strip())
+                    except:
+                        pass
+                elif "Objective" in line and "scaled" in line:
+                    try:
+                        # Extract final objective value
+                        parts = line.split()
+                        for i, part in enumerate(parts):
+                            if 'e' in part and ('+' in part or '-' in part):
+                                analysis["final_status"]["final_objective"] = float(part)
+                                break
+                    except:
+                        pass
+                elif "Number of objective function evaluations" in line:
+                    try:
+                        analysis["final_status"]["function_evaluations"] = int(line.split('=')[1].strip())
+                    except:
+                        pass
+                elif "Total CPU secs in IPOPT" in line:
+                    try:
+                        analysis["final_status"]["ipopt_time"] = float(line.split('=')[1].strip())
+                    except:
+                        pass
+                elif "Total CPU secs in NLP function evaluations" in line:
+                    try:
+                        analysis["final_status"]["function_eval_time"] = float(line.split('=')[1].strip())
+                    except:
+                        pass
+            
+            analysis["optimization_trajectory"] = iterations
+            
+            # Analyze convergence
+            if iterations:
+                analysis["convergence_analysis"] = self._analyze_convergence(iterations)
+            
+            # Generate summary
+            analysis["summary"] = self._generate_optimization_summary(analysis)
+            
+            return analysis
+            
+        except Exception as e:
+            return {
+                "raw_output": "",
+                "convergence_analysis": {},
+                "final_status": {},
+                "optimization_trajectory": [],
+                "warnings": [f"Failed to parse optimization output: {str(e)}"],
+                "summary": f"Failed to parse optimization output: {str(e)}"
+            }
+
+    def _analyze_convergence(self, iterations: List[Dict]) -> Dict[str, Any]:
+        """
+        Analyze the convergence behavior of the optimization.
+        
+        Args:
+            iterations: List of iteration data dictionaries
+            
+        Returns:
+            Dict with convergence analysis
+        """
+        if not iterations:
+            return {}
+        
+        analysis = {}
+        
+        # Extract objective values
+        objectives = [it["objective"] for it in iterations]
+        step_sizes = [it["alpha_pr"] for it in iterations]
+        
+        # Check for stagnation (objective not changing)
+        if len(objectives) >= 3:
+            recent_objectives = objectives[-5:]  # Last 5 iterations
+            obj_variance = np.var(recent_objectives) if len(recent_objectives) > 1 else 0
+            analysis["objective_stagnation"] = obj_variance < 1e-6
+            analysis["objective_variance_recent"] = float(obj_variance)
+        
+        # Check for diminishing step sizes
+        if len(step_sizes) >= 3:
+            recent_steps = step_sizes[-3:]
+            analysis["small_step_sizes"] = all(step < 1e-10 for step in recent_steps)
+            analysis["min_step_size"] = float(min(step_sizes))
+            analysis["max_step_size"] = float(max(step_sizes))
+        
+        # Overall convergence assessment
+        analysis["total_iterations"] = len(iterations)
+        analysis["objective_improvement"] = float(objectives[0] - objectives[-1]) if len(objectives) > 1 else 0
+        analysis["relative_improvement"] = float(analysis["objective_improvement"] / objectives[0]) if objectives[0] != 0 else 0
+        
+        # Convergence quality assessment
+        stagnation = analysis.get("objective_stagnation", False)
+        small_steps = analysis.get("small_step_sizes", False)
+        
+        if stagnation and small_steps:
+            analysis["convergence_quality"] = "poor"
+            analysis["convergence_reason"] = "Optimization stagnated with very small step sizes"
+        elif analysis["relative_improvement"] > 0.1:
+            analysis["convergence_quality"] = "good"
+            analysis["convergence_reason"] = "Significant objective improvement achieved"
+        elif analysis["relative_improvement"] > 0.01:
+            analysis["convergence_quality"] = "moderate"
+            analysis["convergence_reason"] = "Moderate objective improvement achieved"
+        else:
+            analysis["convergence_quality"] = "poor"
+            analysis["convergence_reason"] = "Limited objective improvement"
+        
+        return analysis
+
+    def _generate_optimization_summary(self, analysis: Dict[str, Any]) -> str:
+        """
+        Generate a human-readable summary of the optimization results.
+        
+        Args:
+            analysis: Full optimization analysis dictionary
+            
+        Returns:
+            String summary of optimization performance
+        """
+        summary_lines = []
+        
+        convergence = analysis.get("convergence_analysis", {})
+        final_status = analysis.get("final_status", {})
+        
+        # Basic statistics
+        if final_status.get("total_iterations"):
+            summary_lines.append(f"🔄 Completed {final_status['total_iterations']} iterations")
+        
+        if final_status.get("final_objective"):
+            summary_lines.append(f"📊 Final objective value: {final_status['final_objective']:.2e}")
+        
+        # Convergence assessment
+        if convergence.get("convergence_quality"):
+            quality = convergence["convergence_quality"]
+            reason = convergence.get("convergence_reason", "")
+            emoji = {"good": "✅", "moderate": "⚠️", "poor": "❌"}.get(quality, "❓")
+            summary_lines.append(f"{emoji} Convergence quality: {quality.upper()}")
+            if reason:
+                summary_lines.append(f"   Reason: {reason}")
+        
+        # Improvement metrics
+        if convergence.get("relative_improvement") is not None:
+            improvement = convergence["relative_improvement"] * 100
+            summary_lines.append(f"📈 Objective improvement: {improvement:.1f}%")
+        
+        # Warning indicators
+        if convergence.get("objective_stagnation"):
+            summary_lines.append("⚠️  WARNING: Objective value stagnated in recent iterations")
+        
+        if convergence.get("small_step_sizes"):
+            min_step = convergence.get("min_step_size", 0)
+            summary_lines.append(f"⚠️  WARNING: Very small step sizes detected (min: {min_step:.2e})")
+        
+        # Performance metrics
+        if final_status.get("function_evaluations"):
+            summary_lines.append(f"🔢 Function evaluations: {final_status['function_evaluations']}")
+        
+        if final_status.get("ipopt_time"):
+            summary_lines.append(f"⏱️  IPOPT time: {final_status['ipopt_time']:.1f}s")
+        
+        return "\n".join(summary_lines) if summary_lines else "No optimization summary available"
     
     def clear_optimized_weights(self) -> Dict[str, Any]:
         """
