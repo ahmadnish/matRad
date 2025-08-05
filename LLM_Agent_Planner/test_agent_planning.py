@@ -189,7 +189,7 @@ class IMRTPlanningAgent:
                 "type": "function",
                 "function": {
                     "name": "add_optimization_objective",
-                    "description": "Add an optimization objective for a structure. ALWAYS provide a clear rationale explaining why this objective is clinically necessary.",
+                    "description": "Add an optimization objective for a structure. ALWAYS provide a clear rationale explaining why this objective is necessary at this stage of the planning process. Keep the rationale short and concise.",
                     "parameters": {
                         "type": "object",
                         "properties": {
@@ -212,7 +212,7 @@ class IMRTPlanningAgent:
                             },
                             "rationale": {
                                 "type": "string",
-                                "description": "Clear clinical rationale for why this objective is being added (e.g., 'Ensure adequate target coverage based on prescription dose', 'Protect parotid from xerostomia risk', 'Prevent spinal cord overdose per tolerance limits')"
+                                "description": "Clear clinical rationale for why this objective is being added at this stage of the planning process (e.g., 'Ensure adequate target coverage based on prescription dose', 'Protect parotid from xerostomia risk', 'Prevent spinal cord overdose per tolerance limits')"
                             }
                         },
                         "required": ["structure_name", "objective_type", "dose_value", "penalty", "rationale"],
@@ -643,7 +643,7 @@ class IMRTPlanningAgent:
                 pln.propOpt.fmincon.FunctionTolerance = 1e-4;       % Increase from default 1e-6
                 
                 % Increase iteration limits
-                pln.propOpt.fmincon.MaxIterations = 200;            % Increase from default
+                pln.propOpt.fmincon.MaxIterations = 500;            % Increase from default
                 pln.propOpt.fmincon.MaxFunctionEvaluations = 400;   % Increase from default
                 
                 % Enable detailed display
@@ -772,7 +772,7 @@ class IMRTPlanningAgent:
                 - Optic Nerve: 35 Gy
                 - Brainstem: 35 Gy
                 - Larynx: 35 Gy
-            - Keep a 30 Gy max dose for the "BODY" structure (or the "Skin" structure).
+            - Apply a 30 Gy max dose constraint to the "BODY" or "Skin" structure. This is essential for optimization but should not be tracked orenforced in evaluations due to overlap with PTVs. Only watch out of hot spots in the body/skin. Use it only as an optimization constraint, and coordinate the penalty with other objectives for effective planning.
             - Dose values in objective functions are total dose over all fractions.
             - Use appropriate beam arrangements.
             - Prioritize in case of conflict:
@@ -1025,8 +1025,8 @@ def main():
     
     # Configuration
     matrad_path = "/Users/ahmadneishabouri/matRad"  # Update this path as needed
-    patient_file = "/Users/ahmadneishabouri/matRad/HandN_4Agent_noconstraints.mat"  # Absolute path
-    #patient_file = "HEAD_AND_NECK.mat"
+    #patient_file = "/Users/ahmadneishabouri/matRad/HandN_4Agent_noconstraints.mat"  # Absolute path
+    patient_file = "HandN.mat"
     
     try:
         # Create planning agent
