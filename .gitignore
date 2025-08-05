@@ -8,3 +8,4 @@ build/
 matRad-technical-documentation/
 *.png
 *.jpg
+LLM_Agent_Planner/test_*.py
