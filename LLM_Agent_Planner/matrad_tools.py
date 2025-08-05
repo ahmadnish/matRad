@@ -580,7 +580,8 @@ class MatRadEngine:
             return {"success": False, "error": str(e)}
 
     def remove_optimization_objective(self, structure_name: str, objective_index: int = None, 
-                                    objective_type: str = None, dose_value: float = None) -> Dict[str, Any]:
+                                    objective_type: str = None, dose_value: float = None,
+                                    rationale: str = None) -> Dict[str, Any]:
         """
         Remove a specific optimization objective from a structure.
         
@@ -589,6 +590,7 @@ class MatRadEngine:
             objective_index: Specific index of objective to remove (1-based, optional)
             objective_type: Type of objective to remove (optional, removes first match)
             dose_value: Dose value to match for removal (optional, for additional specificity)
+            rationale: Short explanation of why this objective is being removed.
             
         Returns:
             Dict with removal status and information.
@@ -675,12 +677,14 @@ class MatRadEngine:
                     "success": True,
                     "structure": structure_name,
                     "remaining_objectives": remaining_count,
-                    "message": f"Removed objective from {structure_name}. {remaining_count} objectives remaining."
+                    "rationale": rationale or "No rationale provided",
+                    "message": f"Removed objective from {structure_name}. {remaining_count} objectives remaining. Rationale: {rationale or 'No rationale provided'}"
                 }
             else:
                 return {
                     "success": False, 
-                    "error": f"No matching objective found for removal in {structure_name}"
+                    "error": f"No matching objective found for removal in {structure_name}",
+                    "rationale": rationale or "No rationale provided"
                 }
                 
         except Exception as e:
@@ -754,7 +758,8 @@ class MatRadEngine:
             return {"success": False, "error": str(e)}
 
     def add_optimization_objective(self, structure_name: str, obj_type: str, 
-                                  dose_value: float, penalty: float = 1000.0) -> Dict[str, Any]:
+                                  dose_value: float, penalty: float = 1000.0, 
+                                  rationale: str = None) -> Dict[str, Any]:
         """
         Add an optimization objective for a structure.
         
@@ -763,6 +768,7 @@ class MatRadEngine:
             obj_type: Type of objective ('min_dose', 'max_dose', 'mean_dose', 'square_deviation', etc.)
             dose_value: Dose value in Gy for the objective.
             penalty: Penalty weight for the objective.
+            rationale: Short explanation of why this objective is being added.
             
         Returns:
             Dict with objective information or error status.
@@ -860,8 +866,9 @@ class MatRadEngine:
                 "objective_type": obj_type,
                 "dose_value": dose_value,
                 "penalty": penalty,
+                "rationale": rationale or "No rationale provided",
                 "total_objectives": num_objectives,
-                "message": f"Added {obj_type} objective to {structure_name}"
+                "message": f"Added {obj_type} objective to {structure_name}. Rationale: {rationale or 'No rationale provided'}"
             }
             
         except Exception as e:
