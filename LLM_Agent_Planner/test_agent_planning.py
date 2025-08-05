@@ -793,15 +793,42 @@ class IMRTPlanningAgent:
             - Clinical thresholds are met (PTV D95 ≥95%, OAR doses below limits)
             - Plan quality score >80 or meets clinical requirements
 
-            **Stop iteration if:**
-            - Plan quality plateaus over 3 iterations WITH good optimization convergence
-            - Optimization shows poor convergence for 3+ consecutive iterations despite objective simplification
-            - Maximum iterations reached
+            **CRITICAL: How to Signal Plan Completion:**
+            When and ONLY when all clinical criteria are satisfied, respond with the EXACT phrase:
+            "PLANNING_COMPLETE: Plan meets all clinical requirements and is ready for clinical use."
+            
+            Do NOT use this phrase unless:
+            1. You have run evaluate_plan_quality() and confirmed all targets meet D95 ≥95% 
+            2. All OARs are below tolerance doses
+            3. Plan quality score is acceptable (>70) or all clinical requirements are met
+            4. You have confirmed these metrics through actual tool results, not assumptions
 
-            **Never continue if:**
-            - Optimization consistently stagnates with tiny step sizes
-            - Adding/removing objectives doesn't improve convergence pattern
-            - Numerical optimization breakdown (no convergence analysis available)
+            **Continue optimization if:**
+            - ANY clinical threshold is not met (PTV coverage, OAR sparing)
+            - Plan quality can still be improved and convergence is good
+            - Optimization is working well but plan needs refinement
+
+            **Only stop iteration if:**
+            - Plan meets ALL clinical criteria (verified through evaluate_plan_quality)
+            - OR: Plan quality has plateaued over 5 iterations WITH good convergence AND clinical thresholds are met
+            - OR: Maximum iterations reached
+            - OR: Optimization consistently fails despite objective simplification
+
+            **Never stop unless clinical criteria are met or maximum iterations reached.**
+
+            **IMPORTANT: Work with Available Tools Only:**
+            - Do NOT ask for additional information, structure margins, or external data
+            - Do NOT request modifications to the patient data or structures
+            - Use ONLY the tools provided to achieve the best possible plan
+            - If clinical criteria cannot be met with current data, optimize to get as close as possible
+            - Make treatment planning decisions based on available structure information and dose constraints
+            - If you encounter limitations, work around them using optimization objectives and beam configuration
+
+            **Emergency Completion Criteria:**
+            If after 150 iterations clinical criteria still cannot be met despite good optimization convergence:
+            - Evaluate whether the plan is clinically usable (even if not ideal)
+            - If the plan provides reasonable target coverage (>90%) and OAR sparing, consider accepting it
+            - Use phrase "PLANNING_COMPLETE: Plan optimized to best achievable level with available data"
 
             Logging (Enhanced Structured Format):
             Each planning decision should be logged in a structured JSON format with:
@@ -824,13 +851,23 @@ class IMRTPlanningAgent:
             - All: std_dose (dose uniformity), D2/D98 (dose extremes)
             - Plan-level: quality score (0-100), clinical recommendations
 
+            ## CRITICAL: Action-Oriented Behavior:
+            - ALWAYS use tools to take action, don't just provide reasoning without action
+            - When you have a plan or next step, immediately execute it using the appropriate tool
+            - Reasoning should be brief and followed by immediate tool use
+            - Every response should include at least one tool call unless you're declaring completion
+            - If you're uncertain about something, use tools to gather information rather than asking for clarification
+
             Start by getting the current plan state and then proceed step by step.  
             Always ensure your function calls use valid JSON-serializable parameters.
         """
         
         # Start conversation
         messages = [{"role": "system", "content": system_prompt}]
-        messages.append({"role": "user", "content": "Please start the IMRT planning process for this patient."})
+        messages.append({
+            "role": "user", 
+            "content": "Begin IMRT planning for this patient immediately. Start by checking the plan state and then proceed with the planning workflow. Take action now - do not just provide reasoning without using tools."
+        })
         
         iteration = 0
         while iteration < max_iterations:
@@ -889,12 +926,30 @@ class IMRTPlanningAgent:
                         {"response": assistant_message.content}
                     )
                     
-                    # Check if planning is complete
-                    if "complete" in assistant_message.content.lower() or "finished" in assistant_message.content.lower():
+                    # Check if planning is complete using the specific completion phrase
+                    if "PLANNING_COMPLETE:" in assistant_message.content:
+                        print("\n✅ Agent has declared the plan clinically complete!")
                         break
                         
-                    # Ask for next step
-                    messages.append({"role": "user", "content": "What should we do next?"})
+                    # Check for emergency completion criteria
+                    if iteration >= 150:
+                        emergency_prompt = ("You have reached 150 iterations. If the current plan provides reasonable "
+                                          "target coverage (>90%) and acceptable OAR sparing, you may complete planning "
+                                          "using: 'PLANNING_COMPLETE: Plan optimized to best achievable level with available data'. "
+                                          "First, run evaluate_plan_quality() to check if the plan is clinically usable.")
+                        messages.append({"role": "user", "content": emergency_prompt})
+                    else:
+                        # Provide more specific continuation prompt emphasizing clinical requirements
+                        if self.plan_state.get("plan_evaluated"):
+                            continuation_prompt = ("Continue with treatment planning. Remember: you must achieve clinical targets "
+                                                 "(PTV D95 ≥95%, all OAR doses below tolerance) before declaring completion. "
+                                                 "What is your next step to improve the plan?")
+                        else:
+                            continuation_prompt = ("Continue with treatment planning. You must evaluate the plan quality first "
+                                                 "and ensure all clinical criteria are met before considering the plan complete. "
+                                                 "What should we do next?")
+                        
+                        messages.append({"role": "user", "content": continuation_prompt})
                 
                 iteration += 1
                 
