@@ -490,91 +490,84 @@ class MatRadEngine:
             return {"success": False, "error": "No patient data loaded"}
             
         try:
-            # Get all structures and their objectives
-            self.eng.eval("""
-            current_objectives = struct();
-            objective_count = 0;
+            # Get total number of structures
+            num_structures = int(self.eng.eval("size(cst,1)", nargout=1))
             
-            for i = 1:size(cst,1)
-                if ~isempty(cst{i,2})  % Structure has a name
-                    struct_name = cst{i,2};
-                    objectives = cst{i,6};
-                    
-                    if ~isempty(objectives)
-                        for j = 1:length(objectives)
-                            objective_count = objective_count + 1;
-                            obj = objectives{j};
-                            
-                            % Extract objective information
-                            obj_info = struct();
-                            obj_info.structure_name = struct_name;
-                            obj_info.structure_index = i;
-                            obj_info.objective_index = j;
-                            obj_info.className = obj.className;
-                            obj_info.penalty = obj.penalty;
-                            
-                            % Extract parameters (dose values)
-                            if isfield(obj, 'parameters') && ~isempty(obj.parameters)
-                                if iscell(obj.parameters)
-                                    obj_info.dose_value = obj.parameters{1};
-                                else
-                                    obj_info.dose_value = obj.parameters(1);
-                                end
-                            else
-                                obj_info.dose_value = NaN;
-                            end
-                            
-                            % Map className to readable type
-                            switch obj.className
-                                case 'DoseObjectives.matRad_SquaredUnderdosing'
-                                    obj_info.objective_type = 'min_dose';
-                                case 'DoseObjectives.matRad_SquaredOverdosing'
-                                    obj_info.objective_type = 'max_dose';
-                                case 'DoseObjectives.matRad_MeanDose'
-                                    obj_info.objective_type = 'mean_dose';
-                                case 'DoseObjectives.matRad_SquaredDeviation'
-                                    obj_info.objective_type = 'square_deviation';
-                                case 'DoseObjectives.matRad_EUD'
-                                    obj_info.objective_type = 'eud';
-                                otherwise
-                                    obj_info.objective_type = 'unknown';
-                            end
-                            
-                            current_objectives.(['obj_' num2str(objective_count)]) = obj_info;
-                        end
-                    end
-                end
-            end
-            
-            current_objectives.total_objectives = objective_count;
-            """, nargout=0)
-            
-            # Get the results from MATLAB workspace
-            objectives_struct = self.eng.workspace["current_objectives"]
-            
-            # Convert to Python dict structure
             objectives_dict = {}
             total_count = 0
             
-            if hasattr(objectives_struct, '_fieldnames'):
-                for field_name in objectives_struct._fieldnames:
-                    if field_name.startswith('obj_'):
-                        obj_data = getattr(objectives_struct, field_name)
+            # Loop through each structure
+            for i in range(1, num_structures + 1):  # MATLAB 1-based indexing
+                # Check if structure has a name
+                has_name = self.eng.eval(f"~isempty(cst{{{i},2}})", nargout=1)
+                if not has_name:
+                    continue
+                    
+                # Get structure name
+                struct_name = str(self.eng.eval(f"cst{{{i},2}}", nargout=1))
+                
+                # Check if structure has objectives
+                has_objectives = self.eng.eval(f"~isempty(cst{{{i},6}})", nargout=1)
+                if not has_objectives:
+                    continue
+                    
+                # Get number of objectives for this structure
+                num_objectives = int(self.eng.eval(f"length(cst{{{i},6}})", nargout=1))
+                
+                struct_objectives = []
+                
+                # Loop through each objective for this structure
+                for j in range(1, num_objectives + 1):  # MATLAB 1-based indexing
+                    try:
+                        # Get objective className
+                        class_name = str(self.eng.eval(f"cst{{{i},6}}{{{j}}}.className", nargout=1))
+                        
+                        # Get penalty
+                        penalty = float(self.eng.eval(f"cst{{{i},6}}{{{j}}}.penalty", nargout=1))
+                        
+                        # Get dose value (parameters)
+                        dose_value = None
+                        try:
+                            # Try to get the first parameter (dose value)
+                            has_params = self.eng.eval(f"isfield(cst{{{i},6}}{{{j}}}, 'parameters') && ~isempty(cst{{{i},6}}{{{j}}}.parameters)", nargout=1)
+                            if has_params:
+                                # Check if parameters is a cell array
+                                is_cell = self.eng.eval(f"iscell(cst{{{i},6}}{{{j}}}.parameters)", nargout=1)
+                                if is_cell:
+                                    dose_value = float(self.eng.eval(f"cst{{{i},6}}{{{j}}}.parameters{{1}}", nargout=1))
+                                else:
+                                    dose_value = float(self.eng.eval(f"cst{{{i},6}}{{{j}}}.parameters(1)", nargout=1))
+                        except:
+                            dose_value = None
+                        
+                        # Map className to readable type
+                        objective_type_map = {
+                            'DoseObjectives.matRad_SquaredUnderdosing': 'min_dose',
+                            'DoseObjectives.matRad_SquaredOverdosing': 'max_dose',
+                            'DoseObjectives.matRad_MeanDose': 'mean_dose',
+                            'DoseObjectives.matRad_SquaredDeviation': 'square_deviation',
+                            'DoseObjectives.matRad_EUD': 'eud'
+                        }
+                        objective_type = objective_type_map.get(class_name, 'unknown')
+                        
+                        objective_info = {
+                            "structure_index": i,
+                            "objective_index": j,
+                            "objective_type": objective_type,
+                            "dose_value": dose_value,
+                            "penalty": penalty,
+                            "className": class_name
+                        }
+                        
+                        struct_objectives.append(objective_info)
                         total_count += 1
                         
-                        struct_name = str(obj_data.structure_name)
-                        if struct_name not in objectives_dict:
-                            objectives_dict[struct_name] = []
-                            
-                        objective_info = {
-                            "structure_index": int(obj_data.structure_index),
-                            "objective_index": int(obj_data.objective_index),
-                            "objective_type": str(obj_data.objective_type),
-                            "dose_value": float(obj_data.dose_value) if not math.isnan(float(obj_data.dose_value)) else None,
-                            "penalty": float(obj_data.penalty),
-                            "className": str(obj_data.className)
-                        }
-                        objectives_dict[struct_name].append(objective_info)
+                    except Exception as e:
+                        print(f"Warning: Could not read objective {j} for structure {struct_name}: {e}")
+                        continue
+                
+                if struct_objectives:
+                    objectives_dict[struct_name] = struct_objectives
             
             return {
                 "success": True,
