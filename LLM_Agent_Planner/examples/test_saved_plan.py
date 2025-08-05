@@ -110,5 +110,47 @@ print_result(result, "Add SPINAL_CORD Objective")
 # result = engine.save_plan("test_hn_plan.mat")
 # print_result(result, "Save Plan")
 
+print("\n" + "="*60)
+print("🔍 DEBUGGING get_current_objectives()")
+print("="*60)
+
+# First, let's check if we actually have any objectives in CST
+print("Checking CST structure...")
+try:
+    if hasattr(engine, 'eng') and engine.eng is not None:
+        # Check if CST exists
+        cst_exists = engine.eng.eval("exist('cst', 'var')", nargout=1)
+        print(f"CST variable exists: {cst_exists}")
+        
+        if cst_exists:
+            # Check CST size
+            cst_size = engine.eng.eval("size(cst)", nargout=1)
+            print(f"CST size: {cst_size}")
+            
+            # Check if any structures have objectives (column 6)
+            has_any_objectives = engine.eng.eval("any(cellfun(@(x) ~isempty(x), cst(:,6)))", nargout=1) 
+            print(f"Any structures have objectives: {has_any_objectives}")
+            
+            # Print structure names and their objective status
+            num_structures = int(engine.eng.eval("size(cst,1)", nargout=1))
+            print(f"Number of structures: {num_structures}")
+            
+            for i in range(1, min(num_structures + 1, 11)):  # Check first 10 structures
+                has_name = engine.eng.eval(f"~isempty(cst{{{i},2}})", nargout=1)
+                if has_name:
+                    struct_name = str(engine.eng.eval(f"cst{{{i},2}}", nargout=1))
+                    has_obj = engine.eng.eval(f"~isempty(cst{{{i},6}})", nargout=1)
+                    if has_obj:
+                        num_obj = int(engine.eng.eval(f"length(cst{{{i},6}})", nargout=1))
+                        print(f"  {i}. {struct_name}: {num_obj} objectives")
+                    else:
+                        print(f"  {i}. {struct_name}: no objectives")
+    else:
+        print("MATLAB engine not available for debugging")
+except Exception as e:
+    print(f"Debug error: {e}")
+
+print("\n" + "="*40)
+print("Now calling get_current_objectives()...")
 result = engine.get_current_objectives()
 print_result(result, "Get Current Objectives")
