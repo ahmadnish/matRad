@@ -189,7 +189,7 @@ class IMRTPlanningAgent:
                 "type": "function",
                 "function": {
                     "name": "add_optimization_objective",
-                    "description": "Add an optimization objective for a structure.",
+                    "description": "Add an optimization objective for a structure. ALWAYS provide a clear rationale explaining why this objective is clinically necessary.",
                     "parameters": {
                         "type": "object",
                         "properties": {
@@ -209,9 +209,13 @@ class IMRTPlanningAgent:
                             "penalty": {
                                 "type": "number",
                                 "description": "Penalty weight (default 1000)"
+                            },
+                            "rationale": {
+                                "type": "string",
+                                "description": "Clear clinical rationale for why this objective is being added (e.g., 'Ensure adequate target coverage based on prescription dose', 'Protect parotid from xerostomia risk', 'Prevent spinal cord overdose per tolerance limits')"
                             }
                         },
-                        "required": ["structure_name", "objective_type", "dose_value", "penalty"],
+                        "required": ["structure_name", "objective_type", "dose_value", "penalty", "rationale"],
                         "additionalProperties": False
                     }
                 }
@@ -220,7 +224,7 @@ class IMRTPlanningAgent:
                 "type": "function",
                 "function": {
                     "name": "remove_optimization_objective",
-                    "description": "Remove a specific optimization objective from a structure. Use this to eliminate redundant or counterproductive objectives identified during optimization analysis.",
+                    "description": "Remove a specific optimization objective from a structure. Use this to eliminate redundant or counterproductive objectives identified during optimization analysis. ALWAYS provide a clear rationale explaining why this objective is being removed.",
                     "parameters": {
                         "type": "object",
                         "properties": {
@@ -240,9 +244,13 @@ class IMRTPlanningAgent:
                             "dose_value": {
                                 "type": "number",
                                 "description": "Dose value to match for removal (optional, for additional specificity)"
+                            },
+                            "rationale": {
+                                "type": "string",
+                                "description": "Clear rationale for why this objective is being removed (e.g., 'Objective causing optimization convergence issues', 'Redundant constraint with similar existing objective', 'Preventing achievement of higher priority clinical goals')"
                             }
                         },
-                        "required": ["structure_name"],
+                        "required": ["structure_name", "rationale"],
                         "additionalProperties": False
                     }
                 }
@@ -421,7 +429,8 @@ class IMRTPlanningAgent:
                     arguments["structure_name"],
                     arguments["objective_type"],
                     arguments["dose_value"],
-                    arguments.get("penalty", 1000.0)
+                    arguments.get("penalty", 1000.0),
+                    arguments.get("rationale", "No rationale provided")
                 )
                 result_dict = convert_matlab_types(result_dict)
                 if result_dict.get("success"):
@@ -432,7 +441,7 @@ class IMRTPlanningAgent:
                     }
                     self.plan_state["objectives_added"].append(objective_info)
                     
-                    # Log the objective
+                    # Log the objective with rationale
                     self.logger.log_objective(
                         arguments["structure_name"],
                         arguments["objective_type"],
@@ -440,14 +449,32 @@ class IMRTPlanningAgent:
                         arguments.get("penalty", 1000.0)
                     )
                     
+                    # Log the rationale separately for emphasis
+                    self.logger.log_action(
+                        "objective_rationale",
+                        f"Added {arguments['objective_type']} objective to {arguments['structure_name']}",
+                        {"rationale": arguments.get("rationale", "No rationale provided")},
+                        {}
+                    )
+                    
             elif tool_name == "remove_optimization_objective":
                 result_dict = self.engine.remove_optimization_objective(
                     arguments["structure_name"],
                     arguments.get("objective_index"),
                     arguments.get("objective_type"),
-                    arguments.get("dose_value")
+                    arguments.get("dose_value"),
+                    arguments.get("rationale", "No rationale provided")
                 )
                 result_dict = convert_matlab_types(result_dict)
+                
+                # Log the removal rationale separately for emphasis
+                if result_dict.get("success"):
+                    self.logger.log_action(
+                        "objective_removal_rationale",
+                        f"Removed objective from {arguments['structure_name']}",
+                        {"rationale": arguments.get("rationale", "No rationale provided")},
+                        {}
+                    )
                 
             elif tool_name == "clear_all_objectives":
                 result_dict = self.engine.clear_all_objectives(
@@ -679,10 +706,12 @@ class IMRTPlanningAgent:
             **BEFORE adding any objectives:**
             - ALWAYS use get_current_objectives() to check what objectives already exist
             - Analyze existing objectives for redundancy, conflicts, or excessive constraints
-            - Only add objectives if they serve a clear clinical purpose and don't duplicate existing ones
+            - 
 
             **Optimization and Monitoring Loop:**
-            1. Add initial clinically-guided objectives for targets and OARs
+            1. Add initial clinically-guided objectives for targets and OARs WITH CLEAR RATIONALES
+               - ALWAYS provide specific clinical reasoning for each objective (e.g., "Ensure 95% target coverage per clinical protocol", "Protect parotid from xerostomia per QUANTEC guidelines")
+               - Every objective must have a meaningful rationale explaining its clinical necessity
             2. Run optimize_fluence() and CAREFULLY analyze the optimization_analysis results:
                - Monitor convergence quality (good/moderate/poor)
                - Check for objective stagnation and very small step sizes
@@ -694,13 +723,15 @@ class IMRTPlanningAgent:
             **If optimization shows POOR convergence (stagnation, tiny steps):**
             - This often indicates too many conflicting/redundant objectives
             - Use get_current_objectives() to review all current objectives  
-            - Strategically remove redundant or conflicting objectives using remove_optimization_objective()
+            - Strategically remove redundant or conflicting objectives using remove_optimization_objective() WITH CLEAR RATIONALES
+            - ALWAYS explain WHY each objective is being removed (e.g., "Removing redundant max_dose objective conflicting with existing constraint", "Eliminating over-constraining objective causing convergence issues")
             - Consider clear_all_objectives() for specific structures if overwhelmed with objectives
             - Re-optimize with simplified objective set
             
             **If optimization converges well but plan quality is suboptimal:**
-            - Add targeted objectives for specific clinical deficiencies
-            - Use remove_optimization_objective() to replace ineffective objectives rather than accumulating them
+            - Add targeted objectives for specific clinical deficiencies WITH CLEAR RATIONALES
+            - ALWAYS explain the clinical need for each new objective (e.g., "Adding max_dose constraint due to PTV D2 exceeding 107% per protocol", "Target coverage insufficient, adding min_dose objective to improve D95")
+            - Use remove_optimization_objective() to replace ineffective objectives rather than accumulating them - PROVIDE RATIONALE for removals
             - Monitor that total objective count doesn't exceed ~8-12 across all structures
             
             **If both optimization and plan quality are good:**
@@ -835,10 +866,11 @@ class IMRTPlanningAgent:
             - "reason": Explanation of the decision
             - "tool_used": Name of the matRad function invoked
             - "inputs": Parameters given to the tool
+            - "objective_rationale": For add/remove objective actions, the specific clinical reasoning provided
             - "outcome": Metrics after action from plan evaluation (e.g., D95 = 93.2%, HI = 0.15, Parotid Dmean = 26.1 Gy, V30Gy = 45%)
             - "clinical_assessment": Key findings from plan assessment text
             - "optimization_convergence": Convergence quality, stagnation status, step sizes, relative improvement
-            - "objectives_status": Current number of objectives per structure, recent modifications
+            - "objectives_status": Current number of objectives per structure, recent modifications with rationales
             - "learning": What was learned from this iteration for future objective management
             - "next_action": Planned next step with rationale
 
@@ -857,6 +889,7 @@ class IMRTPlanningAgent:
             - Reasoning should be brief and followed by immediate tool use
             - Every response should include at least one tool call unless you're declaring completion
             - If you're uncertain about something, use tools to gather information rather than asking for clarification
+            - **MANDATORY**: When adding or removing objectives, ALWAYS provide clear clinical rationales in the tool calls
 
             Start by getting the current plan state and then proceed step by step.  
             Always ensure your function calls use valid JSON-serializable parameters.
