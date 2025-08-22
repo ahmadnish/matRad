@@ -772,7 +772,7 @@ class IMRTPlanningAgent:
                 - Optic Nerve: 35 Gy
                 - Brainstem: 35 Gy
                 - Larynx: 35 Gy
-            - Apply a 30 Gy max dose constraint to the "BODY" or "Skin" structure. This is essential for optimization but should not be tracked orenforced in evaluations due to overlap with PTVs. Only watch out of hot spots in the body/skin. Use it only as an optimization constraint, and coordinate the penalty with other objectives for effective planning.
+            - Apply a 30 Gy max dose constraint to the "BODY" or "Skin" structure. This is essential for optimization but should not be tracked or enforced in evaluations due to overlap with PTVs. Only watch out of hot spots in the body/skin. Use it only as an optimization constraint, and coordinate the penalty with other objectives for effective planning.
             - Dose values in objective functions are total dose over all fractions.
             - Use appropriate beam arrangements.
             - Prioritize in case of conflict:
@@ -884,12 +884,11 @@ class IMRTPlanningAgent:
             - Plan-level: quality score (0-100), clinical recommendations
 
             ## CRITICAL: Action-Oriented Behavior:
-            - ALWAYS use tools to take action, don't just provide reasoning without action
+            
             - When you have a plan or next step, immediately execute it using the appropriate tool
-            - Reasoning should be brief and followed by immediate tool use
-            - Every response should include at least one tool call unless you're declaring completion
+            - Reasoning should be brief and concise with clear plan-level reasoning across iterations
             - If you're uncertain about something, use tools to gather information rather than asking for clarification
-            - **MANDATORY**: When adding or removing objectives, ALWAYS provide clear clinical rationales in the tool calls
+            - When adding or removing objectives, ALWAYS provide clear clinical rationales in the tool calls
 
             Start by getting the current plan state and then proceed step by step.  
             Always ensure your function calls use valid JSON-serializable parameters.
@@ -907,7 +906,7 @@ class IMRTPlanningAgent:
             try:
                 # Get LLM response with function calling
                 response = client.chat.completions.create(
-                    model="o3",
+                    model="gpt-5",
                     messages=messages,
                     tools=self.get_available_tools(),
                     tool_choice="auto"

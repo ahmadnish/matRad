@@ -1,0 +1,188 @@
+# QUANTEC Lung Site Planning Wish List
+# Notes:
+# - Lung OAR metrics refer to combined lungs minus GTV where applicable.
+# - Values are conventional fractionation (≈2 Gy/fx) unless otherwise noted.
+
+version: 1.0
+last_updated: "2025-08-14"
+
+# Common structure naming variations
+structure_aliases:
+  lung:
+    - "LUNG"
+    - "LUNG_LT"
+    - "LUNG_RT"
+    - "LungLeft"
+    - "LungRight"
+    - "Lungs"
+  heart:
+    - "HEART"
+    - "Heart"
+  esophagus:
+    - "ESOPHAGUS"
+    - "Esophagus"
+    - "ESO"
+  spinal_cord:
+    - "SPINAL_CORD"
+    - "SpinalCord"
+    - "Cord"
+    - "SC"
+  brachial_plexus:
+    - "BRACHIAL_PLEXUS"
+    - "BrachialPlexus"
+    - "BP"
+  ptv:
+    - "PTV"
+    - "CTV"
+    - "GTV"
+
+# Target dose guidelines (typical definitive NSCLC)
+targets:
+  lung:
+    definitive_nsclc:
+      prescription: 60.0  # Gy
+      fractionation: 30   # 2 Gy/fx
+      objectives:
+        - type: "min_dose"
+          priority: "high"
+          dose_percent: 95
+        - type: "max_dose"
+          priority: "high"
+          dose_percent: 107
+        - type: "square_deviation"
+          priority: "high"
+          dose_percent: 100
+
+# Organ at Risk dose constraints (QUANTEC-derived) and planning objectives
+organs_at_risk:
+  lung:
+    constraints:
+      - type: "mean_dose"
+        limit: 20  # Gy
+        priority: "medium"
+        endpoint: "pneumonitis"
+      - type: "volume_dose"
+        volume: 35  # %
+        dose: 20    # Gy (V20Gy < 35%)
+        priority: "medium"
+        endpoint: "pneumonitis"
+      - type: "volume_dose"
+        volume: 65  # %
+        dose: 5     # Gy (V5Gy < 65%) - wishlist
+        priority: "low"
+        endpoint: "low-dose bath"
+    objectives:
+      - type: "mean_dose"
+        priority: "medium"
+        penalty: 100
+        dose: 20  # Gy
+      - type: "volume_dose"
+        priority: "medium"
+        penalty: 100
+        volume: 35  # %
+        dose: 20   # Gy
+      - type: "volume_dose"
+        priority: "low"
+        penalty: 50
+        volume: 65  # %
+        dose: 5    # Gy
+
+  heart:
+    constraints:
+      - type: "mean_dose"
+        limit: 26  # Gy
+        priority: "medium"
+        endpoint: "pericarditis"
+      - type: "volume_dose"
+        volume: 30  # %
+        dose: 40   # Gy (V40Gy < 30%)
+        priority: "medium"
+        endpoint: "late toxicity"
+      - type: "volume_dose"
+        volume: 46  # %
+        dose: 30   # Gy (V30Gy < 46%)
+        priority: "medium"
+        endpoint: "late toxicity"
+    objectives:
+      - type: "mean_dose"
+        priority: "medium"
+        penalty: 100
+        dose: 26  # Gy
+      - type: "volume_dose"
+        priority: "medium"
+        penalty: 100
+        volume: 30  # %
+        dose: 40   # Gy
+      - type: "volume_dose"
+        priority: "medium"
+        penalty: 100
+        volume: 46  # %
+        dose: 30   # Gy
+
+  esophagus:
+    constraints:
+      - type: "mean_dose"
+        limit: 34  # Gy
+        priority: "high"
+        endpoint: "esophagitis"
+      - type: "volume_dose"
+        volume: 17  # %
+        dose: 60   # Gy (V60Gy < 17%)
+        priority: "high"
+        endpoint: "esophagitis/stricture"
+      - type: "max_dose"
+        limit: 60  # Gy (point max)
+        priority: "high"
+        endpoint: "ulceration/stricture"
+    objectives:
+      - type: "mean_dose"
+        priority: "high"
+        penalty: 400
+        dose: 34  # Gy
+      - type: "volume_dose"
+        priority: "high"
+        penalty: 400
+        volume: 17  # %
+        dose: 60   # Gy
+      - type: "max_dose"
+        priority: "high"
+        penalty: 500
+        dose: 60  # Gy
+
+  spinal_cord:
+    constraints:
+      - type: "max_dose"
+        limit: 45  # Gy
+        priority: "very_high"
+        endpoint: "myelopathy"
+      - type: "max_dose"
+        limit: 50  # Gy
+        priority: "very_high"
+        endpoint: "myelopathy"
+    objectives:
+      - type: "max_dose"
+        priority: "very_high"
+        penalty: 800
+        dose: 45  # Gy
+
+  brachial_plexus:
+    constraints:
+      - type: "max_dose"
+        limit: 66  # Gy
+        priority: "high"
+        endpoint: "plexopathy"
+    objectives:
+      - type: "max_dose"
+        priority: "high"
+        penalty: 500
+        dose: 66  # Gy
+
+# Default beam arrangements for lung cases
+beam_arrangements:
+  lung:
+    gantry_angles: [0, 45, 135, 180, 225, 315]  # 6-field IMRT setup
+    couch_angles: [0, 0, 0, 0, 0, 0]
+
+
+
+
