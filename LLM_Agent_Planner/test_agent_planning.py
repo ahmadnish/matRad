@@ -199,12 +199,20 @@ class IMRTPlanningAgent:
                             },
                             "objective_type": {
                                 "type": "string",
-                                "enum": ["min_dose", "max_dose", "mean_dose", "square_deviation"],
+                                "enum": ["min_dose", "max_dose", "mean_dose", "square_deviation", "eud", "min_dvh", "max_dvh"],
                                 "description": "Type of objective"
                             },
                             "dose_value": {
                                 "type": "number",
-                                "description": "Dose value in Gy"
+                                "description": "Dose value in Gy (for EUD: target EUD value; for DVH: dose threshold)"
+                            },
+                            "volume_percent": {
+                                "type": "number",
+                                "description": "Volume percentage for DVH objectives (e.g., 95 for 95%). Only used for min_dvh and max_dvh."
+                            },
+                            "eud_exponent": {
+                                "type": "number",
+                                "description": "EUD exponent parameter (default 3.5). Only used for eud objective. Higher values emphasize hot spots, lower values emphasize cold spots."
                             },
                             "penalty": {
                                 "type": "number",
@@ -238,7 +246,7 @@ class IMRTPlanningAgent:
                             },
                             "objective_type": {
                                 "type": "string",
-                                "enum": ["min_dose", "max_dose", "mean_dose", "square_deviation"],
+                                "enum": ["min_dose", "max_dose", "mean_dose", "square_deviation", "eud", "min_dvh", "max_dvh"],
                                 "description": "Type of objective to remove (optional, removes first match)"
                             },
                             "dose_value": {
@@ -430,7 +438,9 @@ class IMRTPlanningAgent:
                     arguments["objective_type"],
                     arguments["dose_value"],
                     arguments.get("penalty", 1000.0),
-                    arguments.get("rationale", "No rationale provided")
+                    arguments.get("rationale", "No rationale provided"),
+                    arguments.get("volume_percent", 95),
+                    arguments.get("eud_exponent", 3.5)
                 )
                 result_dict = convert_matlab_types(result_dict)
                 if result_dict.get("success"):
@@ -785,6 +795,34 @@ class IMRTPlanningAgent:
                 - Conformity Index (CI) > 0.7
                 - OAR doses below maximum and mean tolerances
 
+            ## Objective Types and Clinical Usage:
+
+            **Basic Dose Objectives:**
+            - **min_dose**: Ensures minimum dose coverage (mainly for targets)
+            - **max_dose**: Limits maximum dose (mainly for OARs)
+            - **mean_dose**: Controls average dose (useful for both targets and OARs)
+            - **square_deviation**: Promotes dose uniformity around a target dose
+
+            **Advanced Objectives:**
+            - **EUD (Equivalent Uniform Dose)**: 
+                - For targets: Use with low exponent (1-2) to emphasize cold spots
+                - For OARs: Use with high exponent (5-10) to emphasize hot spots
+                - Target EUD should match prescription dose for targets
+                - Default exponent is 3.5, but adjust based on clinical goals
+            
+            - **DVH-based Objectives:**
+                - **min_dvh**: Ensures minimum volume receives threshold dose (for target coverage)
+                  - Example: min_dvh with 60Gy, 95% ensures 95% of target gets ≥60Gy
+                - **max_dvh**: Limits volume receiving threshold dose (for OAR sparing)  
+                  - Example: max_dvh with 20Gy, 30% ensures ≤30% of OAR gets ≥20Gy
+                - Volume percentage should be clinically meaningful (typically 90-99% for targets, 10-50% for OARs)
+
+            **Objective Selection Strategy:**
+            - Use **min_dose/max_dose** for simple dose limits
+            - Use **EUD** when you want to control dose distribution characteristics
+            - Use **DVH objectives** when specific volume-dose constraints are critical
+            - Use **square_deviation** for dose uniformity around a specific value
+            - Combine objectives strategically - avoid redundant or conflicting constraints
 
             Plan Evaluation Workflow:
             1. Primary: Use evaluate_plan_quality() for comprehensive plan assessment (all structures, quality scoring, clinical recommendations)

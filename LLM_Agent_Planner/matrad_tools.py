@@ -546,7 +546,9 @@ class MatRadEngine:
                             'DoseObjectives.matRad_SquaredOverdosing': 'max_dose',
                             'DoseObjectives.matRad_MeanDose': 'mean_dose',
                             'DoseObjectives.matRad_SquaredDeviation': 'square_deviation',
-                            'DoseObjectives.matRad_EUD': 'eud'
+                            'DoseObjectives.matRad_EUD': 'eud',
+                            'DoseObjectives.matRad_MinDVH': 'min_dvh',
+                            'DoseObjectives.matRad_MaxDVH': 'max_dvh'
                         }
                         objective_type = objective_type_map.get(class_name, 'unknown')
                         
@@ -608,7 +610,9 @@ class MatRadEngine:
                 'max_dose': 'DoseObjectives.matRad_SquaredOverdosing',
                 'mean_dose': 'DoseObjectives.matRad_MeanDose',
                 'square_deviation': 'DoseObjectives.matRad_SquaredDeviation',
-                'eud': 'DoseObjectives.matRad_EUD'
+                'eud': 'DoseObjectives.matRad_EUD',
+                'min_dvh': 'DoseObjectives.matRad_MinDVH',
+                'max_dvh': 'DoseObjectives.matRad_MaxDVH'
             }
             
             target_class = obj_class_map.get(objective_type) if objective_type else None
@@ -759,16 +763,19 @@ class MatRadEngine:
 
     def add_optimization_objective(self, structure_name: str, obj_type: str, 
                                   dose_value: float, penalty: float = 1000.0, 
-                                  rationale: str = None) -> Dict[str, Any]:
+                                  rationale: str = None, volume_percent: float = None,
+                                  eud_exponent: float = None) -> Dict[str, Any]:
         """
         Add an optimization objective for a structure.
         
         Args:
             structure_name: Name of the structure to add objective for.
-            obj_type: Type of objective ('min_dose', 'max_dose', 'mean_dose', 'square_deviation', etc.)
-            dose_value: Dose value in Gy for the objective.
+            obj_type: Type of objective ('min_dose', 'max_dose', 'mean_dose', 'square_deviation', 'eud', 'min_dvh', 'max_dvh')
+            dose_value: Dose value in Gy for the objective (for EUD: target EUD value; for DVH: dose threshold).
             penalty: Penalty weight for the objective.
             rationale: Short explanation of why this objective is being added.
+            volume_percent: Volume percentage for DVH objectives (e.g., 95 for 95%). Only used for min_dvh and max_dvh.
+            eud_exponent: EUD exponent parameter (default 3.5). Only used for eud objective.
             
         Returns:
             Dict with objective information or error status.
@@ -786,7 +793,9 @@ class MatRadEngine:
                 'max_dose': 'DoseObjectives.matRad_SquaredOverdosing',
                 'mean_dose': 'DoseObjectives.matRad_MeanDose',
                 'square_deviation': 'DoseObjectives.matRad_SquaredDeviation',
-                'eud': 'DoseObjectives.matRad_EUD'
+                'eud': 'DoseObjectives.matRad_EUD',
+                'min_dvh': 'DoseObjectives.matRad_MinDVH',
+                'max_dvh': 'DoseObjectives.matRad_MaxDVH'
             }
             
             if obj_type not in obj_class_map:
@@ -831,14 +840,36 @@ class MatRadEngine:
             # Find the corresponding index in CST
             struct_idx = cst_indices[struct_names_list.index(structure_name)]
             
-            # Create the objective struct in MATLAB
-            self.eng.eval(f"""
-            % Create new objective
-            newObj = struct();
-            newObj.className = '{obj_class}';
-            newObj.parameters = {{{dose_value}}};
-            newObj.penalty = {penalty};
-            """, nargout=0)
+            # Create the objective struct in MATLAB with appropriate parameters
+            if obj_type == 'eud':
+                # EUD objective: parameters = {dose_value, exponent}
+                eud_exp = eud_exponent if eud_exponent is not None else 3.5
+                self.eng.eval(f"""
+                % Create new EUD objective
+                newObj = struct();
+                newObj.className = '{obj_class}';
+                newObj.parameters = {{{dose_value}, {eud_exp}}};
+                newObj.penalty = {penalty};
+                """, nargout=0)
+            elif obj_type in ['min_dvh', 'max_dvh']:
+                # DVH objective: parameters = {dose_value, volume_percent}
+                vol_pct = volume_percent if volume_percent is not None else 95.0
+                self.eng.eval(f"""
+                % Create new DVH objective
+                newObj = struct();
+                newObj.className = '{obj_class}';
+                newObj.parameters = {{{dose_value}, {vol_pct}}};
+                newObj.penalty = {penalty};
+                """, nargout=0)
+            else:
+                # Standard objectives: parameters = {dose_value}
+                self.eng.eval(f"""
+                % Create new objective
+                newObj = struct();
+                newObj.className = '{obj_class}';
+                newObj.parameters = {{{dose_value}}};
+                newObj.penalty = {penalty};
+                """, nargout=0)
             
             # Check if objectives field exists for this structure
             has_objectives = self.eng.eval(f"~isempty(cst({int(struct_idx)},6))", nargout=1)

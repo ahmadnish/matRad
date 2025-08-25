@@ -137,7 +137,7 @@ LENS: Max ≤ 25 Gy
 | `set_beam_configuration` | Define beam angles | `gantry_angles`, `couch_angles` |
 | `generate_beam_geometry` | Create beam geometry | None |
 | `calculate_dose_influence_matrix` | Compute dose matrix | None |
-| `add_optimization_objective` | Add dose constraints | `structure_name`, `objective_type`, `dose_value`, `penalty` |
+| `add_optimization_objective` | Add dose constraints | `structure_name`, `objective_type`, `dose_value`, `penalty`, `volume_percent`, `eud_exponent` |
 | `optimize_fluence` | Run optimization | None |
 | `evaluate_plan_quality` | Calculate metrics | None |
 | `calculate_dvh_analysis` | DVH computation | `structure_name` (optional) |
@@ -145,10 +145,23 @@ LENS: Max ≤ 25 Gy
 
 ### Objective Types
 
+**Basic Dose Objectives:**
 - **`min_dose`**: Minimum dose constraint (underdosing penalty)
 - **`max_dose`**: Maximum dose constraint (overdosing penalty)  
 - **`mean_dose`**: Mean dose objective
 - **`square_deviation`**: Target dose with squared deviation penalty
+
+**Advanced Objectives:**
+- **`eud`**: Equivalent Uniform Dose objective
+  - Configurable exponent parameter (default 3.5)
+  - For targets: use low exponent (1-2) to emphasize cold spots
+  - For OARs: use high exponent (5-10) to emphasize hot spots
+- **`min_dvh`**: Minimum DVH constraint (ensures minimum volume receives threshold dose)
+  - Configurable volume percentage (default 95%)
+  - Example: `min_dvh` with 60Gy, 95% ensures 95% of target gets ≥60Gy
+- **`max_dvh`**: Maximum DVH constraint (limits volume receiving threshold dose)
+  - Configurable volume percentage (default 95%)
+  - Example: `max_dvh` with 20Gy, 30% ensures ≤30% of OAR gets ≥20Gy
 
 ### Enhanced Objective Management Tools
 
@@ -255,7 +268,9 @@ structures = engine.get_structure_names()
 
 # Add objectives
 engine.add_optimization_objective("PTV", "square_deviation", 60.0, 1000)
+engine.add_optimization_objective("PTV", "min_dvh", 57.0, 1000, volume_percent=95)  # 95% gets ≥57Gy
 engine.add_optimization_objective("Brainstem", "max_dose", 54.0, 1000)
+engine.add_optimization_objective("Parotid_L", "eud", 26.0, 1000, eud_exponent=8)  # High exponent for OAR
 
 # Optimize
 engine.optimize_fluence()
