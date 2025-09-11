@@ -516,13 +516,20 @@ class MatRadEngine:
                 
                 struct_objectives = []
                 
-                # Loop through each objective for this structure
+                # Loop through each objective/constraint for this structure
                 for j in range(1, num_objectives + 1):  # MATLAB 1-based indexing
                     try:
-                        # Get objective className
+                        # Get className
                         class_name = str(self.eng.eval(f"cst{{{i},6}}{{{j}}}.className", nargout=1))
                         
-                        # Get penalty
+                        # Check if this is an objective (has penalty) or constraint (no penalty)
+                        is_objective = self.eng.eval(f"isfield(cst{{{i},6}}{{{j}}}, 'penalty')", nargout=1)
+                        
+                        if not is_objective:
+                            # Skip constraints - they will be handled by get_current_constraints
+                            continue
+                            
+                        # Get penalty (only objectives have this field)
                         penalty = float(self.eng.eval(f"cst{{{i},6}}{{{j}}}.penalty", nargout=1))
                         
                         # Get dose value (parameters)
@@ -758,6 +765,360 @@ class MatRadEngine:
                     "message": f"Cleared all {cleared_count} objectives from all structures"
                 }
                 
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    def add_constraint(self, structure_name: str, constraint_type: str,
+                      lower_bound: float = None, upper_bound: float = None,
+                      dose_reference: float = None, eud_exponent: float = 3.5,
+                      rationale: str = None) -> Dict[str, Any]:
+        """
+        Add an optimization constraint for a structure.
+        
+        Args:
+            structure_name: Name of the structure to add constraint for.
+            constraint_type: Type of constraint ('min_max_dose', 'min_max_mean_dose', 'min_max_eud', 'min_max_dvh')
+            lower_bound: Lower bound value (optional).
+            upper_bound: Upper bound value (optional).
+            dose_reference: Reference dose for DVH constraints in Gy.
+            eud_exponent: EUD exponent parameter (default 3.5).
+            rationale: Short explanation of why this constraint is being added.
+            
+        Returns:
+            Dict with constraint information or error status.
+        """
+        if not self.initialized:
+            return {"success": False, "error": "MATLAB Engine not initialized"}
+            
+        if not self.patient_loaded:
+            return {"success": False, "error": "No patient data loaded"}
+            
+        try:
+            # Map constraint types to matRad constraint classes
+            constraint_class_map = {
+                'min_max_dose': 'DoseConstraints.matRad_MinMaxDose',
+                'min_max_mean_dose': 'DoseConstraints.matRad_MinMaxMeanDose',
+                'min_max_eud': 'DoseConstraints.matRad_MinMaxEUD',
+                'min_max_dvh': 'DoseConstraints.matRad_MinMaxDVH'
+            }
+            
+            if constraint_type not in constraint_class_map:
+                return {"success": False, "error": f"Unsupported constraint type: {constraint_type}. Supported types: {list(constraint_class_map.keys())}"}
+                
+            constraint_class = constraint_class_map[constraint_type]
+            
+            # First, find structure index
+            self.eng.eval(f"""
+            struct_idx = 0;
+            for i = 1:size(cst,1)
+                if ~isempty(cst{{i,2}}) && strcmp(cst{{i,2}}, '{structure_name}')
+                    struct_idx = i;
+                    break;
+                end
+            end
+            """, nargout=0)
+            
+            struct_idx = int(self.eng.workspace["struct_idx"])
+            if struct_idx == 0:
+                return {"success": False, "error": f"Structure '{structure_name}' not found"}
+            
+            # Create the constraint struct in MATLAB with appropriate parameters
+            if constraint_type == 'min_max_dose':
+                # MinMaxDose: parameters = {min_dose, max_dose, method}
+                min_dose = lower_bound if lower_bound is not None else 0
+                max_dose = upper_bound if upper_bound is not None else float('inf')
+                self.eng.eval(f"""
+                % Create new MinMaxDose constraint
+                newConstraint = struct();
+                newConstraint.className = '{constraint_class}';
+                newConstraint.parameters = {{{min_dose}, {max_dose}, 1}};  % method = 1 (approx)
+                """, nargout=0)
+                
+            elif constraint_type == 'min_max_mean_dose':
+                # MinMaxMeanDose: parameters = {min_mean, max_mean}
+                min_mean = lower_bound if lower_bound is not None else 0
+                max_mean = upper_bound if upper_bound is not None else float('inf')
+                self.eng.eval(f"""
+                % Create new MinMaxMeanDose constraint
+                newConstraint = struct();
+                newConstraint.className = '{constraint_class}';
+                newConstraint.parameters = {{{min_mean}, {max_mean}}};
+                """, nargout=0)
+                
+            elif constraint_type == 'min_max_eud':
+                # MinMaxEUD: parameters = {exponent, min_eud, max_eud}
+                min_eud = lower_bound if lower_bound is not None else 0
+                max_eud = upper_bound if upper_bound is not None else float('inf')
+                self.eng.eval(f"""
+                % Create new MinMaxEUD constraint
+                newConstraint = struct();
+                newConstraint.className = '{constraint_class}';
+                newConstraint.parameters = {{{eud_exponent}, {min_eud}, {max_eud}}};
+                """, nargout=0)
+                
+            elif constraint_type == 'min_max_dvh':
+                # MinMaxDVH: parameters = {dose_ref, vol_min, vol_max}
+                if dose_reference is None:
+                    return {"success": False, "error": "dose_reference is required for min_max_dvh constraint"}
+                vol_min = lower_bound if lower_bound is not None else 0
+                vol_max = upper_bound if upper_bound is not None else 100
+                # Convert volume fractions to percentages for matRad
+                vol_min_pct = vol_min * 100 if vol_min <= 1.0 else vol_min
+                vol_max_pct = vol_max * 100 if vol_max <= 1.0 else vol_max
+                self.eng.eval(f"""
+                % Create new MinMaxDVH constraint
+                newConstraint = struct();
+                newConstraint.className = '{constraint_class}';
+                newConstraint.parameters = {{{dose_reference}, {vol_min_pct}, {vol_max_pct}}};
+                """, nargout=0)
+            
+            # Check if constraints field exists for this structure
+            has_constraints = self.eng.eval(f"~isempty(cst({int(struct_idx)},6))", nargout=1)
+            
+            if not has_constraints:
+                # Initialize empty cell array if no objectives/constraints exist
+                self.eng.eval(f"cst({int(struct_idx)},6) = {{}};", nargout=0)
+            
+            # Add the constraint to the structure
+            self.eng.eval(f"""
+            % Get current objectives/constraints
+            currentObjConstraints = cst{{{int(struct_idx)},6}};
+            % Add new constraint
+            currentObjConstraints{{end+1}} = newConstraint;
+            % Update CST
+            cst{{{int(struct_idx)},6}} = currentObjConstraints;
+            """, nargout=0)
+            
+            # Get the number of objectives/constraints
+            num_obj_constraints = self.eng.eval(f"numel(cst({int(struct_idx)},6))", nargout=1)
+            
+            return {
+                "success": True,
+                "structure": structure_name,
+                "constraint_type": constraint_type,
+                "lower_bound": lower_bound,
+                "upper_bound": upper_bound,
+                "dose_reference": dose_reference,
+                "eud_exponent": eud_exponent if constraint_type == 'min_max_eud' else None,
+                "rationale": rationale or "No rationale provided",
+                "total_obj_constraints": num_obj_constraints,
+                "message": f"Added {constraint_type} constraint to {structure_name}. Rationale: {rationale or 'No rationale provided'}"
+            }
+            
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    def remove_constraint(self, structure_name: str, constraint_index: int = None,
+                         constraint_type: str = None, rationale: str = None) -> Dict[str, Any]:
+        """
+        Remove a specific optimization constraint from a structure.
+        
+        Args:
+            structure_name: Name of the structure
+            constraint_index: Specific index of constraint to remove (1-based, optional)
+            constraint_type: Type of constraint to remove (optional, removes first match)
+            rationale: Short explanation of why this constraint is being removed.
+            
+        Returns:
+            Dict with removal status and information.
+        """
+        if not self.initialized:
+            return {"success": False, "error": "MATLAB Engine not initialized"}
+            
+        if not self.patient_loaded:
+            return {"success": False, "error": "No patient data loaded"}
+            
+        try:
+            # Map constraint types to matRad constraint classes
+            constraint_class_map = {
+                'min_max_dose': 'DoseConstraints.matRad_MinMaxDose',
+                'min_max_mean_dose': 'DoseConstraints.matRad_MinMaxMeanDose',
+                'min_max_eud': 'DoseConstraints.matRad_MinMaxEUD',
+                'min_max_dvh': 'DoseConstraints.matRad_MinMaxDVH'
+            }
+            
+            target_class = constraint_class_map.get(constraint_type) if constraint_type else None
+            
+            # First, find structure index
+            self.eng.eval(f"""
+            struct_idx = 0;
+            for i = 1:size(cst,1)
+                if ~isempty(cst{{i,2}}) && strcmp(cst{{i,2}}, '{structure_name}')
+                    struct_idx = i;
+                    break;
+                end
+            end
+            """, nargout=0)
+            
+            struct_idx = int(self.eng.workspace["struct_idx"])
+            if struct_idx == 0:
+                return {"success": False, "error": f"Structure '{structure_name}' not found"}
+            
+            # Remove constraint based on criteria
+            if constraint_index is not None:
+                # Remove by specific index
+                self.eng.eval(f"""
+                objConstraints = cst{{{struct_idx},6}};
+                if length(objConstraints) >= {constraint_index}
+                    removed_item = objConstraints{{{constraint_index}}};
+                    objConstraints({constraint_index}) = [];
+                    cst{{{struct_idx},6}} = objConstraints;
+                    removal_success = true;
+                    remaining_count = length(objConstraints);
+                else
+                    removal_success = false;
+                    remaining_count = length(objConstraints);
+                end
+                """, nargout=0)
+            else:
+                # Remove by type (first match)
+                class_condition = f"&& strcmp(item.className, '{target_class}')" if target_class else ""
+                
+                self.eng.eval(f"""
+                objConstraints = cst{{{struct_idx},6}};
+                removal_success = false;
+                removed_idx = 0;
+                
+                for j = 1:length(objConstraints)
+                    item = objConstraints{{j}};
+                    % Check if it's a constraint (has no penalty field) and matches type
+                    if ~isfield(item, 'penalty') {class_condition}
+                        removed_item = item;
+                        objConstraints(j) = [];
+                        removal_success = true;
+                        removed_idx = j;
+                        break;
+                    end
+                end
+                
+                cst{{{struct_idx},6}} = objConstraints;
+                remaining_count = length(objConstraints);
+                """, nargout=0)
+            
+            removal_success = bool(self.eng.workspace["removal_success"])
+            remaining_count = int(self.eng.workspace["remaining_count"])
+            
+            if removal_success:
+                return {
+                    "success": True,
+                    "structure": structure_name,
+                    "remaining_obj_constraints": remaining_count,
+                    "rationale": rationale or "No rationale provided",
+                    "message": f"Removed constraint from {structure_name}. {remaining_count} items remaining. Rationale: {rationale or 'No rationale provided'}"
+                }
+            else:
+                return {
+                    "success": False, 
+                    "error": f"No matching constraint found for removal in {structure_name}",
+                    "rationale": rationale or "No rationale provided"
+                }
+                
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    def get_current_constraints(self) -> Dict[str, Any]:
+        """
+        Get all current optimization constraints for all structures.
+        
+        Returns:
+            Dict with current constraints information organized by structure.
+        """
+        if not self.initialized:
+            return {"success": False, "error": "MATLAB Engine not initialized"}
+            
+        if not self.patient_loaded:
+            return {"success": False, "error": "No patient data loaded"}
+            
+        try:
+            # Get total number of structures
+            num_structures = int(self.eng.eval("size(cst,1)", nargout=1))
+            
+            constraints_dict = {}
+            total_count = 0
+            
+            # Loop through each structure
+            for i in range(1, num_structures + 1):  # MATLAB 1-based indexing
+                # Check if structure has a name
+                has_name = self.eng.eval(f"~isempty(cst{{{i},2}})", nargout=1)
+                if not has_name:
+                    continue
+                    
+                # Get structure name
+                struct_name = str(self.eng.eval(f"cst{{{i},2}}", nargout=1))
+                
+                # Check if structure has objectives/constraints
+                has_obj_constraints = self.eng.eval(f"~isempty(cst{{{i},6}})", nargout=1)
+                if not has_obj_constraints:
+                    continue
+                    
+                # Get number of objectives/constraints for this structure
+                num_obj_constraints = int(self.eng.eval(f"length(cst{{{i},6}})", nargout=1))
+                
+                struct_constraints = []
+                
+                # Loop through each objective/constraint for this structure
+                for j in range(1, num_obj_constraints + 1):  # MATLAB 1-based indexing
+                    try:
+                        # Get className
+                        class_name = str(self.eng.eval(f"cst{{{i},6}}{{{j}}}.className", nargout=1))
+                        
+                        # Check if it's a constraint (no penalty field)
+                        has_penalty = self.eng.eval(f"isfield(cst{{{i},6}}{{{j}}}, 'penalty')", nargout=1)
+                        if has_penalty:
+                            continue  # Skip objectives
+                        
+                        # Get parameters
+                        parameters = []
+                        try:
+                            has_params = self.eng.eval(f"isfield(cst{{{i},6}}{{{j}}}, 'parameters') && ~isempty(cst{{{i},6}}{{{j}}}.parameters)", nargout=1)
+                            if has_params:
+                                # Get number of parameters
+                                num_params = int(self.eng.eval(f"length(cst{{{i},6}}{{{j}}}.parameters)", nargout=1))
+                                for k in range(1, num_params + 1):
+                                    # Check if parameters is a cell array
+                                    is_cell = self.eng.eval(f"iscell(cst{{{i},6}}{{{j}}}.parameters)", nargout=1)
+                                    if is_cell:
+                                        param_val = float(self.eng.eval(f"cst{{{i},6}}{{{j}}}.parameters{{{k}}}", nargout=1))
+                                    else:
+                                        param_val = float(self.eng.eval(f"cst{{{i},6}}{{{j}}}.parameters({k})", nargout=1))
+                                    parameters.append(param_val)
+                        except:
+                            parameters = []
+                        
+                        # Map className to readable type
+                        constraint_type_map = {
+                            'DoseConstraints.matRad_MinMaxDose': 'min_max_dose',
+                            'DoseConstraints.matRad_MinMaxMeanDose': 'min_max_mean_dose',
+                            'DoseConstraints.matRad_MinMaxEUD': 'min_max_eud',
+                            'DoseConstraints.matRad_MinMaxDVH': 'min_max_dvh'
+                        }
+                        constraint_type = constraint_type_map.get(class_name, 'unknown')
+                        
+                        constraint_info = {
+                            "structure_index": i,
+                            "constraint_index": j,
+                            "constraint_type": constraint_type,
+                            "parameters": parameters,
+                            "className": class_name
+                        }
+                        
+                        struct_constraints.append(constraint_info)
+                        total_count += 1
+                        
+                    except Exception as e:
+                        print(f"Warning: Could not read constraint {j} for structure {struct_name}: {e}")
+                        continue
+                
+                if struct_constraints:
+                    constraints_dict[struct_name] = struct_constraints
+            
+            return {
+                "success": True,
+                "constraints_by_structure": constraints_dict,
+                "total_constraints": total_count,
+                "message": f"Found {total_count} constraints across {len(constraints_dict)} structures"
+            }
+            
         except Exception as e:
             return {"success": False, "error": str(e)}
 

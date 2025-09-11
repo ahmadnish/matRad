@@ -33,13 +33,18 @@ This document outlines the multi-session implementation plan to expose all matRa
 
 ---
 
-### 🔄 Session 2: Constraint Framework (PENDING)
+### ✅ Session 2: Constraint Framework (COMPLETED)
 
-**Goals:**
-- Implement comprehensive constraint framework
-- Add `add_constraint` tool with all constraint types
-- Add constraint-aware inspection and removal
-- Update system prompts with constraint guidance
+**Implemented:**
+- Added comprehensive constraint framework with all 4 constraint types
+- Implemented `add_constraint`, `remove_constraint`, and `get_current_constraints` tools
+- Added constraint-aware system prompts and clinical guidance
+- Updated documentation with constraint examples and usage patterns
+
+**Files Modified:**
+- `test_agent_planning.py`: Added constraint tool schemas and execution logic
+- `matrad_tools.py`: Implemented all constraint engine methods with proper parameter handling
+- `README_Agent.md`: Added constraint documentation and examples
 
 **Implementation Tasks:**
 
@@ -103,11 +108,16 @@ def add_constraint(self, structure_name: str, constraint_type: str,
 
 ---
 
-### 🔄 Session 3: Robustness Support (PENDING)
+### ✅ Session 3: Critical Bug Fix + Robustness Support (COMPLETED)
 
-**Goals:**
+**Critical Bug Fix (PRIORITY):**
+- **Fixed get_current_objectives error**: Method was reading constraints as objectives, causing "penalty" field errors
+- **Added proper type checking**: Now distinguishes between objectives (DoseObjectives) and constraints (DoseConstraints)
+- **Constraint inspection working**: Constraints are now properly filtered out and handled by get_current_constraints()
+
+**Robustness Support Goals:**
 - Add robustness parameter to all optimization functions
-- Implement robustness setting logic
+- Implement robustness setting logic  
 - Update prompts with robustness guidance
 
 **Implementation Tasks:**

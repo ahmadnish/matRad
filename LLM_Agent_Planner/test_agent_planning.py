@@ -283,6 +283,92 @@ class IMRTPlanningAgent:
             {
                 "type": "function",
                 "function": {
+                    "name": "add_constraint",
+                    "description": "Add an optimization constraint for a structure. Constraints define hard limits (upper/lower bounds) rather than penalties. ALWAYS provide a clear rationale explaining why this constraint is necessary.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "structure_name": {
+                                "type": "string",
+                                "description": "Name of the structure"
+                            },
+                            "constraint_type": {
+                                "type": "string",
+                                "enum": ["min_max_dose", "min_max_mean_dose", "min_max_eud", "min_max_dvh"],
+                                "description": "Type of constraint"
+                            },
+                            "lower_bound": {
+                                "type": "number",
+                                "description": "Lower bound value (optional). For dose constraints: minimum dose in Gy. For DVH: minimum volume fraction (0-1)."
+                            },
+                            "upper_bound": {
+                                "type": "number", 
+                                "description": "Upper bound value (optional). For dose constraints: maximum dose in Gy. For DVH: maximum volume fraction (0-1)."
+                            },
+                            "dose_reference": {
+                                "type": "number",
+                                "description": "Reference dose for DVH constraints in Gy. Required for min_max_dvh."
+                            },
+                            "eud_exponent": {
+                                "type": "number",
+                                "description": "EUD exponent parameter (default 3.5). Only used for min_max_eud constraint."
+                            },
+                            "rationale": {
+                                "type": "string",
+                                "description": "Clear clinical rationale for why this constraint is being added (e.g., 'Hard dose limit per protocol', 'Regulatory constraint for critical structure')"
+                            }
+                        },
+                        "required": ["structure_name", "constraint_type", "rationale"],
+                        "additionalProperties": False
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "remove_constraint",
+                    "description": "Remove a specific optimization constraint from a structure. Use this to eliminate unnecessary or conflicting constraints. ALWAYS provide a clear rationale explaining why this constraint is being removed.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "structure_name": {
+                                "type": "string",
+                                "description": "Name of the structure"
+                            },
+                            "constraint_index": {
+                                "type": "integer",
+                                "description": "Specific index of constraint to remove (1-based, optional)"
+                            },
+                            "constraint_type": {
+                                "type": "string",
+                                "enum": ["min_max_dose", "min_max_mean_dose", "min_max_eud", "min_max_dvh"],
+                                "description": "Type of constraint to remove (optional, removes first match)"
+                            },
+                            "rationale": {
+                                "type": "string",
+                                "description": "Clear rationale for why this constraint is being removed (e.g., 'Constraint preventing convergence', 'No longer needed after plan improvements')"
+                            }
+                        },
+                        "required": ["structure_name", "rationale"],
+                        "additionalProperties": False
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "get_current_constraints",
+                    "description": "Get all current optimization constraints for all structures. Essential for understanding what constraints are already set before adding new ones or making modifications.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {},
+                        "additionalProperties": False
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
                     "name": "optimize_fluence",
                     "description": "Run fluence optimization based on current objectives. Can use previous optimization results as starting point for improved convergence.",
                     "parameters": {
@@ -503,6 +589,47 @@ class IMRTPlanningAgent:
                         # Clear all objectives
                         self.plan_state["objectives_added"] = []
                 
+            elif tool_name == "add_constraint":
+                result_dict = self.engine.add_constraint(
+                    arguments["structure_name"],
+                    arguments["constraint_type"],
+                    arguments.get("lower_bound"),
+                    arguments.get("upper_bound"),
+                    arguments.get("dose_reference"),
+                    arguments.get("eud_exponent", 3.5),
+                    arguments.get("rationale", "No rationale provided")
+                )
+                result_dict = convert_matlab_types(result_dict)
+                if result_dict.get("success"):
+                    # Log the constraint with rationale
+                    self.logger.log_action(
+                        "constraint_added",
+                        f"Added {arguments['constraint_type']} constraint to {arguments['structure_name']}",
+                        {"rationale": arguments.get("rationale", "No rationale provided")},
+                        result_dict
+                    )
+                
+            elif tool_name == "remove_constraint":
+                result_dict = self.engine.remove_constraint(
+                    arguments["structure_name"],
+                    arguments.get("constraint_index"),
+                    arguments.get("constraint_type"),
+                    arguments.get("rationale", "No rationale provided")
+                )
+                result_dict = convert_matlab_types(result_dict)
+                if result_dict.get("success"):
+                    # Log the constraint removal with rationale
+                    self.logger.log_action(
+                        "constraint_removed",
+                        f"Removed constraint from {arguments['structure_name']}",
+                        {"rationale": arguments.get("rationale", "No rationale provided")},
+                        result_dict
+                    )
+                
+            elif tool_name == "get_current_constraints":
+                result_dict = self.engine.get_current_constraints()
+                result_dict = convert_matlab_types(result_dict)
+                
             elif tool_name == "optimize_fluence":
                 # Configure fmincon tolerances BEFORE optimization runs
                 try:
@@ -711,29 +838,35 @@ class IMRTPlanningAgent:
             3. Create an initial treatment plan with appropriate beam angles.
             4. Generate the beam geometry and calculate the dose influence matrix.
 
-            ### Intelligent Objective Management Workflow (Steps 5+):
+            ### Intelligent Objective and Constraint Management Workflow (Steps 5+):
             
-            **BEFORE adding any objectives:**
-            - ALWAYS use get_current_objectives() to check what objectives already exist
+            **BEFORE adding any objectives or constraints:**
+            - ALWAYS use get_current_objectives() AND get_current_constraints() to check what already exists
             - Analyze existing objectives for redundancy, conflicts, or excessive constraints
-            - 
+            - Check constraint feasibility and compatibility with objectives
 
-            **Optimization and Monitoring Loop:**
-            1. Add initial clinically-guided objectives for targets and OARs WITH CLEAR RATIONALES
+            **Initial Setup Strategy:**
+            1. **Add critical constraints first** for safety limits and regulatory requirements WITH CLEAR RATIONALES
+               - Example: `add_constraint("SpinalCord", "min_max_dose", upper_bound=45.0, rationale="FDA safety limit")`
+            2. **Then add optimization objectives** for plan quality improvement WITH CLEAR RATIONALES
                - ALWAYS provide specific clinical reasoning for each objective (e.g., "Ensure 95% target coverage per clinical protocol", "Protect parotid from xerostomia per QUANTEC guidelines")
                - Every objective must have a meaningful rationale explaining its clinical necessity
-            2. Run optimize_fluence() and CAREFULLY analyze the optimization_analysis results:
+
+            **Optimization and Monitoring Loop:**
+            1. Run optimize_fluence() and CAREFULLY analyze the optimization_analysis results:
                - Monitor convergence quality (good/moderate/poor)
                - Check for objective stagnation and very small step sizes
                - Evaluate relative improvement percentage
                - Read optimization summary for warnings
-            3. Evaluate plan quality and clinical metrics
-            4. **CRITICAL DECISION POINT:** Based on optimization convergence AND plan quality:
+            2. Evaluate plan quality and clinical metrics
+            3. **CRITICAL DECISION POINT:** Based on optimization convergence AND plan quality:
 
             **If optimization shows POOR convergence (stagnation, tiny steps):**
-            - This often indicates too many conflicting/redundant objectives
-            - Use get_current_objectives() to review all current objectives  
-            - Strategically remove redundant or conflicting objectives using remove_optimization_objective() WITH CLEAR RATIONALES
+            - This often indicates too many conflicting/redundant objectives OR infeasible constraints
+            - Use get_current_objectives() AND get_current_constraints() to review all optimization functions
+            - First check if constraints are feasible - remove/relax constraints if they make the problem infeasible
+            - Then strategically remove redundant or conflicting objectives using remove_optimization_objective() WITH CLEAR RATIONALES
+            - Use remove_constraint() if constraints are preventing convergence WITH CLEAR RATIONALES
             - ALWAYS explain WHY each objective is being removed (e.g., "Removing redundant max_dose objective conflicting with existing constraint", "Eliminating over-constraining objective causing convergence issues")
             - Consider clear_all_objectives() for specific structures if overwhelmed with objectives
             - Re-optimize with simplified objective set
@@ -761,9 +894,7 @@ class IMRTPlanningAgent:
 
             **For comprehensive plan evaluation, use `evaluate_plan_quality()`:**
             - This is your PRIMARY tool for overall plan assessment
-            - Provides complete quality indicators, DVH analysis, and clinical recommendations for all structures
-            - Use this for plan approval/rejection decisions and comparing different plans
-            - Returns plan-level quality scoring and comprehensive clinical assessment
+            - Provides complete quality indicators, DVH analysis, and clinical recommendations for all structures        
             - Includes matRad's official quality indicators (D95, D50, HI, CI, V-metrics, etc.)
 
             **For focused structure analysis, use `calculate_dvh_analysis(structure_name)`:**
@@ -772,6 +903,8 @@ class IMRTPlanningAgent:
             - When you need structure-specific DVH plots or deep-dive analysis
 
             **AVOID calling both methods redundantly** - `evaluate_plan_quality()` already includes comprehensive DVH analysis for all structures.
+
+            **After evaluating the plan, provide a summary of the plan quality and clinical metrics, and what you think the next step should be.**
 
             Clinical Guidelines:
             - Target structures (PTVs) should receive 95% of the prescribed dose (typically 50–70 Gy).
@@ -823,6 +956,36 @@ class IMRTPlanningAgent:
             - Use **DVH objectives** when specific volume-dose constraints are critical
             - Use **square_deviation** for dose uniformity around a specific value
             - Combine objectives strategically - avoid redundant or conflicting constraints
+
+            ## Constraints vs. Objectives:
+
+            **Constraints (Hard Limits):**
+            - Define **mandatory bounds** that MUST be satisfied for plan acceptance
+            - Use for regulatory limits, safety requirements, and protocol mandates
+            - Available constraint types:
+              - **min_max_dose**: Hard dose limits (e.g., max spinal cord dose ≤45Gy)
+              - **min_max_mean_dose**: Mean dose bounds (e.g., parotid mean ≤26Gy)
+              - **min_max_eud**: EUD bounds with configurable exponent
+              - **min_max_dvh**: DVH bounds (e.g., V20Gy ≤30% for lung)
+
+            **Objectives (Soft Penalties):**
+            - Define **optimization goals** that guide the solution toward better plans
+            - Use for plan quality improvement and competing trade-offs
+            - Have penalty weights that can be adjusted
+
+            **Constraint vs. Objective Strategy:**
+            - Use **constraints** for: Safety limits, regulatory requirements, hard protocol limits
+            - Use **objectives** for: Plan quality optimization, competing trade-offs, iterative improvements
+            - Example approach:
+              - Add constraint: `add_constraint("SpinalCord", "min_max_dose", upper_bound=45.0)` 
+              - Add objective: `add_optimization_objective("SpinalCord", "max_dose", 35.0, penalty=1000)`
+              - This ensures dose never exceeds 45Gy (constraint) while optimizing toward 35Gy (objective)
+
+            **Constraint Management:**
+            - **BEFORE adding constraints**: Use `get_current_constraints()` to check existing ones
+            - **Be selective**: Too many constraints can make problems infeasible
+            - **Provide rationales**: Always explain why each constraint is clinically necessary
+            - **Monitor feasibility**: If optimization fails, consider relaxing constraints
 
             Plan Evaluation Workflow:
             1. Primary: Use evaluate_plan_quality() for comprehensive plan assessment (all structures, quality scoring, clinical recommendations)
