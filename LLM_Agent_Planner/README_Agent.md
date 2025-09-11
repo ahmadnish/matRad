@@ -171,6 +171,22 @@ LENS: Max ≤ 25 Gy
 | `remove_optimization_objective` | Remove specific objective | `structure_name`, `objective_index`, `objective_type`, `dose_value` | Eliminate conflicting or redundant objectives |
 | `clear_all_objectives` | Clear objectives for structure(s) | `structure_name` (optional) | Reset when objectives prevent convergence |
 
+### Constraint Management Tools
+
+| Tool | Description | Parameters | Purpose |
+|------|-------------|------------|---------|
+| `add_constraint` | Add hard limit constraint | `structure_name`, `constraint_type`, `lower_bound`, `upper_bound`, `dose_reference`, `eud_exponent`, `rationale` | Enforce mandatory dose/volume limits |
+| `remove_constraint` | Remove specific constraint | `structure_name`, `constraint_index`, `constraint_type`, `rationale` | Remove infeasible or unnecessary constraints |
+| `get_current_constraints` | View all existing constraints | None | Check constraint feasibility and conflicts |
+
+#### Constraint Types
+
+**Available constraint types:**
+- **`min_max_dose`**: Hard dose limits with lower and upper bounds
+- **`min_max_mean_dose`**: Mean dose bounds for structure
+- **`min_max_eud`**: EUD bounds with configurable exponent
+- **`min_max_dvh`**: DVH volume constraints for specific dose levels
+
 ## 🚀 Enhanced Agent Capabilities
 
 ### Smart Optimization Monitoring
@@ -266,11 +282,20 @@ engine.start_engine()
 result = engine.load_patient("patient.mat")
 structures = engine.get_structure_names()
 
-# Add objectives
+# Add critical constraints first (hard limits)
+engine.add_constraint("SpinalCord", "min_max_dose", upper_bound=45.0, rationale="FDA safety limit")
+engine.add_constraint("Brainstem", "min_max_dose", upper_bound=54.0, rationale="Critical structure tolerance")
+engine.add_constraint("Parotid_L", "min_max_mean_dose", upper_bound=26.0, rationale="QUANTEC xerostomia limit")
+
+# Add optimization objectives (soft goals)
 engine.add_optimization_objective("PTV", "square_deviation", 60.0, 1000)
 engine.add_optimization_objective("PTV", "min_dvh", 57.0, 1000, volume_percent=95)  # 95% gets ≥57Gy
-engine.add_optimization_objective("Brainstem", "max_dose", 54.0, 1000)
-engine.add_optimization_objective("Parotid_L", "eud", 26.0, 1000, eud_exponent=8)  # High exponent for OAR
+engine.add_optimization_objective("Brainstem", "max_dose", 50.0, 1000)  # Optimize toward 50Gy, constrained at 54Gy
+engine.add_optimization_objective("Parotid_L", "eud", 20.0, 1000, eud_exponent=8)  # Optimize toward 20Gy, constrained at 26Gy
+
+# Check current optimization functions
+constraints = engine.get_current_constraints()
+objectives = engine.get_current_objectives()
 
 # Optimize
 engine.optimize_fluence()
