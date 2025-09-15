@@ -214,6 +214,16 @@ class IMRTPlanningAgent:
                                 "type": "number",
                                 "description": "EUD exponent parameter (default 3.5). Only used for eud objective. Higher values emphasize hot spots, lower values emphasize cold spots."
                             },
+                            "mean_dose_function": {
+                                "type": "string",
+                                "enum": ["linear", "quadratic"],
+                                "description": "Function type for mean_dose objective (default 'linear'). 'linear' for standard deviation, 'quadratic' for squared deviation from target. Only used for mean_dose objective."
+                            },
+                            "robustness": {
+                                "type": "string",
+                                "enum": ["none", "STOCH", "PROB", "VWWC", "VWWC_INV", "COWC", "OWC"],
+                                "description": "Robustness setting (default 'none'). 'none'=nominal, 'STOCH'=stochastic, 'PROB'=probabilistic, 'VWWC'=voxel-wise worst case, 'COWC'=coverage optimized worst case, 'OWC'=objective worst case."
+                            },
                             "penalty": {
                                 "type": "number",
                                 "description": "Penalty weight (default 1000)"
@@ -313,6 +323,11 @@ class IMRTPlanningAgent:
                                 "type": "number",
                                 "description": "EUD exponent parameter (default 3.5). Only used for min_max_eud constraint."
                             },
+                            "robustness": {
+                                "type": "string",
+                                "enum": ["none", "PROB", "VWWC", "VWWC_INV"],
+                                "description": "Robustness setting for constraint (default 'none'). 'none'=nominal, 'PROB'=probabilistic, 'VWWC'=voxel-wise worst case."
+                            },
                             "rationale": {
                                 "type": "string",
                                 "description": "Clear clinical rationale for why this constraint is being added (e.g., 'Hard dose limit per protocol', 'Regulatory constraint for critical structure')"
@@ -362,6 +377,31 @@ class IMRTPlanningAgent:
                     "parameters": {
                         "type": "object",
                         "properties": {},
+                        "additionalProperties": False
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "get_optimization_functions",
+                    "description": "Get comprehensive analysis of ALL optimization functions (objectives and constraints) for all structures. Provides unified view with conflict detection, parameter analysis, and clinical recommendations. Use this for thorough optimization function review.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "structure_name": {
+                                "type": "string",
+                                "description": "Name of specific structure to analyze (optional). If provided, returns detailed analysis for that structure only. If omitted, analyzes all structures."
+                            },
+                            "include_conflict_analysis": {
+                                "type": "boolean",
+                                "description": "Include conflict detection between objectives and constraints (default: true)"
+                            },
+                            "include_recommendations": {
+                                "type": "boolean", 
+                                "description": "Include clinical recommendations for optimization function setup (default: true)"
+                            }
+                        },
                         "additionalProperties": False
                     }
                 }
@@ -526,7 +566,9 @@ class IMRTPlanningAgent:
                     arguments.get("penalty", 1000.0),
                     arguments.get("rationale", "No rationale provided"),
                     arguments.get("volume_percent", 95),
-                    arguments.get("eud_exponent", 3.5)
+                    arguments.get("eud_exponent", 3.5),
+                    arguments.get("mean_dose_function", "linear"),
+                    arguments.get("robustness", "none")
                 )
                 result_dict = convert_matlab_types(result_dict)
                 if result_dict.get("success"):
@@ -597,7 +639,8 @@ class IMRTPlanningAgent:
                     arguments.get("upper_bound"),
                     arguments.get("dose_reference"),
                     arguments.get("eud_exponent", 3.5),
-                    arguments.get("rationale", "No rationale provided")
+                    arguments.get("rationale", "No rationale provided"),
+                    arguments.get("robustness", "none")
                 )
                 result_dict = convert_matlab_types(result_dict)
                 if result_dict.get("success"):
@@ -628,6 +671,14 @@ class IMRTPlanningAgent:
                 
             elif tool_name == "get_current_constraints":
                 result_dict = self.engine.get_current_constraints()
+                result_dict = convert_matlab_types(result_dict)
+                
+            elif tool_name == "get_optimization_functions":
+                result_dict = self.engine.get_optimization_functions(
+                    arguments.get("structure_name"),
+                    arguments.get("include_conflict_analysis", True),
+                    arguments.get("include_recommendations", True)
+                )
                 result_dict = convert_matlab_types(result_dict)
                 
             elif tool_name == "optimize_fluence":
@@ -841,9 +892,9 @@ class IMRTPlanningAgent:
             ### Intelligent Objective and Constraint Management Workflow (Steps 5+):
             
             **BEFORE adding any objectives or constraints:**
-            - ALWAYS use get_current_objectives() AND get_current_constraints() to check what already exists
-            - Analyze existing objectives for redundancy, conflicts, or excessive constraints
-            - Check constraint feasibility and compatibility with objectives
+            - **PRIMARY**: Use `get_optimization_functions()` for comprehensive analysis of ALL optimization functions with conflict detection and clinical recommendations
+            - **ALTERNATIVE**: Use `get_current_objectives()` AND `get_current_constraints()` for basic listing only
+            - **ALWAYS ANALYZE**: Look for redundancy, conflicts, excessive constraints, and follow clinical recommendations
 
             **Initial Setup Strategy:**
             1. **Add critical constraints first** for safety limits and regulatory requirements WITH CLEAR RATIONALES
@@ -863,7 +914,7 @@ class IMRTPlanningAgent:
 
             **If optimization shows POOR convergence (stagnation, tiny steps):**
             - This often indicates too many conflicting/redundant objectives OR infeasible constraints
-            - Use get_current_objectives() AND get_current_constraints() to review all optimization functions
+            - **USE get_optimization_functions() for comprehensive conflict analysis and recommendations**
             - First check if constraints are feasible - remove/relax constraints if they make the problem infeasible
             - Then strategically remove redundant or conflicting objectives using remove_optimization_objective() WITH CLEAR RATIONALES
             - Use remove_constraint() if constraints are preventing convergence WITH CLEAR RATIONALES
@@ -956,6 +1007,19 @@ class IMRTPlanningAgent:
             - Use **DVH objectives** when specific volume-dose constraints are critical
             - Use **square_deviation** for dose uniformity around a specific value
             - Combine objectives strategically - avoid redundant or conflicting constraints
+
+            **Advanced Parameters:**
+            - **MeanDose Function Type**: 
+              - `linear` (default): Standard linear penalty function
+              - `quadratic`: Squared deviation from target (more aggressive convergence)
+            - **Robustness Settings** (for uncertainty handling):
+              - `none` (default): Nominal plan optimization
+              - `STOCH`: Stochastic optimization (multiple scenarios)
+              - `PROB`: Probabilistic optimization (expected value approach) 
+              - `VWWC`: Voxel-wise worst case (conservative approach)
+              - `COWC`: Coverage optimized worst case
+              - `OWC`: Objective worst case
+              - **Use robustness when patient positioning or anatomy uncertainties are critical**
 
             ## Constraints vs. Objectives:
 
