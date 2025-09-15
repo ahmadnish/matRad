@@ -811,7 +811,7 @@ class MatRadEngine:
     def add_constraint(self, structure_name: str, constraint_type: str,
                       lower_bound: float = None, upper_bound: float = None,
                       dose_reference: float = None, eud_exponent: float = 3.5,
-                      rationale: str = None) -> Dict[str, Any]:
+                      rationale: str = None, robustness: str = "none") -> Dict[str, Any]:
         """
         Add an optimization constraint for a structure.
         
@@ -823,6 +823,7 @@ class MatRadEngine:
             dose_reference: Reference dose for DVH constraints in Gy.
             eud_exponent: EUD exponent parameter (default 3.5).
             rationale: Short explanation of why this constraint is being added.
+            robustness: Robustness setting ('none', 'PROB', 'VWWC', 'VWWC_INV').
             
         Returns:
             Dict with constraint information or error status.
@@ -918,6 +919,13 @@ class MatRadEngine:
             if not has_constraints:
                 # Initialize empty cell array if no objectives/constraints exist
                 self.eng.eval(f"cst({int(struct_idx)},6) = {{}};", nargout=0)
+            
+            # Set robustness setting if specified and not default
+            if robustness and robustness != "none":
+                self.eng.eval(f"""
+                % Set robustness setting for constraint
+                newConstraint.robustness = '{robustness}';
+                """, nargout=0)
             
             # Add the constraint to the structure
             self.eng.eval(f"""
@@ -1162,10 +1170,268 @@ class MatRadEngine:
         except Exception as e:
             return {"success": False, "error": str(e)}
 
+    def get_optimization_functions(self, structure_name: str = None, 
+                                 include_conflict_analysis: bool = True,
+                                 include_recommendations: bool = True) -> Dict[str, Any]:
+        """
+        Get comprehensive analysis of ALL optimization functions (objectives and constraints).
+        
+        Args:
+            structure_name: Name of specific structure to analyze (optional).
+            include_conflict_analysis: Include conflict detection between objectives and constraints.
+            include_recommendations: Include clinical recommendations for optimization setup.
+            
+        Returns:
+            Dict with comprehensive optimization function analysis.
+        """
+        if not self.initialized:
+            return {"success": False, "error": "MATLAB Engine not initialized"}
+            
+        if not self.patient_loaded:
+            return {"success": False, "error": "No patient data loaded"}
+            
+        try:
+            # Get both objectives and constraints
+            objectives_result = self.get_current_objectives()
+            constraints_result = self.get_current_constraints()
+            
+            if not objectives_result.get("success") or not constraints_result.get("success"):
+                return {"success": False, "error": "Failed to retrieve optimization functions"}
+            
+            objectives_by_structure = objectives_result.get("objectives_by_structure", {})
+            constraints_by_structure = constraints_result.get("constraints_by_structure", {})
+            
+            # Get all structures that have optimization functions
+            all_structures = set(objectives_by_structure.keys()) | set(constraints_by_structure.keys())
+            
+            # Filter by specific structure if requested
+            if structure_name:
+                if structure_name not in all_structures:
+                    return {
+                        "success": True,
+                        "structure_name": structure_name,
+                        "objectives": [],
+                        "constraints": [],
+                        "analysis": {"message": f"No optimization functions found for structure '{structure_name}'"}
+                    }
+                all_structures = {structure_name}
+            
+            # Build comprehensive analysis
+            analysis_result = {
+                "success": True,
+                "total_structures_with_functions": len(all_structures),
+                "total_objectives": objectives_result.get("total_objectives", 0),
+                "total_constraints": constraints_result.get("total_constraints", 0),
+                "structures": {}
+            }
+            
+            # Analyze each structure
+            for struct_name in all_structures:
+                struct_objectives = objectives_by_structure.get(struct_name, [])
+                struct_constraints = constraints_by_structure.get(struct_name, [])
+                
+                struct_analysis = {
+                    "structure_name": struct_name,
+                    "objectives": struct_objectives,
+                    "constraints": struct_constraints,
+                    "summary": {
+                        "num_objectives": len(struct_objectives),
+                        "num_constraints": len(struct_constraints),
+                        "total_functions": len(struct_objectives) + len(struct_constraints)
+                    }
+                }
+                
+                # Add detailed parameter analysis
+                struct_analysis["parameter_analysis"] = self._analyze_parameters(struct_objectives, struct_constraints)
+                
+                # Add conflict analysis if requested
+                if include_conflict_analysis:
+                    struct_analysis["conflict_analysis"] = self._analyze_conflicts(struct_objectives, struct_constraints, struct_name)
+                
+                # Add recommendations if requested
+                if include_recommendations:
+                    struct_analysis["recommendations"] = self._generate_recommendations(struct_objectives, struct_constraints, struct_name)
+                
+                analysis_result["structures"][struct_name] = struct_analysis
+            
+            # Add global analysis
+            if include_conflict_analysis and not structure_name:
+                analysis_result["global_analysis"] = self._analyze_global_optimization_setup(objectives_by_structure, constraints_by_structure)
+            
+            return analysis_result
+            
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    def _analyze_parameters(self, objectives: List[Dict], constraints: List[Dict]) -> Dict[str, Any]:
+        """Analyze parameters of optimization functions for a structure."""
+        analysis = {
+            "objective_types": {},
+            "constraint_types": {},
+            "advanced_parameters": {},
+            "robustness_settings": {}
+        }
+        
+        # Analyze objectives
+        for obj in objectives:
+            obj_type = obj.get("objective_type", "unknown")
+            analysis["objective_types"][obj_type] = analysis["objective_types"].get(obj_type, 0) + 1
+            
+            # Check for advanced parameters
+            if obj_type == "eud" and len(obj.get("parameters", [])) > 1:
+                analysis["advanced_parameters"]["eud_exponent"] = obj["parameters"][1]
+            elif obj_type in ["min_dvh", "max_dvh"] and len(obj.get("parameters", [])) > 1:
+                analysis["advanced_parameters"]["dvh_volume_percent"] = obj["parameters"][1]
+            elif obj_type == "mean_dose" and len(obj.get("parameters", [])) > 1:
+                func_type = "linear" if obj["parameters"][1] == 1 else "quadratic"
+                analysis["advanced_parameters"]["mean_dose_function"] = func_type
+        
+        # Analyze constraints  
+        for constr in constraints:
+            constr_type = constr.get("constraint_type", "unknown")
+            analysis["constraint_types"][constr_type] = analysis["constraint_types"].get(constr_type, 0) + 1
+        
+        return analysis
+    
+    def _analyze_conflicts(self, objectives: List[Dict], constraints: List[Dict], struct_name: str) -> Dict[str, Any]:
+        """Analyze potential conflicts between objectives and constraints."""
+        conflicts = {
+            "potential_conflicts": [],
+            "redundancies": [],
+            "warnings": []
+        }
+        
+        # Check for objectives that conflict with constraints
+        for obj in objectives:
+            obj_type = obj.get("objective_type")
+            dose_value = obj.get("dose_value")
+            
+            for constr in constraints:
+                constr_type = constr.get("constraint_type")
+                upper_bound = constr.get("upper_bound")
+                lower_bound = constr.get("lower_bound")
+                
+                # Check for dose conflicts
+                if obj_type == "max_dose" and constr_type == "min_max_dose" and upper_bound:
+                    if dose_value > upper_bound:
+                        conflicts["potential_conflicts"].append({
+                            "type": "dose_conflict",
+                            "message": f"max_dose objective ({dose_value}Gy) exceeds constraint upper bound ({upper_bound}Gy)",
+                            "severity": "high"
+                        })
+                
+                if obj_type == "min_dose" and constr_type == "min_max_dose" and lower_bound:
+                    if dose_value < lower_bound:
+                        conflicts["potential_conflicts"].append({
+                            "type": "dose_conflict", 
+                            "message": f"min_dose objective ({dose_value}Gy) below constraint lower bound ({lower_bound}Gy)",
+                            "severity": "high"
+                        })
+        
+        # Check for redundant objectives
+        obj_types = [obj.get("objective_type") for obj in objectives]
+        if obj_types.count("max_dose") > 1:
+            conflicts["redundancies"].append("Multiple max_dose objectives - consider consolidating")
+        if obj_types.count("min_dose") > 1:
+            conflicts["redundancies"].append("Multiple min_dose objectives - consider consolidating")
+        
+        # Check for over-constraining
+        if len(objectives) + len(constraints) > 8:
+            conflicts["warnings"].append(f"High number of optimization functions ({len(objectives)} objectives + {len(constraints)} constraints) may cause convergence issues")
+        
+        return conflicts
+    
+    def _generate_recommendations(self, objectives: List[Dict], constraints: List[Dict], struct_name: str) -> Dict[str, Any]:
+        """Generate clinical recommendations for optimization function setup."""
+        recommendations = {
+            "clinical_suggestions": [],
+            "parameter_suggestions": [],
+            "optimization_suggestions": []
+        }
+        
+        total_functions = len(objectives) + len(constraints)
+        
+        # Clinical recommendations based on structure type
+        if "PTV" in struct_name.upper() or "TARGET" in struct_name.upper() or "GTV" in struct_name.upper():
+            if not any(obj.get("objective_type") in ["min_dose", "square_deviation", "min_dvh"] for obj in objectives):
+                recommendations["clinical_suggestions"].append("Consider adding target coverage objective (min_dose or min_dvh for 95% coverage)")
+            if not any(obj.get("objective_type") == "square_deviation" for obj in objectives):
+                recommendations["clinical_suggestions"].append("Consider adding square_deviation objective for dose uniformity")
+        
+        elif any(term in struct_name.upper() for term in ["CORD", "STEM", "BRAIN"]):
+            if not any(constr.get("constraint_type") == "min_max_dose" for constr in constraints):
+                recommendations["clinical_suggestions"].append("Consider adding hard dose constraint for critical structure safety")
+            if not any(obj.get("objective_type") == "max_dose" for obj in objectives):
+                recommendations["clinical_suggestions"].append("Consider adding max_dose objective for sparing")
+        
+        elif any(term in struct_name.upper() for term in ["PAROTID", "LUNG", "LIVER"]):
+            if not any(obj.get("objective_type") in ["mean_dose", "max_dvh"] for obj in objectives):
+                recommendations["clinical_suggestions"].append("Consider adding mean_dose or DVH objective for organ sparing")
+        
+        # Parameter recommendations
+        for obj in objectives:
+            if obj.get("objective_type") == "eud" and len(obj.get("parameters", [])) > 1:
+                exp = obj["parameters"][1]
+                if "PTV" in struct_name.upper() and exp > 3:
+                    recommendations["parameter_suggestions"].append("Consider lower EUD exponent (1-2) for targets to emphasize cold spots")
+                elif any(term in struct_name.upper() for term in ["CORD", "STEM"]) and exp < 5:
+                    recommendations["parameter_suggestions"].append("Consider higher EUD exponent (5-10) for critical OARs to emphasize hot spots")
+        
+        # Optimization recommendations
+        if total_functions == 0:
+            recommendations["optimization_suggestions"].append("No optimization functions defined - add constraints for safety and objectives for plan quality")
+        elif total_functions > 10:
+            recommendations["optimization_suggestions"].append("Consider reducing number of optimization functions for better convergence")
+        elif len(constraints) == 0 and any(term in struct_name.upper() for term in ["CORD", "STEM", "BRAIN"]):
+            recommendations["optimization_suggestions"].append("Consider adding hard constraints for critical structure safety limits")
+        
+        return recommendations
+    
+    def _analyze_global_optimization_setup(self, objectives_by_structure: Dict, constraints_by_structure: Dict) -> Dict[str, Any]:
+        """Analyze the overall optimization setup across all structures."""
+        analysis = {
+            "overview": {},
+            "balance_analysis": {},
+            "recommendations": []
+        }
+        
+        # Count total functions
+        total_objectives = sum(len(objs) for objs in objectives_by_structure.values())
+        total_constraints = sum(len(constrs) for constrs in constraints_by_structure.values())
+        total_functions = total_objectives + total_constraints
+        
+        analysis["overview"] = {
+            "total_objectives": total_objectives,
+            "total_constraints": total_constraints,
+            "total_functions": total_functions,
+            "structures_with_objectives": len(objectives_by_structure),
+            "structures_with_constraints": len(constraints_by_structure)
+        }
+        
+        # Analyze balance
+        if total_constraints == 0:
+            analysis["balance_analysis"]["constraint_coverage"] = "No hard constraints defined - consider adding safety limits"
+        elif total_constraints > total_objectives:
+            analysis["balance_analysis"]["constraint_coverage"] = "More constraints than objectives - may be over-constrained"
+        else:
+            analysis["balance_analysis"]["constraint_coverage"] = "Reasonable constraint-to-objective ratio"
+        
+        # Global recommendations
+        if total_functions > 20:
+            analysis["recommendations"].append("Consider simplifying optimization setup - high function count may impact convergence")
+        elif total_functions < 5:
+            analysis["recommendations"].append("Consider adding more objectives for better plan quality control")
+        
+        if total_constraints == 0:
+            analysis["recommendations"].append("Add hard constraints for critical structure safety limits")
+        
+        return analysis
+
     def add_optimization_objective(self, structure_name: str, obj_type: str, 
                                   dose_value: float, penalty: float = 1000.0, 
                                   rationale: str = None, volume_percent: float = None,
-                                  eud_exponent: float = None) -> Dict[str, Any]:
+                                  eud_exponent: float = None, mean_dose_function: str = "linear",
+                                  robustness: str = "none") -> Dict[str, Any]:
         """
         Add an optimization objective for a structure.
         
@@ -1177,6 +1443,8 @@ class MatRadEngine:
             rationale: Short explanation of why this objective is being added.
             volume_percent: Volume percentage for DVH objectives (e.g., 95 for 95%). Only used for min_dvh and max_dvh.
             eud_exponent: EUD exponent parameter (default 3.5). Only used for eud objective.
+            mean_dose_function: Function type for mean_dose objective ('linear' or 'quadratic'). Only used for mean_dose.
+            robustness: Robustness setting ('none', 'STOCH', 'PROB', 'VWWC', 'VWWC_INV', 'COWC', 'OWC').
             
         Returns:
             Dict with objective information or error status.
@@ -1262,6 +1530,17 @@ class MatRadEngine:
                 newObj.parameters = {{{dose_value}, {vol_pct}}};
                 newObj.penalty = {penalty};
                 """, nargout=0)
+            elif obj_type == 'mean_dose':
+                # MeanDose objective: parameters = {dose_value, function_type}
+                # function_type: 1 = linear, 2 = quadratic (based on matRad_MeanDose.m)
+                func_type = 1 if mean_dose_function.lower() == 'linear' else 2
+                self.eng.eval(f"""
+                % Create new MeanDose objective
+                newObj = struct();
+                newObj.className = '{obj_class}';
+                newObj.parameters = {{{dose_value}, {func_type}}};
+                newObj.penalty = {penalty};
+                """, nargout=0)
             else:
                 # Standard objectives: parameters = {dose_value}
                 self.eng.eval(f"""
@@ -1278,6 +1557,13 @@ class MatRadEngine:
             if not has_objectives:
                 # Initialize empty cell array if no objectives exist
                 self.eng.eval(f"cst({int(struct_idx)},6) = {{}};", nargout=0)
+            
+            # Set robustness setting if specified and not default
+            if robustness and robustness != "none":
+                self.eng.eval(f"""
+                % Set robustness setting
+                newObj.robustness = '{robustness}';
+                """, nargout=0)
             
             # Add the objective to the structure
             self.eng.eval(f"""
@@ -1478,7 +1764,6 @@ class MatRadEngine:
                 output = f.read()
             
             analysis = {
-                "raw_output": output,
                 "convergence_analysis": {},
                 "final_status": {},
                 "optimization_trajectory": [],
@@ -1504,6 +1789,7 @@ class MatRadEngine:
             # Analyze convergence if we have iterations
             if analysis["optimization_trajectory"]:
                 analysis["convergence_analysis"] = self._analyze_convergence(analysis["optimization_trajectory"])
+                del analysis["optimization_trajectory"]
             
             # Generate summary
             analysis["summary"] = self._generate_optimization_summary(analysis)

@@ -162,12 +162,67 @@ LENS: Max ≤ 25 Gy
 - **`max_dvh`**: Maximum DVH constraint (limits volume receiving threshold dose)
   - Configurable volume percentage (default 95%)
   - Example: `max_dvh` with 20Gy, 30% ensures ≤30% of OAR gets ≥20Gy
+- **`mean_dose`**: Mean dose objective with configurable function type
+  - `linear` (default): Standard linear penalty function
+  - `quadratic`: Squared deviation from target (more aggressive convergence)
+
+### Advanced Parameters
+
+**Robustness Settings:**
+All objectives and constraints now support robustness settings for uncertainty handling:
+- **`none`** (default): Nominal plan optimization
+- **`STOCH`**: Stochastic optimization (multiple scenarios)
+- **`PROB`**: Probabilistic optimization (expected value approach)
+- **`VWWC`**: Voxel-wise worst case (conservative approach)
+- **`COWC`**: Coverage optimized worst case (objectives only)
+- **`OWC`**: Objective worst case (objectives only)
+
+Use robustness settings when patient positioning or anatomy uncertainties are critical for plan quality.
+
+## 🔍 **Enhanced Inspection and Analysis**
+
+### Comprehensive Optimization Function Analysis
+
+The `get_optimization_functions` tool provides a unified, intelligent analysis of ALL optimization functions (both objectives and constraints) with:
+
+**🔍 Unified View:**
+- All objectives and constraints in one comprehensive report
+- Structure-by-structure organization with summaries
+- Global optimization setup analysis
+
+**⚠️ Conflict Detection:**
+- Automatic detection of objective-constraint conflicts
+- Identification of redundant optimization functions
+- Warning about over-constraining (too many functions)
+
+**📊 Parameter Analysis:**
+- Advanced parameter extraction and validation
+- Robustness setting analysis
+- Function type distribution analysis
+
+**💡 Clinical Recommendations:**
+- Structure-specific clinical suggestions based on anatomy
+- Parameter optimization recommendations
+- Global optimization setup guidance
+
+**🎯 When to Use:**
+- **BEFORE** adding any new objectives or constraints
+- When optimization shows poor convergence
+- For comprehensive optimization function review
+- When troubleshooting plan quality issues
+
+### Comprehensive Inspection Tools
+
+| Tool | Description | Parameters | Purpose |
+|------|-------------|------------|---------|
+| `get_optimization_functions` | **⭐ PRIMARY**: Comprehensive analysis of ALL optimization functions | `structure_name` (optional), `include_conflict_analysis`, `include_recommendations` | Unified view with conflict detection, parameter analysis, and clinical recommendations |
+| `get_current_objectives` | View existing objectives only | None | Basic objective listing |
+| `get_current_constraints` | View existing constraints only | None | Basic constraint listing |
 
 ### Enhanced Objective Management Tools
 
 | Tool | Description | Parameters | Purpose |
 |------|-------------|------------|---------|
-| `get_current_objectives` | View all existing objectives | None | Check for redundancies before adding new objectives |
 | `remove_optimization_objective` | Remove specific objective | `structure_name`, `objective_index`, `objective_type`, `dose_value` | Eliminate conflicting or redundant objectives |
 | `clear_all_objectives` | Clear objectives for structure(s) | `structure_name` (optional) | Reset when objectives prevent convergence |
 
@@ -175,9 +230,8 @@ LENS: Max ≤ 25 Gy
 
 | Tool | Description | Parameters | Purpose |
 |------|-------------|------------|---------|
-| `add_constraint` | Add hard limit constraint | `structure_name`, `constraint_type`, `lower_bound`, `upper_bound`, `dose_reference`, `eud_exponent`, `rationale` | Enforce mandatory dose/volume limits |
+| `add_constraint` | Add hard limit constraint | `structure_name`, `constraint_type`, `lower_bound`, `upper_bound`, `dose_reference`, `eud_exponent`, `robustness`, `rationale` | Enforce mandatory dose/volume limits |
 | `remove_constraint` | Remove specific constraint | `structure_name`, `constraint_index`, `constraint_type`, `rationale` | Remove infeasible or unnecessary constraints |
-| `get_current_constraints` | View all existing constraints | None | Check constraint feasibility and conflicts |
 
 #### Constraint Types
 
@@ -282,20 +336,40 @@ engine.start_engine()
 result = engine.load_patient("patient.mat")
 structures = engine.get_structure_names()
 
-# Add critical constraints first (hard limits)
-engine.add_constraint("SpinalCord", "min_max_dose", upper_bound=45.0, rationale="FDA safety limit")
-engine.add_constraint("Brainstem", "min_max_dose", upper_bound=54.0, rationale="Critical structure tolerance")
-engine.add_constraint("Parotid_L", "min_max_mean_dose", upper_bound=26.0, rationale="QUANTEC xerostomia limit")
+# Add critical constraints first (hard limits) with robustness
+engine.add_constraint("SpinalCord", "min_max_dose", upper_bound=45.0, 
+                     robustness="VWWC", rationale="FDA safety limit with worst-case robustness")
+engine.add_constraint("Brainstem", "min_max_dose", upper_bound=54.0, 
+                     rationale="Critical structure tolerance")
+engine.add_constraint("Parotid_L", "min_max_mean_dose", upper_bound=26.0, 
+                     rationale="QUANTEC xerostomia limit")
 
-# Add optimization objectives (soft goals)
-engine.add_optimization_objective("PTV", "square_deviation", 60.0, 1000)
-engine.add_optimization_objective("PTV", "min_dvh", 57.0, 1000, volume_percent=95)  # 95% gets ≥57Gy
-engine.add_optimization_objective("Brainstem", "max_dose", 50.0, 1000)  # Optimize toward 50Gy, constrained at 54Gy
-engine.add_optimization_objective("Parotid_L", "eud", 20.0, 1000, eud_exponent=8)  # Optimize toward 20Gy, constrained at 26Gy
+# Add optimization objectives (soft goals) with advanced parameters
+engine.add_optimization_objective("PTV", "square_deviation", 60.0, 1000, 
+                                 robustness="PROB", rationale="Target uniformity with probabilistic robustness")
+engine.add_optimization_objective("PTV", "min_dvh", 57.0, 1000, volume_percent=95,
+                                 rationale="Ensure 95% coverage")  # 95% gets ≥57Gy
+engine.add_optimization_objective("Brainstem", "max_dose", 50.0, 1000,
+                                 rationale="Optimize toward 50Gy, constrained at 54Gy")
+engine.add_optimization_objective("Parotid_L", "eud", 20.0, 1000, eud_exponent=8,
+                                 rationale="Emphasize hot spots")  # High exponent for OAR
+engine.add_optimization_objective("Parotid_L", "mean_dose", 23.0, 500, mean_dose_function="quadratic",
+                                 rationale="Aggressive mean dose control")
 
-# Check current optimization functions
-constraints = engine.get_current_constraints()
-objectives = engine.get_current_objectives()
+# Comprehensive optimization function analysis (RECOMMENDED)
+analysis = engine.get_optimization_functions(include_conflict_analysis=True, include_recommendations=True)
+print(f"Total functions: {analysis['total_objectives']} objectives + {analysis['total_constraints']} constraints")
+
+# Check for conflicts and recommendations
+for struct_name, struct_data in analysis['structures'].items():
+    if struct_data['conflict_analysis']['potential_conflicts']:
+        print(f"⚠️ Conflicts in {struct_name}: {struct_data['conflict_analysis']['potential_conflicts']}")
+    if struct_data['recommendations']['clinical_suggestions']:
+        print(f"💡 Recommendations for {struct_name}: {struct_data['recommendations']['clinical_suggestions']}")
+
+# Alternative: Basic inspection (if only specific info needed)
+# constraints = engine.get_current_constraints()
+# objectives = engine.get_current_objectives()
 
 # Optimize
 engine.optimize_fluence()
@@ -462,6 +536,85 @@ logging.basicConfig(level=logging.DEBUG)
 - Add proper error handling
 - Include unit tests for new functionality
 - Update documentation
+
+## 🧪 **Testing and Validation**
+
+### Comprehensive Test Suite (Session 6)
+
+The agent includes a complete testing and validation framework to ensure all optimization functionality works correctly:
+
+#### Test Components
+
+**1. Engine Testing** (`test_comprehensive_optimization.py`)
+- Tests all objective types (min_dose, max_dose, mean_dose, square_deviation, EUD, DVH)
+- Tests all constraint types (min_max_dose, min_max_mean_dose, min_max_eud, min_max_dvh)
+- Tests advanced parameters (robustness settings, MeanDose functions, EUD exponents)
+- Tests comprehensive inspection system with conflict detection
+- Tests error handling and edge cases
+
+**2. Agent Interface Testing** (`test_agent_comprehensive.py`)
+- Tests agent's ability to use optimization tools through natural language
+- Tests clinical workflow scenarios
+- Tests conflict detection and resolution by the agent
+- Tests advanced parameter usage by the agent
+- Tests clinical recommendation implementation
+
+**3. Performance Benchmarking** (`test_performance_benchmark.py`)
+- Tool execution timing benchmarks
+- Memory usage analysis
+- Scalability testing with many optimization functions
+- Optimization convergence performance validation
+
+**4. Integration Testing** (`test_matrad_tools.py`)
+- End-to-end planning workflow validation
+- Complete dose calculation and optimization pipeline
+- Plan evaluation and analysis workflow
+
+#### Running Tests
+
+**Run All Tests:**
+```bash
+cd LLM_Agent_Planner/examples
+python run_all_tests.py
+```
+
+**Run Specific Test Categories:**
+```bash
+# Engine functionality only
+python run_all_tests.py --engine-only
+
+# Agent interface only  
+python run_all_tests.py --agent-only
+
+# Performance benchmarks only
+python run_all_tests.py --performance-only
+
+# Integration tests only
+python run_all_tests.py --integration-only
+```
+
+**Fast Testing:**
+```bash
+# Run abbreviated test suite
+python run_all_tests.py --fast
+```
+
+#### Test Results
+
+Test results are automatically saved to `test_logs/` with:
+- Individual test results and timing
+- Performance benchmarks and analysis
+- Comprehensive test report (`master_test_report.json`)
+- Detailed execution logs
+
+#### Validation Status
+
+✅ **Session 1**: EUD and DVH objectives - All functionality tested and validated  
+✅ **Session 2**: Constraint framework - Complete constraint system tested  
+✅ **Session 3**: Bug fixes and robustness - Critical fixes validated  
+✅ **Session 4**: Advanced parameters - All parameter types tested  
+✅ **Session 5**: Comprehensive inspection - Inspection system fully validated  
+✅ **Session 6**: Testing framework - Complete test coverage implemented
 
 ## License
 
