@@ -65,6 +65,10 @@ class MatRadEngine:
             print("Initializing matRad...")
             self.eng.matRad_rc(nargout=0)
             
+            # Disable GUI elements (waitbars, plot windows, etc.)
+            print("Disabling GUI elements...")
+            self.disable_gui_elements()
+            
             self.initialized = True
             print("matRad initialized successfully.")
             return True
@@ -73,6 +77,38 @@ class MatRadEngine:
             error_msg = f"Error initializing MATLAB Engine: {str(e)}"
             print(error_msg)
             raise RuntimeError(error_msg)
+    
+    def disable_gui_elements(self) -> bool:
+        """
+        Disable all GUI elements including waitbars, plot windows, and progress indicators.
+        This prevents pop-ups during dose calculation and optimization.
+        
+        Returns:
+            bool: True if successful.
+        """
+        if not self.eng:
+            return False
+            
+        try:
+            # Set global matRad configuration to disable GUI
+            self.eng.eval("""
+            % Get matRad configuration instance
+            matRad_cfg = MatRad_Config.instance();
+            
+            % Disable all GUI elements including waitbars and pop-outs
+            matRad_cfg.disableGUI = true;
+            
+            % Also disable any potential plot functions for fmincon
+            % This will be applied when the optimizer is configured
+            fprintf('✅ GUI elements disabled - no waitbars or plot windows will appear\\n');
+            """, nargout=0)
+            
+            print("✅ Successfully disabled GUI elements")
+            return True
+            
+        except Exception as e:
+            print(f"⚠️  Warning: Could not disable GUI elements: {e}")
+            return False
     
     def stop_engine(self) -> bool:
         """
