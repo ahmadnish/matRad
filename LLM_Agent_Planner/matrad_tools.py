@@ -293,6 +293,10 @@ class MatRadEngine:
             % Default IMRT without sequencing or DAO
             pln.propSeq.runSequencing = false;
             pln.propOpt.runDAO = false;
+            
+            % Set up fmincon with GUI elements disabled
+            pln.propOpt.fmincon.Display = 'off';
+            pln.propOpt.fmincon.PlotFcn = [];  % Disable all plot functions
             """, nargout=0)
             
             # Store plan in class
@@ -1461,6 +1465,7 @@ class MatRadEngine:
     def _parse_optimization_output(self, diary_file: str) -> Dict[str, Any]:
         """
         Parse the optimization console output to extract key metrics and convergence information.
+        Supports both IPOPT and fmincon output formats.
         
         Args:
             diary_file: Path to the diary file containing optimization output
@@ -1478,77 +1483,27 @@ class MatRadEngine:
                 "final_status": {},
                 "optimization_trajectory": [],
                 "warnings": [],
-                "summary": ""
+                "summary": "",
+                "optimizer_type": "unknown"
             }
             
-            # Parse IPOPT output if present
             lines = output.split('\n')
             iterations = []
             
-            for line in lines:
-                line = line.strip()
-                
-                # Look for iteration lines (IPOPT format)
-                if line.startswith('iter') and 'objective' in line:
-                    # Header line - skip
-                    continue
-                elif len(line.split()) >= 10 and line.split()[0].isdigit():
-                    # Iteration data line
-                    parts = line.split()
-                    try:
-                        iteration_data = {
-                            "iteration": int(parts[0]),
-                            "objective": float(parts[1]),
-                            "inf_pr": float(parts[2]),
-                            "inf_du": float(parts[3]),
-                            "lg_mu": float(parts[4]),
-                            "norm_d": float(parts[5]),
-                            "lg_rg": parts[6],
-                            "alpha_du": float(parts[7]),
-                            "alpha_pr": float(parts[8]),
-                            "ls": int(parts[9]) if parts[9].isdigit() else 0
-                        }
-                        iterations.append(iteration_data)
-                    except (ValueError, IndexError):
-                        continue
-                
-                # Look for final statistics
-                elif "Number of Iterations" in line:
-                    try:
-                        analysis["final_status"]["total_iterations"] = int(line.split(':')[1].strip())
-                    except:
-                        pass
-                elif "Objective" in line and "scaled" in line:
-                    try:
-                        # Extract final objective value
-                        parts = line.split()
-                        for i, part in enumerate(parts):
-                            if 'e' in part and ('+' in part or '-' in part):
-                                analysis["final_status"]["final_objective"] = float(part)
-                                break
-                    except:
-                        pass
-                elif "Number of objective function evaluations" in line:
-                    try:
-                        analysis["final_status"]["function_evaluations"] = int(line.split('=')[1].strip())
-                    except:
-                        pass
-                elif "Total CPU secs in IPOPT" in line:
-                    try:
-                        analysis["final_status"]["ipopt_time"] = float(line.split('=')[1].strip())
-                    except:
-                        pass
-                elif "Total CPU secs in NLP function evaluations" in line:
-                    try:
-                        analysis["final_status"]["function_eval_time"] = float(line.split('=')[1].strip())
-                    except:
-                        pass
+            # Detect optimizer type
+            if any("fmincon" in line.lower() or "interior-point" in line for line in lines):
+                analysis["optimizer_type"] = "fmincon"
+                analysis = self._parse_fmincon_output(lines, analysis)
+            elif any("ipopt" in line.lower() for line in lines):
+                analysis["optimizer_type"] = "ipopt"
+                analysis = self._parse_ipopt_output(lines, analysis)
+            else:
+                # Try to parse as generic format
+                analysis = self._parse_generic_output(lines, analysis)
             
-            analysis["optimization_trajectory"] = iterations
-            
-            # Analyze convergence
-            if iterations:
-                analysis["convergence_analysis"] = self._analyze_convergence(iterations)
+            # Analyze convergence if we have iterations
+            if analysis["optimization_trajectory"]:
+                analysis["convergence_analysis"] = self._analyze_convergence(analysis["optimization_trajectory"])
             
             # Generate summary
             analysis["summary"] = self._generate_optimization_summary(analysis)
@@ -1562,12 +1517,239 @@ class MatRadEngine:
                 "final_status": {},
                 "optimization_trajectory": [],
                 "warnings": [f"Failed to parse optimization output: {str(e)}"],
-                "summary": f"Failed to parse optimization output: {str(e)}"
+                "summary": f"Failed to parse optimization output: {str(e)}",
+                "optimizer_type": "unknown"
             }
+
+    def _parse_fmincon_output(self, lines: List[str], analysis: Dict[str, Any]) -> Dict[str, Any]:
+        """Parse fmincon-specific output format."""
+        iterations = []
+        in_iteration_table = False
+        
+        for i, line in enumerate(lines):
+            line_stripped = line.strip()
+            
+            # Look for optimization settings
+            if "Applied custom fmincon option:" in line:
+                option_parts = line.split("Applied custom fmincon option:")[1].strip()
+                if "=" in option_parts:
+                    key, value = option_parts.split("=", 1)
+                    key = key.strip()
+                    value = value.strip()
+                    if "final_status" not in analysis:
+                        analysis["final_status"] = {}
+                    if "settings" not in analysis["final_status"]:
+                        analysis["final_status"]["settings"] = {}
+                    analysis["final_status"]["settings"][key] = value
+            
+            # Look for diagnostic information
+            elif "Number of variables:" in line:
+                try:
+                    analysis["final_status"]["num_variables"] = int(line.split(":")[1].strip())
+                except:
+                    pass
+            elif "Number of nonlinear inequality constraints:" in line:
+                try:
+                    analysis["final_status"]["nonlinear_ineq_constraints"] = int(line.split(":")[1].strip())
+                except:
+                    pass
+            elif "Number of nonlinear equality constraints:" in line:
+                try:
+                    analysis["final_status"]["nonlinear_eq_constraints"] = int(line.split(":")[1].strip())
+                except:
+                    pass
+            elif "Algorithm selected" in line and i+1 < len(lines):
+                algorithm = lines[i+1].strip()
+                analysis["final_status"]["algorithm"] = algorithm
+            
+            # Look for iteration table headers (multiple formats)
+            elif ("Iter F-count" in line and "f(x)" in line and "Feasibility" in line) or \
+                 ("Iter F-count" in line and "f(x)" in line and "optimality" in line) or \
+                 (line_stripped.startswith("Iter") and "f(x)" in line):
+                in_iteration_table = True
+                continue
+        
+            # Parse iteration data
+            elif in_iteration_table and line_stripped:
+                # Check if this is still an iteration line
+                parts = line_stripped.split()
+                
+                # Handle different iteration line formats
+                if len(parts) >= 5 and parts[0].isdigit():
+                    try:
+                        iteration_data = {
+                            "iteration": int(parts[0]),
+                            "f_count": int(parts[1]),
+                            "objective": float(parts[2]),
+                            "feasibility": float(parts[3]),
+                            "optimality": float(parts[4]),
+                            "step_norm": float(parts[5]) if len(parts) > 5 else None
+                        }
+                        iterations.append(iteration_data)
+                    except (ValueError, IndexError):
+                        # If we can't parse as iteration data, we've probably left the table
+                        if "Converged" in line or "stopped" in line or line_stripped == "":
+                            in_iteration_table = False
+                        continue
+                elif len(parts) >= 3 and parts[0].isdigit():
+                    # Handle shorter iteration lines (just iter, f-count, objective, ...)
+                    try:
+                        iteration_data = {
+                            "iteration": int(parts[0]),
+                            "f_count": int(parts[1]) if len(parts) > 1 else None,
+                            "objective": float(parts[2]) if len(parts) > 2 else None,
+                            "feasibility": float(parts[3]) if len(parts) > 3 else None,
+                            "optimality": float(parts[4]) if len(parts) > 4 else None,
+                            "step_norm": float(parts[5]) if len(parts) > 5 else None
+                        }
+                        iterations.append(iteration_data)
+                    except (ValueError, IndexError):
+                        continue
+                else:
+                    # Check if we've reached the end of iteration table
+                    if "Converged" in line or "stopped" in line or line_stripped == "" or \
+                       line_stripped.startswith("_") or "diagnostic" in line.lower():
+                        in_iteration_table = False
+            
+            # Look for final convergence message
+            elif "Converged to an infeasible point" in line:
+                analysis["final_status"]["convergence_status"] = "infeasible"
+                analysis["warnings"].append("Optimization converged to an infeasible point")
+            elif "fmincon stopped because" in line:
+                # Get the full stopping message
+                stop_message = line.strip()
+                # Also get the next few lines for complete message
+                for j in range(i+1, min(i+4, len(lines))):
+                    if lines[j].strip() and not lines[j].startswith("Warning"):
+                        stop_message += " " + lines[j].strip()
+                    else:
+                        break
+                analysis["final_status"]["stop_reason"] = stop_message
+            
+            # Look for warnings
+            elif line.startswith("Warning:"):
+                analysis["warnings"].append(line.strip())
+            
+            # Look for duration and success status
+            elif "Duration:" in line:
+                try:
+                    duration_str = line.split("Duration:")[1].strip()
+                    duration_match = duration_str.split()[0]  # Get first number
+                    analysis["final_status"]["duration_seconds"] = float(duration_match)
+                except:
+                    pass
+            elif "Success:" in line:
+                try:
+                    success_str = line.split("Success:")[1].strip().lower()
+                    analysis["final_status"]["success"] = success_str == "true"
+                except:
+                    pass
+        
+        analysis["optimization_trajectory"] = iterations
+        
+        # Set final objective and iterations from trajectory
+        if iterations:
+            analysis["final_status"]["final_objective"] = iterations[-1]["objective"]
+            analysis["final_status"]["total_iterations"] = len(iterations)
+            analysis["final_status"]["final_feasibility"] = iterations[-1]["feasibility"]
+            analysis["final_status"]["final_optimality"] = iterations[-1]["optimality"]
+        
+        return analysis
+
+    def _parse_ipopt_output(self, lines: List[str], analysis: Dict[str, Any]) -> Dict[str, Any]:
+        """Parse IPOPT-specific output format."""
+        iterations = []
+        
+        for line in lines:
+            line = line.strip()
+            
+            # Look for iteration lines (IPOPT format)
+            if line.startswith('Iter') and 'Feasibility' in line:
+                # Header line - skip
+                continue
+            elif len(line.split()) >= 10 and line.split()[0].isdigit():
+                # Iteration data line
+                parts = line.split()
+                try:
+                    iteration_data = {
+                        "iteration": int(parts[0]),
+                        "objective": float(parts[1]),
+                        "inf_pr": float(parts[2]),
+                        "inf_du": float(parts[3]),
+                        "lg_mu": float(parts[4]),
+                        "norm_d": float(parts[5]),
+                        "lg_rg": parts[6],
+                        "alpha_du": float(parts[7]),
+                        "alpha_pr": float(parts[8]),
+                        "ls": int(parts[9]) if parts[9].isdigit() else 0
+                    }
+                    iterations.append(iteration_data)
+                except (ValueError, IndexError):
+                    continue
+            
+            # Look for final statistics
+            elif "Number of Iterations" in line:
+                try:
+                    analysis["final_status"]["total_iterations"] = int(line.split(':')[1].strip())
+                except:
+                    pass
+            elif "Objective" in line and "scaled" in line:
+                try:
+                    # Extract final objective value
+                    parts = line.split()
+                    for i, part in enumerate(parts):
+                        if 'e' in part and ('+' in part or '-' in part):
+                            analysis["final_status"]["final_objective"] = float(part)
+                            break
+                except:
+                    pass
+            elif "Number of objective function evaluations" in line:
+                try:
+                    analysis["final_status"]["function_evaluations"] = int(line.split('=')[1].strip())
+                except:
+                    pass
+            elif "Total CPU secs in IPOPT" in line:
+                try:
+                    analysis["final_status"]["ipopt_time"] = float(line.split('=')[1].strip())
+                except:
+                    pass
+            elif "Total CPU secs in NLP function evaluations" in line:
+                try:
+                    analysis["final_status"]["function_eval_time"] = float(line.split('=')[1].strip())
+                except:
+                    pass
+        
+        analysis["optimization_trajectory"] = iterations
+        return analysis
+
+    def _parse_generic_output(self, lines: List[str], analysis: Dict[str, Any]) -> Dict[str, Any]:
+        """Parse generic optimization output format."""
+        # Try to extract basic information that might be present in any format
+        iterations = []
+        
+        for line in lines:
+            line = line.strip()
+            
+            # Look for any warning messages
+            if line.startswith("Warning:"):
+                analysis["warnings"].append(line)
+            
+            # Look for duration
+            elif "Duration:" in line:
+                try:
+                    duration_str = line.split("Duration:")[1].strip()
+                    duration_match = duration_str.split()[0]
+                    analysis["final_status"]["duration_seconds"] = float(duration_match)
+                except:
+                    pass
+        
+        analysis["optimization_trajectory"] = iterations
+        return analysis
 
     def _analyze_convergence(self, iterations: List[Dict]) -> Dict[str, Any]:
         """
         Analyze the convergence behavior of the optimization.
+        Handles both IPOPT and fmincon iteration formats.
         
         Args:
             iterations: List of iteration data dictionaries
@@ -1580,23 +1762,52 @@ class MatRadEngine:
         
         analysis = {}
         
-        # Extract objective values
+        # Extract objective values (common to both formats)
         objectives = [it["objective"] for it in iterations]
-        step_sizes = [it["alpha_pr"] for it in iterations]
+        
+        # Extract step sizes based on format
+        step_sizes = []
+        feasibility_vals = []
+        optimality_vals = []
+        
+        # Determine format based on available keys
+        if iterations[0].get("alpha_pr") is not None:
+            # IPOPT format
+            step_sizes = [it.get("alpha_pr", 0) for it in iterations]
+            feasibility_vals = [it.get("inf_pr", 0) for it in iterations]
+        elif iterations[0].get("step_norm") is not None:
+            # fmincon format
+            step_sizes = [it.get("step_norm", 0) for it in iterations if it.get("step_norm") is not None]
+            feasibility_vals = [it.get("feasibility", 0) for it in iterations]
+            optimality_vals = [it.get("optimality", 0) for it in iterations]
         
         # Check for stagnation (objective not changing)
         if len(objectives) >= 3:
             recent_objectives = objectives[-5:]  # Last 5 iterations
-            obj_variance = np.var(recent_objectives) if len(recent_objectives) > 1 else 0
+            obj_variance = float(np.var(recent_objectives)) if len(recent_objectives) > 1 else 0.0
             analysis["objective_stagnation"] = obj_variance < 1e-6
-            analysis["objective_variance_recent"] = float(obj_variance)
+            analysis["objective_variance_recent"] = obj_variance
         
         # Check for diminishing step sizes
         if len(step_sizes) >= 3:
             recent_steps = step_sizes[-3:]
-            analysis["small_step_sizes"] = all(step < 1e-10 for step in recent_steps)
-            analysis["min_step_size"] = float(min(step_sizes))
-            analysis["max_step_size"] = float(max(step_sizes))
+            analysis["small_step_sizes"] = all(step < 1e-10 for step in recent_steps if step is not None)
+            valid_steps = [s for s in step_sizes if s is not None]
+            if valid_steps:
+                analysis["min_step_size"] = float(min(valid_steps))
+                analysis["max_step_size"] = float(max(valid_steps))
+        
+        # Analyze feasibility progression
+        if feasibility_vals:
+            analysis["initial_feasibility"] = float(feasibility_vals[0])
+            analysis["final_feasibility"] = float(feasibility_vals[-1])
+            analysis["feasibility_improvement"] = float(feasibility_vals[0] - feasibility_vals[-1])
+        
+        # Analyze optimality progression (fmincon specific)
+        if optimality_vals:
+            analysis["initial_optimality"] = float(optimality_vals[0])
+            analysis["final_optimality"] = float(optimality_vals[-1])
+            analysis["optimality_improvement"] = float(optimality_vals[0] - optimality_vals[-1])
         
         # Overall convergence assessment
         analysis["total_iterations"] = len(iterations)
