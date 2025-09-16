@@ -506,6 +506,28 @@ class IMRTPlanningAgent:
                         "additionalProperties": False
                     }
                 }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "convert_cc_to_percent",
+                    "description": "Convert absolute volume in cc to percentage for DVH objectives. Essential for clinical constraints like D0.03cc (spinal cord/brainstem max dose at 0.03cc). Returns both percentage and fraction formats for use in objectives.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "structure_name": {
+                                "type": "string",
+                                "description": "Name of the structure to analyze"
+                            },
+                            "volume_cc": {
+                                "type": "number",
+                                "description": "Volume in cubic centimeters to convert (e.g., 0.03 for D0.03cc constraints)"
+                            }
+                        },
+                        "required": ["structure_name", "volume_cc"],
+                        "additionalProperties": False
+                    }
+                }
             }
         ]
     
@@ -772,6 +794,13 @@ class IMRTPlanningAgent:
                 )
                 result_dict = convert_matlab_types(result_dict)
                 
+            elif tool_name == "convert_cc_to_percent":
+                result_dict = self.engine.convert_cc_to_percent(
+                    arguments["structure_name"],
+                    arguments["volume_cc"]
+                )
+                result_dict = convert_matlab_types(result_dict)
+                
             else:
                 result_dict = {"success": False, "error": f"Unknown tool: {tool_name}"}
             
@@ -927,7 +956,101 @@ class IMRTPlanningAgent:
             - ALWAYS use get_current_objectives() AND get_current_constraints() to check what already exists
             - Analyze existing objectives for redundancy, conflicts, or excessive constraints
             - Check constraint feasibility and compatibility with objectives
-            - Then proceed to add objectives and constraints based on the Head & Neck Planning Playbook below.
+            - Then proceed to add objectives and constraints based on the Head & Neck Planning Playbook below:
+
+            ## Head & Neck Planning Playbook (Staged Strategy)
+
+            **High-level approach**
+            - Initialize from site template → set beams, PRVs (if available), target eval VOIs, and baseline objectives.
+            - Stage 1 (Hard OARs + Coverage + Hotspots) → optimize → check feasibility.
+            - Stage 2 (Cold-spots + Gradient shaping + Spill caps) → optimize → check.
+            - Stage 3 (Soft means / cosmetic shaping) → optimize → check.
+            - Convergence test → if any priority fails, apply targeted refinements; if repeated failures, switch strategy.
+            - Deliverability checks → hotspots, MU, modulation, robustness notes. Log everything.
+
+            **Priority rules (lexicographic)**
+            1) Hard OAR maxima (D0.03 cc or equivalent)
+            2) Target coverage (V100, D98)
+            3) Target hotspots (D2)
+            4) Spill/gradient (rings and BODY−PTVs Vx)
+            5) OAR means and secondary preferences
+            - Never relax a higher-priority constraint to satisfy a lower-priority one unless flagged infeasible after fallback attempts.
+
+            **Required VOI operations (use tools):**
+            - `PTV_eval`: For SIB, create PTV_low \ PTV_high → `perform_voi_operation("PTV_low","PTV_high","setdiff","PTV_low_eval")`
+            - `PTV_all`: Union of all PTVs → `perform_voi_operation("PTV63","PTV70","union","PTV_all")` (extend if more PTVs)
+            - `BODY−PTVs`: `perform_voi_operation("SKIN","PTV_all","setdiff","BODY_minus_PTVs")` (or BODY if available)
+            - Rings: shells around `PTV_all` via `create_ring_structures("PTV_all", [5,15,30], inner_margin_mm=0)`; commonly 0–5 mm and 5–15 mm used first.
+
+             **cc→% conversion (for D0.03cc caps):**
+             - Use `convert_cc_to_percent(structure_name, volume_cc)` to get exact conversion for DVH objectives.
+             - **When to use**: Before adding max_dvh constraints for critical OARs (spinal cord D0.03cc ≤ 45Gy, brainstem D0.03cc ≤ 54Gy)
+             - **How to use**: 
+               1. Call `convert_cc_to_percent("SPINAL_CORD", 0.03)` to get percentage
+               2. Use returned `volume_percent` value in `add_optimization_objective("SPINAL_CORD", "max_dvh", dose_value=45, volume_percent=result["volume_percent"])`
+             - **Alternative**: If conversion unavailable, use conservative small fractions (0.1-1%) and refine iteratively.
+
+            **Objective templates (examples; adapt to site)**
+            - OAR max: `max_dvh` (MaxDVH) at Dlim with V0.03cc→% on OAR and OAR_PRV when present.
+            - Targets: `min_dvh`(Rx,95) and `max_dvh`(D2,2) on PTVs.
+            - Cold-spots: `min_dvh`(D98,98) on PTVs/EvalPTVs.
+            - Gradient: ring control with squared overdosing around caps; optionally `max_dvh` on ring Vx@Dx.
+            - Spill: `BODY_minus_PTVs` `max_dvh` at 110%Rx (1 cc) and 105%Rx (10 cc) equivalents (use % fractions as needed).
+            - Means: `mean_dose` for brainstem/cord/parotids if feasible.
+
+             **Stepwise procedure**
+             - Step 1 — Skeleton (Hard OARs + Coverage + Hotspots)
+               - Add OAR hard maxima using `add_constraint` or strong `add_optimization_objective` max_dvh with V0.03cc%:
+                 - **Example workflow**: 
+                   1. `convert_cc_to_percent("SPINAL_CORD", 0.03)` → get volume_percent
+                   2. `add_optimization_objective("SPINAL_CORD", "max_dvh", dose_value=45, volume_percent=volume_percent, penalty=2000, rationale="Critical cord tolerance per TG-101")`
+                 - Cord: MaxDVH(45 Gy, V0.03cc%)
+                 - Brainstem: MaxDVH(54 Gy, V0.03cc%)
+                 - Cord_PRV: MaxDVH(48 Gy, V0.03cc%) if PRV exists
+                 - Brainstem_PRV: MaxDVH(57 Gy, V0.03cc%) if PRV exists
+              - Targets:
+                - PTV70: MinDVH(70 Gy, 95%), MaxDVH(74.9 Gy, 2%)
+                - PTV63: MinDVH(63 Gy, 95%), MaxDVH(67.4 Gy, 2%)
+              - Optimize. Pass if: OAR D0.03cc ≤ limits; PTV70 V100 ≥95%; PTV63 V100 ≥95%; D2 within caps.
+
+            - Step 2 — Cold-spots + Gradient + Spill
+              - Build eval/aux structures with tools: `PTV63_eval = PTV63 \ PTV70`, `PTV_all`, `BODY_minus_PTVs`, rings 0–5, 5–15 (optionally 15–30) via tools.
+              - Add objectives:
+                - PTV70: MinDVH(66.5 Gy, 98%)
+                - PTV63_eval: MinDVH(59.9 Gy, 98%)
+                - Rings:
+                  - 0–5 mm: SquaredOverdosing p≈120 at Dcap≈58 Gy
+                  - 5–15 mm: SquaredOverdosing p≈100 at Dcap≈38 Gy AND MaxDVH(60 Gy, 8%)
+                - BODY−PTVs: MaxDVH(1.1×RxHigh, 1%) and MaxDVH(1.05×RxHigh, 10%)
+                - If rings struggle, tighten PTV70 hotspot: MaxDVH(74.5 Gy, 2%)
+              - Optimize. Pass if: rings 0–5 mm mean ≤60 Gy, 5–15 mm mean ≤40 Gy; spill within limits; Step-1 still satisfied.
+
+            - Step 3 — Soft shaping (means/cosmetic)
+              - Add feasible means: Brainstem MeanDose ≤30 Gy; Cord MeanDose ≤25 Gy; Parotids MeanDose ≤26 Gy each if feasible.
+              - Optimize. Ensure Step-1/2 remain satisfied.
+
+            **Tuning loop (automated heuristics)**
+            - For each failed criterion, apply the smallest effective change and re-optimize:
+              - If OAR D0.03 cc fails: +500 weight on that OAR (and PRV); consider reducing nearby PTV D2 by −0.5 Gy; optional small gantry rotation (±10–15°) if allowed.
+              - If coverage V95 fails: +50–100 on that PTV MinDVH; keep OAR maxima fixed.
+              - If target D2 high: tighten D2 by −0.5 Gy or raise ring penalties by +20–40.
+              - If rings hot: replace ring caps with tighter thresholds; do not stack same-type terms.
+              - If spill high: tighten BODY−PTVs Vx caps slightly or +20–40 weight.
+            - Stop when all criteria pass with ≥0.3 Gy margins or no objective improves after two consecutive refinements.
+
+            **Fallback strategies (on repeated failures)**
+            - Lexicographic pass: temporarily convert the top failed metric to a hard cap (increase p 2–3×), re-optimize, then relax slightly.
+            - Template switch: load stricter/looser site template.
+            - Outer ring add: add 15–30 mm ring with SquaredOverdosing(p≈90, Dcap≈30 Gy) and optional V40 ≤35%.
+            - Beam tweak: rotate start angle 10–20° or drop a beam traversing a critical OAR sector, if policy allows.
+            - KBP prior: set OAR mean targets from model if available.
+            - Arc/angle change (if allowed): adjust geometry.
+
+            **Safety and consistency**
+            - Never remove an OAR hard max once added.
+            - Replace, don’t stack, same-type objectives on the same VOI.
+            - Use eval structures for nested targets.
+            - Log: beam list, VOI ops, each objective added/removed, penalties, and all QA metrics.
 
 
             **Optimization and Monitoring Loop:**
@@ -1008,119 +1131,14 @@ class IMRTPlanningAgent:
               - **Avoidance Zones**: Create structures that exclude critical areas from optimization
                 - Example: Use setdiff to create body minus critical structures for gradient control
 
-            **Advanced Planning Workflow with Structure Management:**
-            1. **After loading patient data**: Analyze structure relationships and potential overlaps
-            2. **Create evaluation structures**: Use VOI operations to create clinically relevant evaluation volumes
-            3. **Generate ring structures**: For critical OARs requiring dose gradients
-            4. **Apply objectives strategically**: Use evaluation structures for coverage, rings for gradient control
-            5. **Monitor structure-specific metrics**: Evaluate both original and derived structures
 
             **Structure Naming Conventions:**
             - Ring structures: Automatically named as "StructureNameRing[X]mm" (e.g., "BrainstemRing5mm")
             - VOI operations: Use descriptive names indicating the operation (e.g., "PTV_minus_Brainstem", "Combined_PTVs")
             - Evaluation structures: Use "_eval" suffix for clinical evaluation volumes
 
-            ## Head & Neck Planning Playbook (Staged Strategy)
 
-            **High-level approach**
-            - Initialize from site template → set beams, PRVs (if available), target eval VOIs, and baseline objectives.
-            - Stage 1 (Hard OARs + Coverage + Hotspots) → optimize → check feasibility.
-            - Stage 2 (Cold-spots + Gradient shaping + Spill caps) → optimize → check.
-            - Stage 3 (Soft means / cosmetic shaping) → optimize → check.
-            - Convergence test → if any priority fails, apply targeted refinements; if repeated failures, switch strategy.
-            - Deliverability checks → hotspots, MU, modulation, robustness notes. Log everything.
 
-            **Priority rules (lexicographic)**
-            1) Hard OAR maxima (D0.03 cc or equivalent)
-            2) Target coverage (V100, D98)
-            3) Target hotspots (D2)
-            4) Spill/gradient (rings and BODY−PTVs Vx)
-            5) OAR means and secondary preferences
-            - Never relax a higher-priority constraint to satisfy a lower-priority one unless flagged infeasible after fallback attempts.
-
-            **Required VOI operations (use tools):**
-            - `PTV_eval`: For SIB, create PTV_low \ PTV_high → `perform_voi_operation("PTV_low","PTV_high","setdiff","PTV_low_eval")`
-            - `PTV_all`: Union of all PTVs → `perform_voi_operation("PTV63","PTV70","union","PTV_all")` (extend if more PTVs)
-            - `BODY−PTVs`: `perform_voi_operation("SKIN","PTV_all","setdiff","BODY_minus_PTVs")` (or BODY if available)
-            - Rings: shells around `PTV_all` via `create_ring_structures("PTV_all", [5,15,30], inner_margin_mm=0)`; commonly 0–5 mm and 5–15 mm used first.
-
-            **cc→% conversion (for D0.03cc caps):**
-            - Compute OAR volume in cc = (num_voxels × voxel_volume_cc). If available, convert cc to percent as: `Vcc_percent = 100 × (cc / volume_cc)`.
-            - When engine expects a fraction (0–1), use `Vcc_fraction = cc / volume_cc`. If exact volume unknown, use a conservative tiny fraction (e.g., 0.1%) and refine when data is available.
-
-            **Objective templates (examples; adapt to site)**
-            - OAR max: `max_dvh` (MaxDVH) at Dlim with V0.03cc→% on OAR and OAR_PRV when present.
-            - Targets: `min_dvh`(Rx,95) and `max_dvh`(D2,2) on PTVs.
-            - Cold-spots: `min_dvh`(D98,98) on PTVs/EvalPTVs.
-            - Gradient: ring control with squared overdosing around caps; optionally `max_dvh` on ring Vx@Dx.
-            - Spill: `BODY_minus_PTVs` `max_dvh` at 110%Rx (1 cc) and 105%Rx (10 cc) equivalents (use % fractions as needed).
-            - Means: `mean_dose` for brainstem/cord/parotids if feasible.
-
-            **Stepwise procedure**
-            - Step 1 — Skeleton (Hard OARs + Coverage + Hotspots)
-              - Add OAR hard maxima using `add_constraint` or strong `add_optimization_objective` max_dvh with V0.03cc%:
-                - Cord: MaxDVH(45 Gy, V0.03cc%)
-                - Brainstem: MaxDVH(54 Gy, V0.03cc%)
-                - Cord_PRV: MaxDVH(48 Gy, V0.03cc%) if PRV exists
-                - Brainstem_PRV: MaxDVH(57 Gy, V0.03cc%) if PRV exists
-              - Targets:
-                - PTV70: MinDVH(70 Gy, 95%), MaxDVH(74.9 Gy, 2%)
-                - PTV63: MinDVH(63 Gy, 95%), MaxDVH(67.4 Gy, 2%)
-              - Optimize. Pass if: OAR D0.03cc ≤ limits; PTV70 V100 ≥95%; PTV63 V100 ≥95%; D2 within caps.
-
-            - Step 2 — Cold-spots + Gradient + Spill
-              - Build eval/aux structures with tools: `PTV63_eval = PTV63 \ PTV70`, `PTV_all`, `BODY_minus_PTVs`, rings 0–5, 5–15 (optionally 15–30) via tools.
-              - Add objectives:
-                - PTV70: MinDVH(66.5 Gy, 98%)
-                - PTV63_eval: MinDVH(59.9 Gy, 98%)
-                - Rings:
-                  - 0–5 mm: SquaredOverdosing p≈120 at Dcap≈58 Gy
-                  - 5–15 mm: SquaredOverdosing p≈100 at Dcap≈38 Gy AND MaxDVH(60 Gy, 8%)
-                - BODY−PTVs: MaxDVH(1.1×RxHigh, 1%) and MaxDVH(1.05×RxHigh, 10%)
-                - If rings struggle, tighten PTV70 hotspot: MaxDVH(74.5 Gy, 2%)
-              - Optimize. Pass if: rings 0–5 mm mean ≤60 Gy, 5–15 mm mean ≤40 Gy; spill within limits; Step-1 still satisfied.
-
-            - Step 3 — Soft shaping (means/cosmetic)
-              - Add feasible means: Brainstem MeanDose ≤30 Gy; Cord MeanDose ≤25 Gy; Parotids MeanDose ≤26 Gy each if feasible.
-              - Optimize. Ensure Step-1/2 remain satisfied.
-
-            **Tuning loop (automated heuristics)**
-            - For each failed criterion, apply the smallest effective change and re-optimize:
-              - If OAR D0.03 cc fails: +500 weight on that OAR (and PRV); consider reducing nearby PTV D2 by −0.5 Gy; optional small gantry rotation (±10–15°) if allowed.
-              - If coverage V95 fails: +50–100 on that PTV MinDVH; keep OAR maxima fixed.
-              - If target D2 high: tighten D2 by −0.5 Gy or raise ring penalties by +20–40.
-              - If rings hot: replace ring caps with tighter thresholds; do not stack same-type terms.
-              - If spill high: tighten BODY−PTVs Vx caps slightly or +20–40 weight.
-            - Stop when all criteria pass with ≥0.3 Gy margins or no objective improves after two consecutive refinements.
-
-            **Fallback strategies (on repeated failures)**
-            - Lexicographic pass: temporarily convert the top failed metric to a hard cap (increase p 2–3×), re-optimize, then relax slightly.
-            - Template switch: load stricter/looser site template.
-            - Outer ring add: add 15–30 mm ring with SquaredOverdosing(p≈90, Dcap≈30 Gy) and optional V40 ≤35%.
-            - Beam tweak: rotate start angle 10–20° or drop a beam traversing a critical OAR sector, if policy allows.
-            - KBP prior: set OAR mean targets from model if available.
-            - Arc/angle change (if allowed): adjust geometry.
-
-            **Safety and consistency**
-            - Never remove an OAR hard max once added.
-            - Replace, don’t stack, same-type objectives on the same VOI.
-            - Use eval structures for nested targets.
-            - Log: beam list, VOI ops, each objective added/removed, penalties, and all QA metrics.
-
-            Clinical Guidelines:
-            - Target structures (PTVs) should receive 95% of the prescribed dose (typically 50–70 Gy).
-            - OARs should remain below tolerance doses per QUANTEC guidelines.            
-            - Dose values in objective functions are total dose over all fractions.
-            - Use appropriate beam arrangements.
-            - Prioritize in case of conflict:
-                - 1st: PTV coverage
-                - 2nd: Critical OAR sparing
-                - 3rd: Non-critical structure sparing (Body/Skin)
-            - Acceptable plan thresholds:
-                - PTV D95 ≥ 95% of prescription
-                - Homogeneity Index (HI) < 0.2
-                - Conformity Index (CI) > 0.7
-                - OAR doses below maximum and mean tolerances
 
             ## Objective Types and Clinical Usage:
 
@@ -1131,11 +1149,7 @@ class IMRTPlanningAgent:
             - **square_deviation**: Promotes dose uniformity around a target dose
 
             **Advanced Objectives:**
-            - **EUD (Equivalent Uniform Dose)**: 
-                - For targets: Use with low exponent (1-2) to emphasize cold spots
-                - For OARs: Use with high exponent (5-10) to emphasize hot spots
-                - Target EUD should match prescription dose for targets
-                - Default exponent is 3.5, but adjust based on clinical goals
+
             
             - **DVH-based Objectives:**
                 - **min_dvh**: Ensures minimum volume receives threshold dose (for target coverage)
@@ -1144,42 +1158,22 @@ class IMRTPlanningAgent:
                   - Example: max_dvh with 20Gy, 30% ensures ≤30% of OAR gets ≥20Gy
                 - Volume percentage should be clinically meaningful (typically 90-99% for targets, 10-50% for OARs)
 
+            - **EUD (Equivalent Uniform Dose)**: 
+                - For targets: Use with low exponent (1-2) to emphasize cold spots
+                - For OARs: Use with high exponent (5-10) to emphasize hot spots
+                - Target EUD should match prescription dose for targets
+                - Default exponent is 3.5, but adjust based on clinical goals
+
             **Objective Selection Strategy:**
             - Use **min_dose/max_dose** for simple dose limits
-            - Use **EUD** when you want to control dose distribution characteristics
             - Use **DVH objectives** when specific volume-dose constraints are critical
+            - Use **EUD** when you want to control dose distribution characteristics
             - Use **square_deviation** for dose uniformity around a specific value
             - Combine objectives strategically - avoid redundant or conflicting constraints
 
             ## Constraints vs. Objectives:
 
-            **Constraints (Hard Limits):**
-            - Define **mandatory bounds** that MUST be satisfied for plan acceptance
-            - Use for regulatory limits, safety requirements, and protocol mandates
-            - Available constraint types:
-              - **min_max_dose**: Hard dose limits (e.g., max spinal cord dose ≤45Gy)
-              - **min_max_mean_dose**: Mean dose bounds (e.g., parotid mean ≤26Gy)
-              - **min_max_eud**: EUD bounds with configurable exponent
-              - **min_max_dvh**: DVH bounds (e.g., V20Gy ≤30% for lung)
-
-            **Objectives (Soft Penalties):**
-            - Define **optimization goals** that guide the solution toward better plans
-            - Use for plan quality improvement and competing trade-offs
-            - Have penalty weights that can be adjusted
-
-            **Constraint vs. Objective Strategy:**
-            - Use **constraints** for: Safety limits, regulatory requirements, hard protocol limits
-            - Use **objectives** for: Plan quality optimization, competing trade-offs, iterative improvements
-            - Example approach:
-              - Add constraint: `add_constraint("SpinalCord", "min_max_dose", upper_bound=45.0)` 
-              - Add objective: `add_optimization_objective("SpinalCord", "max_dose", 35.0, penalty=1000)`
-              - This ensures dose never exceeds 45Gy (constraint) while optimizing toward 35Gy (objective)
-
-            **Constraint Management:**
-            - **BEFORE adding constraints**: Use `get_current_constraints()` to check existing ones
-            - **Be selective**: Too many constraints can make problems infeasible
-            - **Provide rationales**: Always explain why each constraint is clinically necessary
-            - **Monitor feasibility**: If optimization fails, consider relaxing constraints
+            
 
             Plan Evaluation Workflow:
             1. Primary: Use evaluate_plan_quality() for comprehensive plan assessment (all structures, quality scoring, clinical recommendations)
@@ -1197,25 +1191,17 @@ class IMRTPlanningAgent:
             **Maintain Optimization Memory Across Iterations:**
             - Track which objective combinations led to poor convergence (stagnation, tiny steps)
             - Remember which objective modifications improved both convergence AND plan quality
-            - If an objective set caused convergence issues, don't repeat the same pattern
+            
             - Document your reasoning for objective changes in structured format
 
-            **Pattern Recognition for Optimization Issues:**
-            - Multiple min_dose + max_dose objectives on same structure = often redundant
-            - Too many objectives (>3) on single structure = usually over-constrained  
-            - Very high penalty weights (>10000) = can cause numerical issues
-            - Objectives with dose values too close together (<2Gy difference) = often conflicting
 
-            **Adaptive Strategy Based on Convergence History:**
-            - If 2+ consecutive optimizations show poor convergence → Simplify objective set
-            - If optimizer consistently stops at <20 iterations → Objectives likely over-constraining
-            - If step sizes drop to <1e-12 → Problem is numerically ill-conditioned
-            - If objective function barely improves (<1%) → Too many competing constraints
 
-            ## Enhanced Termination Conditions:
+            
+
+            ## Termination Conditions:
 
             **Plan is optimal when:**
-            - Optimization convergence quality is "good" or "moderate" 
+            
             - Clinical thresholds are met (PTV D95 ≥95%, OAR doses below limits)
             - Plan quality score >80 or meets clinical requirements
 
@@ -1240,15 +1226,9 @@ class IMRTPlanningAgent:
             - OR: Maximum iterations reached
             - OR: Optimization consistently fails despite objective simplification
 
-            **Never stop unless clinical criteria are met or maximum iterations reached.**
+            
 
-            **IMPORTANT: Work with Available Tools Only:**
-            - Do NOT ask for additional information, structure margins, or external data
-            - Do NOT request modifications to the patient data or structures
-            - Use ONLY the tools provided to achieve the best possible plan
-            - If clinical criteria cannot be met with current data, optimize to get as close as possible
-            - Make treatment planning decisions based on available structure information and dose constraints
-            - If you encounter limitations, work around them using optimization objectives and beam configuration
+
 
             **Emergency Completion Criteria:**
             If after 150 iterations clinical criteria still cannot be met despite good optimization convergence:
@@ -1272,11 +1252,7 @@ class IMRTPlanningAgent:
             Current patient file: {patient_file}  
             Maximum iterations allowed: {max_iterations}
 
-            Key Quality Metrics to Monitor (from evaluate_plan_quality):
-            - Targets: D95 (coverage), D50 (median), CI (conformity), HI (homogeneity)
-            - OARs: max_dose, mean_dose, V30Gy, V20Gy (volume metrics)
-            - All: std_dose (dose uniformity), D2/D98 (dose extremes)
-            - Plan-level: quality score (0-100), clinical recommendations
+
 
             ## CRITICAL: Action-Oriented Behavior:
             
