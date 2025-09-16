@@ -3,6 +3,9 @@ Test script for LLM Agent-based IMRT Planning using OpenAI Agents SDK
 
 This script demonstrates how an LLM agent can make autonomous decisions
 to create and iteratively improve an IMRT treatment plan using matRad tools.
+
+IMPORTANT: Before running this script, source the project environment:
+    source /Users/ahmadneishabouri/matlab_env/bin/activate
 """
 
 import os
@@ -441,6 +444,68 @@ class IMRTPlanningAgent:
                         "additionalProperties": False
                     }
                 }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "create_ring_structures",
+                    "description": "Create concentric ring VOIs around a reference structure for dose sparing analysis and gradient optimization. Useful for creating avoidance zones around critical structures.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "reference_structure": {
+                                "type": "string",
+                                "description": "Name of the reference structure around which rings will be created (e.g., 'PTV', 'Brainstem')"
+                            },
+                            "ring_margins_mm": {
+                                "type": "array",
+                                "items": {"type": "number"},
+                                "description": "List of ring margins in mm (e.g., [5, 10, 15] creates rings at 5mm, 10mm, and 15mm from the reference structure)"
+                            },
+                            "inner_margin_mm": {
+                                "type": "number",
+                                "description": "Inner margin from reference structure in mm (default: 0). Creates gap between reference structure and first ring."
+                            },
+                            "visualize": {
+                                "type": "boolean",
+                                "description": "Whether to create visualization of the rings (default: false)"
+                            }
+                        },
+                        "required": ["reference_structure", "ring_margins_mm"],
+                        "additionalProperties": False
+                    }
+                }
+            },
+            {
+                "type": "function", 
+                "function": {
+                    "name": "perform_voi_operation",
+                    "description": "Perform VOI operations (union, intersection, difference) between two structures to create new combined structures. Useful for creating evaluation structures or refined target volumes.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "structure1": {
+                                "type": "string",
+                                "description": "Name of the first structure"
+                            },
+                            "structure2": {
+                                "type": "string", 
+                                "description": "Name of the second structure"
+                            },
+                            "operation": {
+                                "type": "string",
+                                "enum": ["union", "intersect", "setdiff"],
+                                "description": "Type of operation: 'union' (combine structures), 'intersect' (overlap only), 'setdiff' (first minus second)"
+                            },
+                            "new_structure_name": {
+                                "type": "string",
+                                "description": "Name for the new combined structure"
+                            }
+                        },
+                        "required": ["structure1", "structure2", "operation", "new_structure_name"],
+                        "additionalProperties": False
+                    }
+                }
             }
         ]
     
@@ -526,9 +591,7 @@ class IMRTPlanningAgent:
                     arguments.get("penalty", 1000.0),
                     arguments.get("rationale", "No rationale provided"),
                     arguments.get("volume_percent", 95),
-                    arguments.get("eud_exponent", 3.5),
-                    arguments.get("mean_dose_function", "linear"),
-                    arguments.get("robustness", "none")
+                    arguments.get("eud_exponent", 3.5)
                 )
                 result_dict = convert_matlab_types(result_dict)
                 if result_dict.get("success"):
@@ -599,8 +662,7 @@ class IMRTPlanningAgent:
                     arguments.get("upper_bound"),
                     arguments.get("dose_reference"),
                     arguments.get("eud_exponent", 3.5),
-                    arguments.get("rationale", "No rationale provided"),
-                    arguments.get("robustness", "none")
+                    arguments.get("rationale", "No rationale provided")
                 )
                 result_dict = convert_matlab_types(result_dict)
                 if result_dict.get("success"):
@@ -631,14 +693,6 @@ class IMRTPlanningAgent:
                 
             elif tool_name == "get_current_constraints":
                 result_dict = self.engine.get_current_constraints()
-                result_dict = convert_matlab_types(result_dict)
-                
-            elif tool_name == "get_optimization_functions":
-                result_dict = self.engine.get_optimization_functions(
-                    arguments.get("structure_name"),
-                    arguments.get("include_conflict_analysis", True),
-                    arguments.get("include_recommendations", True)
-                )
                 result_dict = convert_matlab_types(result_dict)
                 
             elif tool_name == "optimize_fluence":
@@ -699,6 +753,24 @@ class IMRTPlanningAgent:
                 
             elif tool_name == "get_plan_state":
                 result_dict = {"success": True, "plan_state": convert_matlab_types(self.plan_state)}
+                
+            elif tool_name == "create_ring_structures":
+                result_dict = self.engine.create_ring_structures(
+                    arguments["reference_structure"],
+                    arguments["ring_margins_mm"],
+                    arguments.get("inner_margin_mm", 0),
+                    arguments.get("visualize", False)
+                )
+                result_dict = convert_matlab_types(result_dict)
+                
+            elif tool_name == "perform_voi_operation":
+                result_dict = self.engine.perform_voi_operation(
+                    arguments["structure1"],
+                    arguments["structure2"],
+                    arguments["operation"],
+                    arguments["new_structure_name"]
+                )
+                result_dict = convert_matlab_types(result_dict)
                 
             else:
                 result_dict = {"success": False, "error": f"Unknown tool: {tool_name}"}
@@ -852,9 +924,9 @@ class IMRTPlanningAgent:
             ### Intelligent Objective and Constraint Management Workflow (Steps 5+):
             
             **BEFORE adding any objectives or constraints:**
-            - **PRIMARY**: Use `get_optimization_functions()` for comprehensive analysis of ALL optimization functions with conflict detection and clinical recommendations
-            - **ALTERNATIVE**: Use `get_current_objectives()` AND `get_current_constraints()` for basic listing only
-            - **ALWAYS ANALYZE**: Look for redundancy, conflicts, excessive constraints, and follow clinical recommendations
+            - ALWAYS use get_current_objectives() AND get_current_constraints() to check what already exists
+            - Analyze existing objectives for redundancy, conflicts, or excessive constraints
+            - Check constraint feasibility and compatibility with objectives
 
             **Initial Setup Strategy:**
             1. **Add critical constraints first** for safety limits and regulatory requirements WITH CLEAR RATIONALES
@@ -874,7 +946,7 @@ class IMRTPlanningAgent:
 
             **If optimization shows POOR convergence (stagnation, tiny steps):**
             - This often indicates too many conflicting/redundant objectives OR infeasible constraints
-            - **USE get_optimization_functions() for comprehensive conflict analysis and recommendations**
+            - Use get_current_objectives() AND get_current_constraints() to review all optimization functions
             - First check if constraints are feasible - remove/relax constraints if they make the problem infeasible
             - Then strategically remove redundant or conflicting objectives using remove_optimization_objective() WITH CLEAR RATIONALES
             - Use remove_constraint() if constraints are preventing convergence WITH CLEAR RATIONALES
@@ -917,16 +989,45 @@ class IMRTPlanningAgent:
 
             **After evaluating the plan, provide a summary of the plan quality and clinical metrics, and what you think the next step should be.**
 
+            ## Advanced Structure Management
+
+            **Ring Structure Creation:**
+            - Use `create_ring_structures()` to create concentric ring VOIs around critical structures for dose gradient optimization
+            - Ideal for sparing structures where dose gradients are critical (e.g., brainstem, optic structures)
+            - Example use cases:
+              - Create 5mm, 10mm rings around brainstem for gradient control: `create_ring_structures("Brainstem", [5, 10])`
+              - Create evaluation rings around PTV: `create_ring_structures("PTV", [5, 15, 25], inner_margin_mm=2)`
+            - Ring structures can receive gradient objectives (e.g., max_dose with decreasing penalties)
+            - Use inner_margin_mm to create buffer zones between reference structure and first ring
+
+            **VOI Operations for Advanced Planning:**
+            - Use `perform_voi_operation()` to create sophisticated evaluation and optimization structures
+            - Common clinical applications:
+              - **PTV Evaluation Structures**: Create `PTV_eval` by subtracting critical OARs from PTV using setdiff
+                - Example: `perform_voi_operation("PTV", "Brainstem", "setdiff", "PTV_eval")`
+                - Apply coverage objectives to PTV_eval instead of original PTV for more realistic planning
+              - **Combined Target Volumes**: Union multiple PTVs for simultaneous boost planning
+                - Example: `perform_voi_operation("PTV1", "PTV2", "union", "PTV_combined")`
+              - **Overlap Analysis**: Use intersect to identify structure overlaps and potential planning challenges
+                - Example: `perform_voi_operation("PTV", "OAR", "intersect", "PTV_OAR_overlap")`
+              - **Avoidance Zones**: Create structures that exclude critical areas from optimization
+                - Example: Use setdiff to create body minus critical structures for gradient control
+
+            **Advanced Planning Workflow with Structure Management:**
+            1. **After loading patient data**: Analyze structure relationships and potential overlaps
+            2. **Create evaluation structures**: Use VOI operations to create clinically relevant evaluation volumes
+            3. **Generate ring structures**: For critical OARs requiring dose gradients
+            4. **Apply objectives strategically**: Use evaluation structures for coverage, rings for gradient control
+            5. **Monitor structure-specific metrics**: Evaluate both original and derived structures
+
+            **Structure Naming Conventions:**
+            - Ring structures: Automatically named as "StructureNameRing[X]mm" (e.g., "BrainstemRing5mm")
+            - VOI operations: Use descriptive names indicating the operation (e.g., "PTV_minus_Brainstem", "Combined_PTVs")
+            - Evaluation structures: Use "_eval" suffix for clinical evaluation volumes
+
             Clinical Guidelines:
             - Target structures (PTVs) should receive 95% of the prescribed dose (typically 50–70 Gy).
-            - OARs should remain below tolerance doses per following guidelines:
-                - Parotid: 25 Gy
-                - Mandible: 26 Gy
-                - Spinal Cord: 25 Gy
-                - Optic Nerve: 35 Gy
-                - Brainstem: 35 Gy
-                - Larynx: 35 Gy
-            - Apply a 30 Gy max dose constraint to the "BODY" or "Skin" structure. This is essential for optimization but should not be tracked or enforced in evaluations due to overlap with PTVs. Only watch out of hot spots in the body/skin. Use it only as an optimization constraint, and coordinate the penalty with other objectives for effective planning.
+            - OARs should remain below tolerance doses per QUANTEC guidelines.            
             - Dose values in objective functions are total dose over all fractions.
             - Use appropriate beam arrangements.
             - Prioritize in case of conflict:
@@ -1237,7 +1338,7 @@ def main():
     # Configuration
     matrad_path = "/Users/ahmadneishabouri/matRad"  # Update this path as needed
     #patient_file = "/Users/ahmadneishabouri/matRad/HandN_4Agent_noconstraints.mat"  # Absolute path
-    patient_file = "HandN.mat"
+    patient_file = "HandN_newskin.mat"
     
     try:
         # Create planning agent

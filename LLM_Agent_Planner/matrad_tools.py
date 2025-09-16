@@ -2779,6 +2779,284 @@ class MatRadEngine:
         plan_metrics["plan_quality_score"] = round(quality_score, 1)
         
         return plan_metrics
+
+    def create_ring_structures(self, reference_structure: str, ring_margins_mm: List[float], 
+                             inner_margin_mm: float = 0, visualize: bool = False) -> Dict[str, Any]:
+        """
+        Create concentric ring VOIs around a reference structure.
+        
+        Args:
+            reference_structure: Name of the reference structure (e.g., "PTV")
+            ring_margins_mm: List of ring margins in mm (e.g., [5, 10, 15])
+            inner_margin_mm: Inner margin from reference structure in mm (default: 0)
+            visualize: Whether to create visualization (default: False)
+            
+        Returns:
+            Dict with success status and ring information
+        """
+        if not self.initialized:
+            return {"success": False, "error": "MATLAB engine not started"}
+        
+        if not self.patient_loaded:
+            return {"success": False, "error": "No patient data loaded"}
+            
+        try:
+            # Find reference structure index by querying MATLAB directly
+            struct_info = self.get_structure_names()
+            if not struct_info.get("success"):
+                return {"success": False, "error": "Could not get structure information"}
+                
+            # Handle both possible formats: 'structures' or separate 'targets'/'oars'/'other'
+            if "structures" in struct_info:
+                structure_names = [s["name"] for s in struct_info.get("structures", [])]
+            else:
+                # Combine targets, oars, and other into one list
+                structure_names = []
+                structure_names.extend(struct_info.get("targets", []))
+                structure_names.extend(struct_info.get("oars", []))
+                structure_names.extend(struct_info.get("other", []))
+                
+            if reference_structure not in structure_names:
+                return {"success": False, "error": f"Reference structure '{reference_structure}' not found. Available: {structure_names}"}
+            
+            # Find the actual CST index from MATLAB (1-based)
+            matlab_code_find_index = f"""
+            ref_index = 0;
+            for i = 1:size(cst, 1)
+                if strcmp(cst{{i, 2}}, '{reference_structure}')
+                    ref_index = i;
+                    break;
+                end
+            end
+            """
+            self.eng.eval(matlab_code_find_index, nargout=0)
+            ref_index = int(self.eng.eval("ref_index"))
+            
+            if ref_index == 0:
+                return {"success": False, "error": f"Reference structure '{reference_structure}' not found in CST. Available: {structure_names}"}
+            
+            # Convert parameters to MATLAB format
+            ring_margins_str = '[' + ', '.join(map(str, ring_margins_mm)) + ']'
+            
+            # Add the ring creation function to MATLAB path
+            self.eng.eval("addpath('userdata/scripts')", nargout=0)
+            
+            # Call the ring creation function
+            matlab_code = f"""
+            try
+                [cst, ringInfo] = matRad_VOICreateRings(ct, cst, {ring_margins_str}, {ref_index}, {inner_margin_mm}, {str(visualize).lower()});
+                
+                % Convert ringInfo to individual variables that can be returned
+                ring_names = cell(length(ringInfo), 1);
+                ring_margins = zeros(length(ringInfo), 1);
+                ring_voxels = zeros(length(ringInfo), 1);
+                
+                for i = 1:length(ringInfo)
+                    ring_names{{i}} = ringInfo(i).name;
+                    ring_margins(i) = ringInfo(i).margin_mm;
+                    ring_voxels(i) = ringInfo(i).voxelsAdded;
+                end
+                
+                ring_creation_success = true;
+                ring_creation_error = '';
+                
+            catch ME
+                ring_creation_success = false;
+                ring_creation_error = ME.message;
+                ring_names = {{}};
+                ring_margins = [];
+                ring_voxels = [];
+            end
+            """
+            
+            self.eng.eval(matlab_code, nargout=0)
+            
+            # Get results
+            success = bool(self.eng.eval("ring_creation_success"))
+            if not success:
+                error_msg = self.eng.eval("ring_creation_error")
+                return {"success": False, "error": f"Ring creation failed: {error_msg}"}
+            
+            # Get ring information from individual variables
+            try:
+                ring_names = self.eng.eval("ring_names")
+                ring_margins = self.eng.eval("ring_margins")
+                ring_voxels = self.eng.eval("ring_voxels")
+                
+                # Convert MATLAB data to Python list of dicts
+                ring_info = []
+                
+                # Handle MATLAB cell array for names
+                if hasattr(ring_names, '__iter__') and len(ring_names) > 0:
+                    # Extract data from MATLAB arrays
+                    names_list = list(ring_names) if hasattr(ring_names, '__iter__') else [ring_names]
+                    margins_list = list(ring_margins) if hasattr(ring_margins, '__iter__') else [ring_margins]
+                    voxels_list = list(ring_voxels) if hasattr(ring_voxels, '__iter__') else [ring_voxels]
+                    
+                    for i in range(len(names_list)):
+                        # Extract values from MATLAB data types
+                        name = str(names_list[i])
+                        
+                        # Handle matlab.double objects
+                        if hasattr(margins_list[i], '_data'):
+                            margin_val = float(margins_list[i]._data[i])
+                        elif hasattr(margins_list[i], '__iter__') and len(margins_list[i]) > 0:
+                            margin_val = float(margins_list[i][0])
+                        else:
+                            margin_val = float(margins_list[i])
+                            
+                        if hasattr(voxels_list[i], '_data'):
+                            voxels_val = int(voxels_list[i]._data[i])
+                        elif hasattr(voxels_list[i], '__iter__') and len(voxels_list[i]) > 0:
+                            voxels_val = int(voxels_list[i][0])
+                        else:
+                            voxels_val = int(voxels_list[i])
+                        
+                        ring_info.append({
+                            "name": name,
+                            "margin_mm": margin_val,
+                            "voxels_added": voxels_val
+                        })
+            except Exception as e:
+                # If data extraction fails, create basic info from input parameters
+                ring_info = []
+                for i, margin in enumerate(ring_margins_mm):
+                    ring_info.append({
+                        "name": f"{reference_structure}Ring{margin}mm",
+                        "margin_mm": float(margin),
+                        "voxels_added": 0  # Unknown
+                    })
+            
+            return {
+                "success": True,
+                "message": f"Created {len(ring_margins_mm)} ring structures around {reference_structure}",
+                "reference_structure": reference_structure,
+                "ring_margins_mm": ring_margins_mm,
+                "inner_margin_mm": inner_margin_mm,
+                "rings_created": ring_info,
+                "num_rings": len(ring_info)
+            }
+            
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    def perform_voi_operation(self, structure1: str, structure2: str, operation: str, 
+                            new_structure_name: str) -> Dict[str, Any]:
+        """
+        Perform VOI operations (union, intersection, difference) between two structures.
+        
+        Args:
+            structure1: Name of first structure
+            structure2: Name of second structure  
+            operation: Type of operation ('union', 'intersect', 'setdiff')
+            new_structure_name: Name for the new combined structure
+            
+        Returns:
+            Dict with success status and operation information
+        """
+        if not self.initialized:
+            return {"success": False, "error": "MATLAB engine not started"}
+        
+        if not self.patient_loaded:
+            return {"success": False, "error": "No patient data loaded"}
+            
+        valid_operations = ['union', 'intersect', 'setdiff']
+        if operation not in valid_operations:
+            return {"success": False, "error": f"Invalid operation '{operation}'. Valid operations: {valid_operations}"}
+            
+        try:
+            # Get structure information
+            struct_info = self.get_structure_names()
+            if not struct_info.get("success"):
+                return {"success": False, "error": "Could not get structure information"}
+                
+            # Handle both possible formats: 'structures' or separate 'targets'/'oars'/'other'
+            if "structures" in struct_info:
+                structure_names = [s["name"] for s in struct_info.get("structures", [])]
+            else:
+                # Combine targets, oars, and other into one list
+                structure_names = []
+                structure_names.extend(struct_info.get("targets", []))
+                structure_names.extend(struct_info.get("oars", []))
+                structure_names.extend(struct_info.get("other", []))
+                
+            if structure1 not in structure_names:
+                return {"success": False, "error": f"Structure '{structure1}' not found. Available: {structure_names}"}
+            if structure2 not in structure_names:
+                return {"success": False, "error": f"Structure '{structure2}' not found. Available: {structure_names}"}
+            
+            # Find the actual CST indices from MATLAB (1-based)
+            matlab_code_find_indices = f"""
+            ix1 = 0; ix2 = 0;
+            for i = 1:size(cst, 1)
+                if strcmp(cst{{i, 2}}, '{structure1}')
+                    ix1 = i;
+                end
+                if strcmp(cst{{i, 2}}, '{structure2}')
+                    ix2 = i;
+                end
+            end
+            """
+            self.eng.eval(matlab_code_find_indices, nargout=0)
+            ix1 = int(self.eng.eval("ix1"))
+            ix2 = int(self.eng.eval("ix2"))
+            
+            if ix1 == 0:
+                return {"success": False, "error": f"Structure '{structure1}' not found in CST"}
+            if ix2 == 0:
+                return {"success": False, "error": f"Structure '{structure2}' not found in CST"}
+            
+            # Add the VOI operations function to MATLAB path
+            self.eng.eval("addpath('userdata/scripts')", nargout=0)
+            
+            # Call the VOI operation function
+            matlab_code = f"""
+            try
+                [cst, newIx] = matRad_VOIOperations(cst, {ix1}, {ix2}, '{operation}', '{new_structure_name}');
+                
+                % Get information about the new structure
+                newStructInfo.name = cst{{newIx, 2}};
+                newStructInfo.type = cst{{newIx, 3}};
+                newStructInfo.num_voxels = length(cst{{newIx, 4}}{{1}});
+                newStructInfo.index = newIx;
+                
+                voi_operation_success = true;
+                voi_operation_error = '';
+                
+            catch ME
+                voi_operation_success = false;
+                voi_operation_error = ME.message;
+                newStructInfo = struct();
+            end
+            """
+            
+            self.eng.eval(matlab_code, nargout=0)
+            
+            # Get results
+            success = bool(self.eng.eval("voi_operation_success"))
+            if not success:
+                error_msg = self.eng.eval("voi_operation_error")
+                return {"success": False, "error": f"VOI operation failed: {error_msg}"}
+            
+            # Get new structure information
+            new_struct_info = self.eng.eval("newStructInfo")
+            
+            return {
+                "success": True,
+                "message": f"Successfully created '{new_structure_name}' from {operation} of '{structure1}' and '{structure2}'",
+                "operation": operation,
+                "structure1": structure1,
+                "structure2": structure2,
+                "new_structure": {
+                    "name": str(new_struct_info["name"]),
+                    "type": str(new_struct_info["type"]),
+                    "num_voxels": int(new_struct_info["num_voxels"]),
+                    "index": int(new_struct_info["index"])
+                }
+            }
+            
+        except Exception as e:
+            return {"success": False, "error": str(e)}
     
     def save_plan(self, output_file: str) -> Dict[str, Any]:
         """
