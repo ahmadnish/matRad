@@ -214,16 +214,6 @@ class IMRTPlanningAgent:
                                 "type": "number",
                                 "description": "EUD exponent parameter (default 3.5). Only used for eud objective. Higher values emphasize hot spots, lower values emphasize cold spots."
                             },
-                            "mean_dose_function": {
-                                "type": "string",
-                                "enum": ["linear", "quadratic"],
-                                "description": "Function type for mean_dose objective (default 'linear'). 'linear' for standard deviation, 'quadratic' for squared deviation from target. Only used for mean_dose objective."
-                            },
-                            "robustness": {
-                                "type": "string",
-                                "enum": ["none", "STOCH", "PROB", "VWWC", "VWWC_INV", "COWC", "OWC"],
-                                "description": "Robustness setting (default 'none'). 'none'=nominal, 'STOCH'=stochastic, 'PROB'=probabilistic, 'VWWC'=voxel-wise worst case, 'COWC'=coverage optimized worst case, 'OWC'=objective worst case."
-                            },
                             "penalty": {
                                 "type": "number",
                                 "description": "Penalty weight (default 1000)"
@@ -323,11 +313,6 @@ class IMRTPlanningAgent:
                                 "type": "number",
                                 "description": "EUD exponent parameter (default 3.5). Only used for min_max_eud constraint."
                             },
-                            "robustness": {
-                                "type": "string",
-                                "enum": ["none", "PROB", "VWWC", "VWWC_INV"],
-                                "description": "Robustness setting for constraint (default 'none'). 'none'=nominal, 'PROB'=probabilistic, 'VWWC'=voxel-wise worst case."
-                            },
                             "rationale": {
                                 "type": "string",
                                 "description": "Clear clinical rationale for why this constraint is being added (e.g., 'Hard dose limit per protocol', 'Regulatory constraint for critical structure')"
@@ -377,31 +362,6 @@ class IMRTPlanningAgent:
                     "parameters": {
                         "type": "object",
                         "properties": {},
-                        "additionalProperties": False
-                    }
-                }
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "get_optimization_functions",
-                    "description": "Get comprehensive analysis of ALL optimization functions (objectives and constraints) for all structures. Provides unified view with conflict detection, parameter analysis, and clinical recommendations. Use this for thorough optimization function review.",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "structure_name": {
-                                "type": "string",
-                                "description": "Name of specific structure to analyze (optional). If provided, returns detailed analysis for that structure only. If omitted, analyzes all structures."
-                            },
-                            "include_conflict_analysis": {
-                                "type": "boolean",
-                                "description": "Include conflict detection between objectives and constraints (default: true)"
-                            },
-                            "include_recommendations": {
-                                "type": "boolean", 
-                                "description": "Include clinical recommendations for optimization function setup (default: true)"
-                            }
-                        },
                         "additionalProperties": False
                     }
                 }
@@ -1007,19 +967,6 @@ class IMRTPlanningAgent:
             - Use **DVH objectives** when specific volume-dose constraints are critical
             - Use **square_deviation** for dose uniformity around a specific value
             - Combine objectives strategically - avoid redundant or conflicting constraints
-
-            **Advanced Parameters:**
-            - **MeanDose Function Type**: 
-              - `linear` (default): Standard linear penalty function
-              - `quadratic`: Squared deviation from target (more aggressive convergence)
-            - **Robustness Settings** (for uncertainty handling):
-              - `none` (default): Nominal plan optimization
-              - `STOCH`: Stochastic optimization (multiple scenarios)
-              - `PROB`: Probabilistic optimization (expected value approach) 
-              - `VWWC`: Voxel-wise worst case (conservative approach)
-              - `COWC`: Coverage optimized worst case
-              - `OWC`: Objective worst case
-              - **Use robustness when patient positioning or anatomy uncertainties are critical**
 
             ## Constraints vs. Objectives:
 
