@@ -3057,6 +3057,132 @@ class MatRadEngine:
             
         except Exception as e:
             return {"success": False, "error": str(e)}
+
+    def convert_cc_to_percent(self, structure_name: str, volume_cc: float) -> Dict[str, Any]:
+        """
+        Convert absolute volume in cc to percentage for DVH objectives.
+        
+        Args:
+            structure_name: Name of the structure to analyze
+            volume_cc: Volume in cubic centimeters to convert (e.g., 0.03 for D0.03cc constraints)
+            
+        Returns:
+            Dict with volume_percent, volume_fraction, and structure info
+        """
+        if not self.initialized:
+            return {"success": False, "error": "MATLAB engine not started"}
+        
+        if not self.patient_loaded:
+            return {"success": False, "error": "No patient data loaded"}
+            
+        try:
+            # Get structure information to find the structure
+            struct_info = self.get_structure_names()
+            if not struct_info.get("success"):
+                return {"success": False, "error": "Could not get structure information"}
+                
+            # Handle both possible formats: 'structures' or separate 'targets'/'oars'/'other'
+            if "structures" in struct_info:
+                structure_names = [s["name"] for s in struct_info.get("structures", [])]
+            else:
+                # Combine targets, oars, and other into one list
+                structure_names = []
+                structure_names.extend(struct_info.get("targets", []))
+                structure_names.extend(struct_info.get("oars", []))
+                structure_names.extend(struct_info.get("other", []))
+                
+            if structure_name not in structure_names:
+                return {"success": False, "error": f"Structure '{structure_name}' not found. Available: {structure_names}"}
+            
+            # Find the actual CST index from MATLAB (1-based)
+            matlab_code_find_index = f"""
+            struct_index = 0;
+            for i = 1:size(cst, 1)
+                if strcmp(cst{{i, 2}}, '{structure_name}')
+                    struct_index = i;
+                    break;
+                end
+            end
+            """
+            self.eng.eval(matlab_code_find_index, nargout=0)
+            struct_index = int(self.eng.eval("struct_index"))
+            
+            if struct_index == 0:
+                return {"success": False, "error": f"Structure '{structure_name}' not found in CST"}
+            
+            # Calculate volume conversion
+            matlab_code = f"""
+            try
+                % Get structure voxel indices
+                struct_voxels = cst{{struct_index, 4}}{{1}};
+                num_voxels = length(struct_voxels);
+                
+                % Calculate voxel volume in cc
+                voxel_volume_mm3 = ct.resolution.x * ct.resolution.y * ct.resolution.z;
+                voxel_volume_cc = voxel_volume_mm3 / 1000; % Convert mm³ to cc
+                
+                % Calculate total structure volume in cc
+                total_volume_cc = num_voxels * voxel_volume_cc;
+                
+                % Calculate conversion
+                target_volume_cc = {volume_cc};
+                if total_volume_cc > 0
+                    volume_percent = 100 * (target_volume_cc / total_volume_cc);
+                    volume_fraction = target_volume_cc / total_volume_cc;
+                else
+                    volume_percent = 0;
+                    volume_fraction = 0;
+                end
+                
+                % Ensure within valid range [0, 100] for percent
+                volume_percent = max(0, min(100, volume_percent));
+                volume_fraction = max(0, min(1, volume_fraction));
+                
+                conversion_success = true;
+                conversion_error = '';
+                
+            catch ME
+                conversion_success = false;
+                conversion_error = ME.message;
+                volume_percent = 0;
+                volume_fraction = 0;
+                total_volume_cc = 0;
+                num_voxels = 0;
+                voxel_volume_cc = 0;
+            end
+            """
+            
+            self.eng.eval(matlab_code, nargout=0)
+            
+            # Get results
+            success = bool(self.eng.eval("conversion_success"))
+            if not success:
+                error_msg = self.eng.eval("conversion_error")
+                return {"success": False, "error": f"Volume conversion failed: {error_msg}"}
+            
+            # Extract conversion results
+            volume_percent = float(self.eng.eval("volume_percent"))
+            volume_fraction = float(self.eng.eval("volume_fraction"))
+            total_volume_cc = float(self.eng.eval("total_volume_cc"))
+            num_voxels = int(self.eng.eval("num_voxels"))
+            voxel_volume_cc = float(self.eng.eval("voxel_volume_cc"))
+            
+            return {
+                "success": True,
+                "structure_name": structure_name,
+                "target_volume_cc": volume_cc,
+                "volume_percent": volume_percent,
+                "volume_fraction": volume_fraction,
+                "structure_info": {
+                    "total_volume_cc": total_volume_cc,
+                    "num_voxels": num_voxels,
+                    "voxel_volume_cc": voxel_volume_cc
+                },
+                "message": f"Converted {volume_cc} cc to {volume_percent:.2f}% for {structure_name}"
+            }
+            
+        except Exception as e:
+            return {"success": False, "error": str(e)}
     
     def save_plan(self, output_file: str) -> Dict[str, Any]:
         """
