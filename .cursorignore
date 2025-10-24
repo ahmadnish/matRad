@@ -1,0 +1,12 @@
+thirdParty/
+test_logs/
+test/
+submodules/
+standalone/
+ipopt_mex/
+logs/
+.git/
+.github/
+CONTRIBUTING.md
+LICENSE.md
+matRad_buildStandalone.m
