@@ -9,3 +9,4 @@ matRad-technical-documentation/
 *.png
 *.jpg
 LLM_Agent_Planner/examples/test_*.py
+agent_output_4Jakob.txt
