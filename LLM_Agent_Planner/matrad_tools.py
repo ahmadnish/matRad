@@ -496,6 +496,7 @@ class MatRadEngine:
             start_time = time.time()
             self.eng.eval("dij = matRad_calcDoseInfluence(ct,cst,stf,pln);", nargout=0)
             calc_time = time.time() - start_time
+            self.eng.eval("save('dij.mat', 'dij', '-v7.3')", nargout=0)
             
             # Instead of trying to get the entire dij struct, just keep track that it exists
             # self.dij = self.eng.workspace["dij"]
@@ -3184,12 +3185,14 @@ class MatRadEngine:
         except Exception as e:
             return {"success": False, "error": str(e)}
     
-    def save_plan(self, output_file: str) -> Dict[str, Any]:
+    def save_plan(self, output_file: str, save_results: bool = True) -> Dict[str, Any]:
         """
         Save the current plan, results, and data to a .mat file.
         
         Args:
             output_file: Path to save the .mat file.
+            save_results: If True, save optimization results (requires resultGUI). 
+                         If False, save only basic data (ct, cst, pln, stf, dij if available).
             
         Returns:
             Dict with save status information.
@@ -3200,18 +3203,57 @@ class MatRadEngine:
         if not self.patient_loaded:
             return {"success": False, "error": "No patient data loaded"}
             
-        if self.resultGUI is None:
-            return {"success": False, "error": "No results to save. Run optimization first."}
-            
         try:
-            # Save the plan and results
-            print(f"Saving plan to {output_file}...")
-            self.eng.eval(f"save('{output_file}', 'resultGUI', 'ct', 'cst', 'pln', 'stf', 'dij')", nargout=0)
+            # Determine what to save based on availability and requirements
+            variables_to_save = []
+            
+            # Always save basic patient data
+            variables_to_save.extend(['ct', 'cst'])
+            
+            # Add plan if it exists
+            if self.pln is not None:
+                has_pln = self.eng.eval("exist('pln', 'var')", nargout=1)
+                if has_pln == 1:
+                    variables_to_save.append('pln')
+            
+            # Add stf if it exists
+            if self.stf is not None:
+                has_stf = self.eng.eval("exist('stf', 'var')", nargout=1)
+                if has_stf == 1:
+                    variables_to_save.append('stf')
+            
+            # Add dij if it exists
+            if self.dij is not None:
+                has_dij = self.eng.eval("exist('dij', 'var')", nargout=1)                
+            
+            # Add results if requested and available
+            if save_results:
+                if self.resultGUI is None:
+                    return {"success": False, "error": "No results to save. Run optimization first or set save_results=False."}
+                has_results = self.eng.eval("exist('resultGUI', 'var')", nargout=1)
+                if has_results == 1:
+                    variables_to_save.append('resultGUI')
+            
+            if not variables_to_save:
+                return {"success": False, "error": "No data available to save"}
+            
+            # Create save command
+            variables_str = "', '".join(variables_to_save)
+            save_command = f"save('{output_file}', '{variables_str}')"
+            
+            # Save the data
+            print(f"Saving to {output_file}...")
+            print(f"Variables: {variables_to_save}")
+            self.eng.eval(save_command, nargout=0)
+
+            if has_dij:
+                self.eng.eval("save('dij.mat', 'dij', '-v7.3')", nargout=0)
             
             return {
                 "success": True,
                 "output_file": output_file,
-                "message": f"Plan saved successfully to {output_file}"
+                "variables_saved": variables_to_save,
+                "message": f"Data saved successfully to {output_file} (variables: {', '.join(variables_to_save)})"
             }
             
         except Exception as e:
