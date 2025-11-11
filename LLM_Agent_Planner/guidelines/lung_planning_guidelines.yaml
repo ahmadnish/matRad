@@ -1,0 +1,407 @@
+# Lung Cancer Radiotherapy Planning Guidelines
+# Based on QUANTEC, ESTRO, and RTOG protocols
+# References:
+# - Marks et al., "Use of normal tissue complication probability models in the clinic", IJROBP, 2010
+# - Palma et al., "Predicting radiation pneumonitis after chemoradiation therapy for lung cancer", IJROBP, 2013
+# - RTOG 0617, RTOG 1106 protocols
+
+version: 1.0
+last_updated: "2025-11-07"
+
+# Common structure naming variations for lung cases
+structure_aliases:
+  lung:
+    - "LUNG"
+    - "LUNG_LT" 
+    - "LUNG_RT"
+    - "LungLeft"
+    - "LungRight"
+    - "Lungs"
+    - "LUNGS"
+    - "LUNG_TOTAL"
+    - "LUNG_COMBINED"
+  heart:
+    - "HEART"
+    - "Heart"
+  esophagus:
+    - "ESOPHAGUS"
+    - "Esophagus"
+    - "ESO"
+    - "ESOS"
+  spinal_cord:
+    - "SPINAL_CORD"
+    - "SpinalCord"
+    - "Cord"
+    - "SC"
+    - "CORD"
+  brachial_plexus:
+    - "BRACHIAL_PLEXUS"
+    - "BrachialPlexus"
+    - "BP"
+    - "BRACHIAL_PLEXUS_LT"
+    - "BRACHIAL_PLEXUS_RT"
+  great_vessels:
+    - "GREAT_VESSELS"
+    - "GreatVessels"
+    - "AORTA"
+    - "PULMONARY_ARTERY"
+  trachea:
+    - "TRACHEA"
+    - "Trachea"
+  bronchus:
+    - "BRONCHUS"
+    - "Bronchus"
+    - "MAIN_BRONCHUS"
+  ptv:
+    - "PTV"
+    - "PTV60"
+    - "PTV66"
+    - "PTV70"
+    - "CTV"
+    - "GTV"
+    - "ITV"
+
+# Target dose guidelines for different lung treatment scenarios
+targets:
+  lung:
+    definitive_nsclc:
+      prescription: 60.0  # Gy (standard fractionation)
+      fractionation: 30   # 2 Gy/fx
+      objectives:
+        - type: "min_dvh"
+          priority: "high"
+          dose_percent: 100
+          volume_percent: 95
+          penalty: 1000
+        - type: "max_dvh"
+          priority: "high"
+          dose_percent: 107
+          volume_percent: 2
+          penalty: 1000
+        - type: "min_dvh"
+          priority: "medium"
+          dose_percent: 98
+          volume_percent: 98
+          penalty: 500
+    
+    definitive_nsclc_66gy:
+      prescription: 66.0  # Gy (dose escalation)
+      fractionation: 33   # 2 Gy/fx
+      objectives:
+        - type: "min_dvh"
+          priority: "high"
+          dose_percent: 100
+          volume_percent: 95
+          penalty: 1000
+        - type: "max_dvh"
+          priority: "high"
+          dose_percent: 107
+          volume_percent: 2
+          penalty: 1000
+        - type: "min_dvh"
+          priority: "medium"
+          dose_percent: 98
+          volume_percent: 98
+          penalty: 500
+    
+    sbrt_peripheral:
+      prescription: 50.0  # Gy (SBRT)
+      fractionation: 5    # 10 Gy/fx
+      objectives:
+        - type: "min_dvh"
+          priority: "high"
+          dose_percent: 100
+          volume_percent: 95
+          penalty: 1500
+        - type: "max_dvh"
+          priority: "high"
+          dose_percent: 110
+          volume_percent: 2
+          penalty: 1500
+
+# Organ at Risk dose constraints and objectives (QUANTEC-based)
+organs_at_risk:
+  lung:
+    constraints:
+      - type: "mean_dose"
+        limit: 20  # Gy
+        priority: "high"
+        endpoint: "pneumonitis"
+        complication_rate: "<20%"
+        reference: "QUANTEC"
+      - type: "volume_dose"
+        volume: 35  # %
+        dose: 20  # Gy
+        priority: "high"
+        endpoint: "pneumonitis"
+        complication_rate: "<20%"
+        reference: "QUANTEC"
+      - type: "volume_dose"
+        volume: 20  # %
+        dose: 30  # Gy
+        priority: "medium"
+        endpoint: "pneumonitis"
+        complication_rate: "<20%"
+        reference: "QUANTEC"
+    objectives:
+      - type: "mean_dose"
+        priority: "high"
+        penalty: 200
+        dose: 20  # Gy
+      - type: "max_dvh"
+        priority: "high"
+        penalty: 150
+        dose: 20  # Gy
+        volume_percent: 35
+      - type: "max_dvh"
+        priority: "medium"
+        penalty: 100
+        dose: 30  # Gy
+        volume_percent: 20
+
+  heart:
+    constraints:
+      - type: "mean_dose"
+        limit: 26  # Gy
+        priority: "medium"
+        endpoint: "pericarditis"
+        complication_rate: "<15%"
+        reference: "QUANTEC"
+      - type: "volume_dose"
+        volume: 33  # %
+        dose: 60  # Gy
+        priority: "medium"
+        endpoint: "cardiac mortality"
+        complication_rate: "<1%"
+        reference: "QUANTEC"
+      - type: "volume_dose"
+        volume: 46  # %
+        dose: 40  # Gy
+        priority: "medium"
+        endpoint: "pericarditis"
+        complication_rate: "<15%"
+        reference: "QUANTEC"
+    objectives:
+      - type: "mean_dose"
+        priority: "medium"
+        penalty: 100
+        dose: 26  # Gy
+      - type: "max_dvh"
+        priority: "medium"
+        penalty: 80
+        dose: 60  # Gy
+        volume_percent: 33
+      - type: "max_dvh"
+        priority: "low"
+        penalty: 50
+        dose: 40  # Gy
+        volume_percent: 46
+
+  esophagus:
+    constraints:
+      - type: "mean_dose"
+        limit: 34  # Gy
+        priority: "medium"
+        endpoint: "acute esophagitis"
+        complication_rate: "<30%"
+        reference: "QUANTEC"
+      - type: "max_dose"
+        limit: 74  # Gy
+        priority: "high"
+        endpoint: "severe esophagitis"
+        complication_rate: "<5%"
+        reference: "QUANTEC"
+      - type: "volume_dose"
+        volume: 50  # %
+        dose: 60  # Gy
+        priority: "medium"
+        endpoint: "esophagitis"
+        complication_rate: "<30%"
+        reference: "QUANTEC"
+    objectives:
+      - type: "mean_dose"
+        priority: "medium"
+        penalty: 100
+        dose: 34  # Gy
+      - type: "max_dose"
+        priority: "high"
+        penalty: 300
+        dose: 74  # Gy
+      - type: "max_dvh"
+        priority: "medium"
+        penalty: 80
+        dose: 60  # Gy
+        volume_percent: 50
+
+  spinal_cord:
+    constraints:
+      - type: "max_dose"
+        limit: 45  # Gy
+        priority: "very_high"
+        endpoint: "myelopathy"
+        complication_rate: "<0.2%"
+        reference: "QUANTEC"
+      - type: "max_dose"
+        limit: 50  # Gy
+        priority: "very_high"
+        endpoint: "myelopathy"
+        complication_rate: "<5%"
+        reference: "QUANTEC"
+    objectives:
+      - type: "max_dose"
+        priority: "very_high"
+        penalty: 1000
+        dose: 45  # Gy
+
+  brachial_plexus:
+    constraints:
+      - type: "max_dose"
+        limit: 66  # Gy
+        priority: "high"
+        endpoint: "brachial plexopathy"
+        complication_rate: "<5%"
+        reference: "QUANTEC"
+    objectives:
+      - type: "max_dose"
+        priority: "high"
+        penalty: 300
+        dose: 66  # Gy
+
+  great_vessels:
+    constraints:
+      - type: "max_dose"
+        limit: 120  # Gy (SBRT)
+        priority: "very_high"
+        endpoint: "vessel rupture"
+        complication_rate: "<1%"
+        reference: "AAPM TG-101"
+    objectives:
+      - type: "max_dose"
+        priority: "very_high"
+        penalty: 800
+        dose: 120  # Gy (for SBRT cases)
+
+  trachea:
+    constraints:
+      - type: "max_dose"
+        limit: 105  # Gy (SBRT)
+        priority: "very_high"
+        endpoint: "tracheal stenosis"
+        complication_rate: "<5%"
+        reference: "AAPM TG-101"
+    objectives:
+      - type: "max_dose"
+        priority: "very_high"
+        penalty: 500
+        dose: 105  # Gy (for SBRT cases)
+
+# Treatment site-specific beam arrangements
+beam_arrangements:
+  lung:
+    conventional_imrt:
+      gantry_angles: [0, 45, 135, 180, 225, 315]  # 6-field IMRT
+      couch_angles: [0, 0, 0, 0, 0, 0]
+      description: "Standard 6-field IMRT for lung cancer"
+    
+    lung_sparing:
+      gantry_angles: [15, 45, 135, 180, 225, 315, 345]  # 7-field avoiding contralateral lung
+      couch_angles: [0, 0, 0, 0, 0, 0, 0]
+      description: "7-field IMRT with contralateral lung avoidance"
+    
+    sbrt_coplanar:
+      gantry_angles: [0, 40, 80, 120, 240, 280, 320]  # 7-field SBRT
+      couch_angles: [0, 0, 0, 0, 0, 0, 0]
+      description: "Coplanar SBRT beam arrangement"
+
+# Lung-specific planning strategies
+planning_strategies:
+  conventional_fractionation:
+    priority_order:
+      1: "Spinal cord tolerance (D_max ≤ 45 Gy)"
+      2: "Lung V20 ≤ 35% and mean dose ≤ 20 Gy"
+      3: "Target coverage (V95% ≥ 95%)"
+      4: "Heart constraints (mean ≤ 26 Gy)"
+      5: "Esophagus constraints (mean ≤ 34 Gy)"
+    
+    optimization_sequence:
+      stage_1:
+        description: "Critical OAR protection"
+        objectives:
+          - "Spinal cord max dose"
+          - "Basic target coverage"
+      
+      stage_2:
+        description: "Lung sparing optimization"
+        objectives:
+          - "Lung V20 and mean dose"
+          - "Target homogeneity"
+      
+      stage_3:
+        description: "Secondary OAR optimization"
+        objectives:
+          - "Heart constraints"
+          - "Esophagus constraints"
+          - "Target cold spot elimination"
+
+  sbrt:
+    priority_order:
+      1: "Critical structure max doses (cord, trachea, great vessels)"
+      2: "Target coverage and conformity"
+      3: "Lung V20 ≤ 10% (if possible)"
+      4: "Gradient optimization"
+    
+    optimization_sequence:
+      stage_1:
+        description: "Critical safety limits"
+        objectives:
+          - "Spinal cord, trachea, great vessel max doses"
+          - "Basic target coverage"
+      
+      stage_2:
+        description: "Conformity and gradient"
+        objectives:
+          - "Target conformity index"
+          - "Gradient index optimization"
+          - "Ring structure objectives"
+
+# Lung-specific VOI operations
+recommended_voi_operations:
+  - operation: "setdiff"
+    structure1: "LUNG_TOTAL"
+    structure2: "GTV"
+    new_name: "LUNG_MINUS_GTV"
+    rationale: "Exclude tumor from lung dose calculations"
+  
+  - operation: "union"
+    structure1: "LUNG_LT"
+    structure2: "LUNG_RT"
+    new_name: "LUNG_TOTAL"
+    rationale: "Combined lung structure for total lung metrics"
+  
+  - operation: "setdiff"
+    structure1: "BODY"
+    structure2: "PTV"
+    new_name: "BODY_MINUS_PTV"
+    rationale: "Normal tissue sparing structure"
+
+# Ring structure recommendations
+ring_structures:
+  ptv_rings:
+    reference: "PTV"
+    margins: [5, 15, 30]  # mm
+    inner_margin: 0
+    objectives:
+      - ring: "PTVRing5mm"
+        type: "square_deviation"
+        dose_percent: 50
+        penalty: 100
+      - ring: "PTVRing15mm"
+        type: "square_deviation"
+        dose_percent: 30
+        penalty: 80
+      - ring: "PTVRing30mm"
+        type: "square_deviation"
+        dose_percent: 20
+        penalty: 50
+
+

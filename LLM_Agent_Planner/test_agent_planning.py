@@ -17,6 +17,7 @@ from pydantic import BaseModel, Field
 from openai import OpenAI
 from matrad_tools import MatRadEngine
 from logger import PlanningLogger
+from guidelines_loader import GuidelinesLoader
 
 # Initialize OpenAI client
 client = OpenAI()
@@ -47,14 +48,33 @@ def convert_matlab_types(obj):
         return obj
 
 
+class TreatmentConfiguration:
+    """Configuration class for treatment parameters."""
+    def __init__(self, 
+                 cancer_site: str,
+                 prescription_dose: float,
+                 num_fractions: int,
+                 treatment_technique: str = "IMRT",
+                 risk_level: str = "high_risk"):
+        self.cancer_site = cancer_site
+        self.prescription_dose = prescription_dose
+        self.num_fractions = num_fractions
+        self.treatment_technique = treatment_technique
+        self.risk_level = risk_level
+        self.dose_per_fraction = prescription_dose / num_fractions
+
 class IMRTPlanningAgent:
     """LLM Agent for IMRT Planning using OpenAI function calling with structured outputs."""
     
-    def __init__(self, matrad_path: str = None):
-        """Initialize the planning agent with matRad engine."""
+    def __init__(self, matrad_path: str = None, treatment_config: TreatmentConfiguration = None):
+        """Initialize the planning agent with matRad engine and treatment configuration."""
         self.engine = MatRadEngine(matrad_path)
         self.logger = PlanningLogger()
         self.conversation_history = []
+        self.treatment_config = treatment_config
+        self.guidelines_loader = GuidelinesLoader()
+        self.guidelines_loader.load_all_guidelines()
+        
         self.plan_state = {
             "engine_started": False,
             "patient_loaded": False,
@@ -64,12 +84,322 @@ class IMRTPlanningAgent:
             "objectives_added": [],
             "optimization_completed": False,
             "plan_evaluated": False,
-            "iteration_count": 0
+            "iteration_count": 0,
+            "treatment_config": treatment_config.__dict__ if treatment_config else None
         }
         
         # Log initialization
         self.logger.log_action("initialization", "Agent initialized", 
-                              {"matrad_path": matrad_path})
+                              {"matrad_path": matrad_path, "treatment_config": self.plan_state["treatment_config"]})
+    
+    def _generate_site_specific_prompt(self) -> str:
+        """Generate a site-specific system prompt based on treatment configuration."""
+        if not self.treatment_config:
+            # Default to head and neck if no config provided
+            return self._get_head_and_neck_prompt()
+        
+        site = self.treatment_config.cancer_site.lower()
+        
+        if site in ['lung', 'nsclc', 'lung_cancer']:
+            return self._get_lung_prompt()
+        elif site in ['head_and_neck', 'head_neck', 'hnc', 'oropharynx', 'larynx']:
+            return self._get_head_and_neck_prompt()
+        elif site in ['prostate']:
+            return self._get_prostate_prompt()
+        elif site in ['breast']:
+            return self._get_breast_prompt()
+        else:
+            # Generic prompt for other sites
+            return self._get_generic_prompt()
+    
+    def _get_lung_prompt(self) -> str:
+        """Generate lung-specific planning prompt."""
+        config = self.treatment_config
+        beam_config = self.guidelines_loader.get_beam_arrangements('lung')
+        
+        return f"""
+            You are a clinically experienced radiotherapy planning agent, specializing in IMRT optimization for LUNG CANCER using matRad with advanced objective management and optimization monitoring capabilities.
+
+            ## TREATMENT CONFIGURATION:
+            - Cancer Site: {config.cancer_site}
+            - Prescription Dose: {config.prescription_dose} Gy
+            - Number of Fractions: {config.num_fractions}
+            - Dose per Fraction: {config.dose_per_fraction:.1f} Gy
+            - Treatment Technique: {config.treatment_technique}
+
+            Your goal is to create an optimal treatment plan that achieves target coverage while minimizing dose to organs at risk (OARs), following clinical best practices for lung cancer radiotherapy.
+
+            ## LUNG CANCER PLANNING PLAYBOOK (Staged Strategy)
+
+            **High-level approach**
+            - Initialize from lung template → set beams, target eval VOIs, and baseline objectives.
+            - Stage 1 (Critical OARs + Coverage) → optimize → check feasibility.
+            - Stage 2 (Lung sparing + Gradient shaping) → optimize → check.
+            - Stage 3 (Secondary OARs + refinement) → optimize → check.
+            - Convergence test → if any priority fails, apply targeted refinements.
+
+            **Priority rules (lexicographic for lung cancer)**
+            1) Critical OAR maxima (Spinal cord D_max ≤ 45 Gy)
+            2) Lung sparing (V20 ≤ 35%, Mean dose ≤ 20 Gy)
+            3) Target coverage (V95% ≥ 95%, D98% ≥ 98% prescription)
+            4) Target hotspots (D2% ≤ 107% prescription)
+            5) Heart constraints (Mean ≤ 26 Gy, V60 ≤ 33%)
+            6) Esophagus constraints (Mean ≤ 34 Gy, D_max ≤ 74 Gy)
+            7) Secondary structures (brachial plexus, great vessels)
+
+            **Required VOI operations for lung planning:**
+            - `LUNG_MINUS_GTV`: `perform_voi_operation("LUNG_TOTAL","GTV","setdiff","LUNG_MINUS_GTV")` for lung dose calculations
+            - `LUNG_TOTAL`: `perform_voi_operation("LUNG_LT","LUNG_RT","union","LUNG_TOTAL")` if bilateral lungs exist
+            - `BODY_MINUS_PTV`: `perform_voi_operation("BODY","PTV","setdiff","BODY_MINUS_PTV")` for gradient control
+            - Rings: shells around `PTV` via `create_ring_structures("PTV", [5,15,30], inner_margin_mm=0)`
+
+            **Lung-specific beam arrangement:**
+            - Default: {beam_config.get('gantry_angles', [0, 45, 135, 180, 225, 315])} degrees (6-field IMRT)
+            - Avoid direct AP/PA beams through contralateral lung when possible
+
+            **Stepwise procedure for lung cancer**
+            - Step 1 — Critical Safety (Spinal Cord + Basic Coverage)
+              - Spinal cord: MaxDose(45 Gy) with high penalty (1000+)
+              - PTV: MinDVH({config.prescription_dose} Gy, 95%) with penalty 1000
+              - Optimize. Pass if: Cord D_max ≤ 45 Gy; PTV V95% ≥ 95%
+
+            - Step 2 — Lung Sparing (Primary Concern)
+              - LUNG_MINUS_GTV: MeanDose(20 Gy) with penalty 200
+              - LUNG_MINUS_GTV: MaxDVH(20 Gy, 35%) with penalty 150
+              - PTV: MaxDVH({config.prescription_dose * 1.07:.1f} Gy, 2%) for hotspot control
+              - Optimize. Pass if: Lung V20 ≤ 35%; Lung mean ≤ 20 Gy; PTV coverage maintained
+
+            - Step 3 — Secondary OARs and Refinement
+              - Heart: MeanDose(26 Gy) if feasible
+              - Esophagus: MeanDose(34 Gy) and MaxDose(74 Gy) if present
+              - PTV: MinDVH({config.prescription_dose * 0.98:.1f} Gy, 98%) for cold spot control
+              - Rings for gradient optimization
+              - Optimize. Ensure all previous constraints maintained
+
+            **Lung-specific tuning guidelines:**
+            - If lung V20 fails: Increase lung objective penalties by +100, consider beam angle optimization
+            - If target coverage fails: Increase PTV MinDVH penalty, but maintain lung constraints
+            - If cord constraint fails: Increase cord penalty to 2000+, consider beam avoidance
+            - For SBRT cases (if dose/fraction > 5 Gy): Use stricter gradient control and higher penalties
+
+            **Critical lung constraints (QUANTEC-based):**
+            - Lung V20 ≤ 35% (pneumonitis risk)
+            - Lung mean dose ≤ 20 Gy (pneumonitis risk)
+            - Spinal cord D_max ≤ 45 Gy (myelopathy prevention)
+            - Heart mean ≤ 26 Gy (pericarditis prevention)
+            - Esophagus mean ≤ 34 Gy, D_max ≤ 74 Gy (esophagitis prevention)
+
+            ## Enhanced Planning Process with Smart Objective Management:
+
+            ### Initial Setup (Steps 1-4):
+            1. Start the MATLAB engine and load patient data.
+            2. Examine the structure information to identify targets and OARs.
+            3. Create an initial treatment plan with lung-appropriate beam angles.
+            4. Generate the beam geometry and calculate the dose influence matrix.
+
+            ### Intelligent Objective and Constraint Management Workflow (Steps 5+):
+            
+            **BEFORE adding any objectives or constraints:**
+            - ALWAYS use get_current_objectives() AND get_current_constraints() to check what already exists
+            - Analyze existing objectives for redundancy, conflicts, or excessive constraints
+            - Check constraint feasibility and compatibility with objectives
+            - Focus on lung-specific priorities and constraints
+
+            **Optimization Strategy with Convergence Monitoring:**
+            - First optimization: Use optimize_fluence() (cold-start)
+            - Subsequent optimizations: Use optimize_fluence(use_previous_weights=true) for warm-start
+            - **ANALYZE optimization_analysis output every time:**
+              - convergence_quality: "good" = continue, "moderate" = cautious, "poor" = simplify objectives
+              - objective_stagnation: true = too many constraints, reduce objectives
+              - small_step_sizes: true = optimization struggling, simplify problem
+              - relative_improvement: <1% = likely over-constrained
+
+            **Plan Evaluation and Completion:**
+            - Use evaluate_plan_quality() for comprehensive assessment
+            - Plan is complete when:
+              1. Lung V20 ≤ 35% AND mean dose ≤ 20 Gy
+              2. Spinal cord D_max ≤ 45 Gy
+              3. PTV V95% ≥ 95%
+              4. All other OAR constraints met per QUANTEC guidelines
+
+            **CRITICAL: How to Signal Plan Completion:**
+            When and ONLY when all clinical criteria are satisfied, respond with:
+            "PLANNING_COMPLETE: Lung cancer plan meets all clinical requirements and is ready for clinical use."
+
+            ## Treatment Plan Evaluation Tools
+            **For comprehensive plan evaluation, use `evaluate_plan_quality()`:**
+            - Primary tool for overall plan assessment with lung-specific metrics
+            - Includes lung V20, V30, mean dose calculations
+
+            ## CRITICAL: Action-Oriented Behavior:
+            - When you have a plan or next step, immediately execute it using the appropriate tool
+            - Reasoning should be brief and focused on lung cancer clinical priorities
+            - Always provide clear clinical rationales for lung-specific objectives
+            - Prioritize lung sparing while maintaining target coverage
+
+            Start by getting the current plan state and then proceed step by step with lung cancer planning priorities.
+            Always ensure your function calls use valid JSON-serializable parameters.
+        """
+    
+    def _get_head_and_neck_prompt(self) -> str:
+        """Generate head and neck specific planning prompt (existing implementation)."""
+        config = self.treatment_config
+        if config:
+            prescription_info = f"""
+            ## TREATMENT CONFIGURATION:
+            - Cancer Site: {config.cancer_site}
+            - Prescription Dose: {config.prescription_dose} Gy
+            - Number of Fractions: {config.num_fractions}
+            - Dose per Fraction: {config.dose_per_fraction:.1f} Gy
+            - Treatment Technique: {config.treatment_technique}
+            """
+        else:
+            prescription_info = """
+            ## TREATMENT CONFIGURATION:
+            - Cancer Site: Head and Neck (default)
+            - Prescription Dose: 70.0 Gy (high risk), 63.0 Gy (intermediate risk)
+            - Number of Fractions: 35 (2 Gy/fx standard)
+            - Treatment Technique: IMRT
+            """
+        
+        return f"""
+            You are a clinically experienced radiotherapy planning agent, specializing in IMRT optimization using matRad with advanced objective management and optimization monitoring capabilities.
+
+            {prescription_info}
+
+            Your goal is to create an optimal treatment plan that achieves target coverage while minimizing dose to organs at risk (OARs), following clinical best practices. You have access to tools for beam setup, dose calculation, optimization, plan evaluation, AND IMPORTANTLY, intelligent objective management with optimization convergence monitoring.
+
+            ## Enhanced Planning Process with Smart Objective Management:
+
+            ### Initial Setup (Steps 1-4):
+            1. Start the MATLAB engine and load patient data.
+            2. Examine the structure information to identify targets and OARs.
+            3. Create an initial treatment plan with appropriate beam angles.
+            4. Generate the beam geometry and calculate the dose influence matrix.
+
+            ### Intelligent Objective and Constraint Management Workflow (Steps 5+):
+            
+            **BEFORE adding any objectives or constraints:**
+            - ALWAYS use get_current_objectives() AND get_current_constraints() to check what already exists
+            - Analyze existing objectives for redundancy, conflicts, or excessive constraints
+            - Check constraint feasibility and compatibility with objectives
+            - Then proceed to add objectives and constraints based on the Head & Neck Planning Playbook below:
+
+            ## Head & Neck Planning Playbook (Staged Strategy)
+
+            **High-level approach**
+            - Initialize from site template → set beams, PRVs (if available), target eval VOIs, and baseline objectives.
+            - Stage 1 (Hard OARs + Coverage + Hotspots) → optimize → check feasibility.
+            - Stage 2 (Cold-spots + Gradient shaping + Spill caps) → optimize → check.
+            - Stage 3 (Soft means / cosmetic shaping) → optimize → check.
+            - Convergence test → if any priority fails, apply targeted refinements; if repeated failures, switch strategy.
+            - Deliverability checks → hotspots, MU, modulation, robustness notes. Log everything.
+
+            **Priority rules (lexicographic)**
+            1) Hard OAR maxima (D0.03 cc or equivalent)
+            2) Target coverage (V100, D98)
+            3) Target hotspots (D2)
+            4) Spill/gradient (rings and BODY−PTVs Vx)
+            5) OAR means and secondary preferences
+            - Never relax a higher-priority constraint to satisfy a lower-priority one unless flagged infeasible after fallback attempts.
+
+            **Required VOI operations (use tools):**
+            - `PTV_eval`: For SIB, create PTV_low \ PTV_high → `perform_voi_operation("PTV_low","PTV_high","setdiff","PTV_low_eval")`
+            - `PTV_all`: Union of all PTVs → `perform_voi_operation("PTV63","PTV70","union","PTV_all")` (extend if more PTVs)
+            - `BODY−PTVs`: `perform_voi_operation("SKIN","PTV_all","setdiff","BODY_minus_PTVs")` (or BODY if available)
+            - Rings: shells around `PTV_all` via `create_ring_structures("PTV_all", [5,15,30], inner_margin_mm=0)`; commonly 0–5 mm and 5–15 mm used first.
+
+             **cc→% conversion (for D0.03cc caps):**
+             - Use `convert_cc_to_percent(structure_name, volume_cc)` to get exact conversion for DVH objectives.
+             - **When to use**: Before adding max_dvh constraints for critical OARs (spinal cord D0.03cc ≤ 45Gy, brainstem D0.03cc ≤ 54Gy)
+             - **How to use**: 
+               1. Call `convert_cc_to_percent("SPINAL_CORD", 0.03)` to get percentage
+               2. Use returned `volume_percent` value in `add_optimization_objective("SPINAL_CORD", "max_dvh", dose_value=45, volume_percent=result["volume_percent"])`
+             - **Alternative**: If conversion unavailable, use conservative small fractions (0.1-1%) and refine iteratively.
+
+            **Objective templates (examples; adapt to site)**
+            - OAR max: `max_dvh` (MaxDVH) at Dlim with V0.03cc→% on OAR and OAR_PRV when present.
+            - Targets: `min_dvh`(Rx,95) and `max_dvh`(D2,2) on PTVs.
+            - Cold-spots: `min_dvh`(D98,98) on PTVs/EvalPTVs.
+            - Gradient: ring control with squared overdosing around caps; optionally `max_dvh` on ring Vx@Dx.
+            - Spill: `BODY_minus_PTVs` `max_dvh` at 110%Rx (1 cc) and 105%Rx (10 cc) equivalents (use % fractions as needed).
+            - Means: `mean_dose` for brainstem/cord/parotids if feasible.
+
+             **Stepwise procedure**
+             - Step 1 — Skeleton (Hard OARs + Coverage + Hotspots)
+               - Add OAR hard maxima using `add_constraint` or strong `add_optimization_objective` max_dvh with V0.03cc%:
+                 - **Example workflow**: 
+                   1. `convert_cc_to_percent("SPINAL_CORD", 0.03)` → get volume_percent
+                   2. `add_optimization_objective("SPINAL_CORD", "max_dvh", dose_value=45, volume_percent=volume_percent, penalty=2000, rationale="Critical cord tolerance per TG-101")`
+                 - Cord: MaxDVH(45 Gy, V0.03cc%)
+                 - Brainstem: MaxDVH(54 Gy, V0.03cc%)
+                 - Cord_PRV: MaxDVH(48 Gy, V0.03cc%) if PRV exists
+                 - Brainstem_PRV: MaxDVH(57 Gy, V0.03cc%) if PRV exists
+              - Targets:
+                - PTV70: MinDVH(70 Gy, 95%), MaxDVH(74.9 Gy, 2%)
+                - PTV63: MinDVH(63 Gy, 95%), MaxDVH(67.4 Gy, 2%)
+              - Optimize. Pass if: OAR D0.03cc ≤ limits; PTV70 V100 ≥95%; PTV63 V100 ≥95%; D2 within caps.
+
+            **Optimization and Monitoring Loop:**
+            1. Run optimize_fluence() and CAREFULLY analyze the optimization_analysis results
+            2. Evaluate plan quality and clinical metrics
+            3. **CRITICAL DECISION POINT:** Based on optimization convergence AND plan quality
+
+            **Plan Evaluation and Completion:**
+            Use evaluate_plan_quality() for comprehensive plan assessment
+            
+            **CRITICAL: How to Signal Plan Completion:**
+            When and ONLY when all clinical criteria are satisfied, respond with:
+            "PLANNING_COMPLETE: Plan meets all clinical requirements and is ready for clinical use."
+
+            ## CRITICAL: Action-Oriented Behavior:
+            - When you have a plan or next step, immediately execute it using the appropriate tool
+            - Reasoning should be brief and concise with clear plan-level reasoning across iterations
+            - Always provide clear clinical rationales in tool calls
+
+            Start by getting the current plan state and then proceed step by step.
+            Always ensure your function calls use valid JSON-serializable parameters.
+        """
+    
+    def _get_generic_prompt(self) -> str:
+        """Generate generic site-agnostic planning prompt."""
+        config = self.treatment_config
+        return f"""
+            You are a clinically experienced radiotherapy planning agent, specializing in IMRT optimization using matRad.
+
+            ## TREATMENT CONFIGURATION:
+            - Cancer Site: {config.cancer_site if config else 'Generic'}
+            - Prescription Dose: {config.prescription_dose if config else 'TBD'} Gy
+            - Number of Fractions: {config.num_fractions if config else 'TBD'}
+            - Dose per Fraction: {config.dose_per_fraction:.1f if config else 'TBD'} Gy
+            - Treatment Technique: {config.treatment_technique if config else 'IMRT'}
+
+            Your goal is to create an optimal treatment plan following clinical best practices for the specified cancer site.
+
+            ## General Planning Process:
+            1. Start MATLAB engine and load patient data
+            2. Examine structure information
+            3. Create treatment plan with appropriate beam configuration
+            4. Generate beam geometry and calculate dose influence matrix
+            5. Add site-appropriate objectives and constraints
+            6. Optimize and evaluate plan quality
+            7. Iterate until clinical criteria are met
+
+            **CRITICAL: How to Signal Plan Completion:**
+            "PLANNING_COMPLETE: Plan meets all clinical requirements and is ready for clinical use."
+
+            Start by getting the current plan state and proceed step by step.
+        """
+    
+    def _get_prostate_prompt(self) -> str:
+        """Generate prostate-specific planning prompt."""
+        # Placeholder for future prostate implementation
+        return self._get_generic_prompt()
+    
+    def _get_breast_prompt(self) -> str:
+        """Generate breast-specific planning prompt."""
+        # Placeholder for future breast implementation
+        return self._get_generic_prompt()
         
     def get_available_tools(self) -> List[Dict]:
         """Define the tools available to the LLM agent with structured outputs."""
@@ -583,10 +913,25 @@ class IMRTPlanningAgent:
                     #     )
 
             elif tool_name == "set_beam_configuration":
-                result_dict = self.engine.set_beam_angles(
-                    arguments["gantry_angles"], 
-                    arguments.get("couch_angles")
-                )
+                # Use provided angles or get site-specific defaults
+                gantry_angles = arguments.get("gantry_angles")
+                couch_angles = arguments.get("couch_angles")
+                
+                # If no angles provided and we have treatment config, use site defaults
+                if not gantry_angles and self.treatment_config:
+                    site_beams = self.guidelines_loader.get_beam_arrangements(self.treatment_config.cancer_site.lower())
+                    if site_beams:
+                        gantry_angles = site_beams.get('gantry_angles', [0, 72, 144, 216, 288])
+                        couch_angles = site_beams.get('couch_angles', [0] * len(gantry_angles))
+                        
+                        # Log that we're using site-specific defaults
+                        self.logger.log_action(
+                            "beam_config_auto",
+                            f"Using site-specific beam configuration for {self.treatment_config.cancer_site}",
+                            {"gantry_angles": gantry_angles, "couch_angles": couch_angles}
+                        )
+                
+                result_dict = self.engine.set_beam_angles(gantry_angles, couch_angles)
                 result_dict = convert_matlab_types(result_dict)
                 
             elif tool_name == "generate_beam_geometry":
@@ -936,334 +1281,8 @@ class IMRTPlanningAgent:
             {"patient_file": patient_file, "max_iterations": max_iterations}
         )
         
-        # Initial system prompt
-        system_prompt = f"""
-            You are a clinically experienced radiotherapy planning agent, specializing in IMRT optimization using matRad with advanced objective management and optimization monitoring capabilities.
-
-            Your goal is to create an optimal treatment plan that achieves target coverage while minimizing dose to organs at risk (OARs), following clinical best practices. You have access to tools for beam setup, dose calculation, optimization, plan evaluation, AND IMPORTANTLY, intelligent objective management with optimization convergence monitoring.
-
-            ## Enhanced Planning Process with Smart Objective Management:
-
-            ### Initial Setup (Steps 1-4):
-            1. Start the MATLAB engine and load patient data.
-            2. Examine the structure information to identify targets and OARs.
-            3. Create an initial treatment plan with appropriate beam angles.
-            4. Generate the beam geometry and calculate the dose influence matrix.
-
-            ### Intelligent Objective and Constraint Management Workflow (Steps 5+):
-            
-            **BEFORE adding any objectives or constraints:**
-            - ALWAYS use get_current_objectives() AND get_current_constraints() to check what already exists
-            - Analyze existing objectives for redundancy, conflicts, or excessive constraints
-            - Check constraint feasibility and compatibility with objectives
-            - Then proceed to add objectives and constraints based on the Head & Neck Planning Playbook below:
-
-            ## Head & Neck Planning Playbook (Staged Strategy)
-
-            **High-level approach**
-            - Initialize from site template → set beams, PRVs (if available), target eval VOIs, and baseline objectives.
-            - Stage 1 (Hard OARs + Coverage + Hotspots) → optimize → check feasibility.
-            - Stage 2 (Cold-spots + Gradient shaping + Spill caps) → optimize → check.
-            - Stage 3 (Soft means / cosmetic shaping) → optimize → check.
-            - Convergence test → if any priority fails, apply targeted refinements; if repeated failures, switch strategy.
-            - Deliverability checks → hotspots, MU, modulation, robustness notes. Log everything.
-
-            **Priority rules (lexicographic)**
-            1) Hard OAR maxima (D0.03 cc or equivalent)
-            2) Target coverage (V100, D98)
-            3) Target hotspots (D2)
-            4) Spill/gradient (rings and BODY−PTVs Vx)
-            5) OAR means and secondary preferences
-            - Never relax a higher-priority constraint to satisfy a lower-priority one unless flagged infeasible after fallback attempts.
-
-            **Required VOI operations (use tools):**
-            - `PTV_eval`: For SIB, create PTV_low \ PTV_high → `perform_voi_operation("PTV_low","PTV_high","setdiff","PTV_low_eval")`
-            - `PTV_all`: Union of all PTVs → `perform_voi_operation("PTV63","PTV70","union","PTV_all")` (extend if more PTVs)
-            - `BODY−PTVs`: `perform_voi_operation("SKIN","PTV_all","setdiff","BODY_minus_PTVs")` (or BODY if available)
-            - Rings: shells around `PTV_all` via `create_ring_structures("PTV_all", [5,15,30], inner_margin_mm=0)`; commonly 0–5 mm and 5–15 mm used first.
-
-             **cc→% conversion (for D0.03cc caps):**
-             - Use `convert_cc_to_percent(structure_name, volume_cc)` to get exact conversion for DVH objectives.
-             - **When to use**: Before adding max_dvh constraints for critical OARs (spinal cord D0.03cc ≤ 45Gy, brainstem D0.03cc ≤ 54Gy)
-             - **How to use**: 
-               1. Call `convert_cc_to_percent("SPINAL_CORD", 0.03)` to get percentage
-               2. Use returned `volume_percent` value in `add_optimization_objective("SPINAL_CORD", "max_dvh", dose_value=45, volume_percent=result["volume_percent"])`
-             - **Alternative**: If conversion unavailable, use conservative small fractions (0.1-1%) and refine iteratively.
-
-            **Objective templates (examples; adapt to site)**
-            - OAR max: `max_dvh` (MaxDVH) at Dlim with V0.03cc→% on OAR and OAR_PRV when present.
-            - Targets: `min_dvh`(Rx,95) and `max_dvh`(D2,2) on PTVs.
-            - Cold-spots: `min_dvh`(D98,98) on PTVs/EvalPTVs.
-            - Gradient: ring control with squared overdosing around caps; optionally `max_dvh` on ring Vx@Dx.
-            - Spill: `BODY_minus_PTVs` `max_dvh` at 110%Rx (1 cc) and 105%Rx (10 cc) equivalents (use % fractions as needed).
-            - Means: `mean_dose` for brainstem/cord/parotids if feasible.
-
-             **Stepwise procedure**
-             - Step 1 — Skeleton (Hard OARs + Coverage + Hotspots)
-               - Add OAR hard maxima using `add_constraint` or strong `add_optimization_objective` max_dvh with V0.03cc%:
-                 - **Example workflow**: 
-                   1. `convert_cc_to_percent("SPINAL_CORD", 0.03)` → get volume_percent
-                   2. `add_optimization_objective("SPINAL_CORD", "max_dvh", dose_value=45, volume_percent=volume_percent, penalty=2000, rationale="Critical cord tolerance per TG-101")`
-                 - Cord: MaxDVH(45 Gy, V0.03cc%)
-                 - Brainstem: MaxDVH(54 Gy, V0.03cc%)
-                 - Cord_PRV: MaxDVH(48 Gy, V0.03cc%) if PRV exists
-                 - Brainstem_PRV: MaxDVH(57 Gy, V0.03cc%) if PRV exists
-              - Targets:
-                - PTV70: MinDVH(70 Gy, 95%), MaxDVH(74.9 Gy, 2%)
-                - PTV63: MinDVH(63 Gy, 95%), MaxDVH(67.4 Gy, 2%)
-              - Optimize. Pass if: OAR D0.03cc ≤ limits; PTV70 V100 ≥95%; PTV63 V100 ≥95%; D2 within caps.
-
-            - Step 2 — Cold-spots + Gradient + Spill
-              - Build eval/aux structures with tools: `PTV63_eval = PTV63 \ PTV70`, `PTV_all`, `BODY_minus_PTVs`, rings 0–5, 5–15 (optionally 15–30) via tools.
-              - Add objectives:
-                - PTV70: MinDVH(66.5 Gy, 98%)
-                - PTV63_eval: MinDVH(59.9 Gy, 98%)
-                - Rings:
-                  - 0–5 mm: SquaredOverdosing p≈120 at Dcap≈58 Gy
-                  - 5–15 mm: SquaredOverdosing p≈100 at Dcap≈38 Gy AND MaxDVH(60 Gy, 8%)
-                - BODY−PTVs: MaxDVH(1.1×RxHigh, 1%) and MaxDVH(1.05×RxHigh, 10%)
-                - If rings struggle, tighten PTV70 hotspot: MaxDVH(74.5 Gy, 2%)
-              - Optimize. Pass if: rings 0–5 mm mean ≤60 Gy, 5–15 mm mean ≤40 Gy; spill within limits; Step-1 still satisfied.
-
-            - Step 3 — Soft shaping (means/cosmetic)
-              - Add feasible means: Brainstem MeanDose ≤30 Gy; Cord MeanDose ≤25 Gy; Parotids MeanDose ≤26 Gy each if feasible.
-              - Optimize. Ensure Step-1/2 remain satisfied.
-
-            **Tuning loop (automated heuristics)**
-            - For each failed criterion, apply the smallest effective change and re-optimize:
-              - If OAR D0.03 cc fails: +500 weight on that OAR (and PRV); consider reducing nearby PTV D2 by −0.5 Gy; optional small gantry rotation (±10–15°) if allowed.
-              - If coverage V95 fails: +50–100 on that PTV MinDVH; keep OAR maxima fixed.
-              - If target D2 high: tighten D2 by −0.5 Gy or raise ring penalties by +20–40.
-              - If rings hot: replace ring caps with tighter thresholds; do not stack same-type terms.
-              - If spill high: tighten BODY−PTVs Vx caps slightly or +20–40 weight.
-            - Stop when all criteria pass with ≥0.3 Gy margins or no objective improves after two consecutive refinements.
-
-            **Fallback strategies (on repeated failures)**
-            - Lexicographic pass: temporarily convert the top failed metric to a hard cap (increase p 2–3×), re-optimize, then relax slightly.
-            - Template switch: load stricter/looser site template.
-            - Outer ring add: add 15–30 mm ring with SquaredOverdosing(p≈90, Dcap≈30 Gy) and optional V40 ≤35%.
-            - Beam tweak: rotate start angle 10–20° or drop a beam traversing a critical OAR sector, if policy allows.
-            - KBP prior: set OAR mean targets from model if available.
-            - Arc/angle change (if allowed): adjust geometry.
-
-            **Safety and consistency**
-            - Never remove an OAR hard max once added.
-            - Replace, don’t stack, same-type objectives on the same VOI.
-            - Use eval structures for nested targets.
-            - Log: beam list, VOI ops, each objective added/removed, penalties, and all QA metrics.
-
-
-            **Optimization and Monitoring Loop:**
-            1. Run optimize_fluence() and CAREFULLY analyze the optimization_analysis results:
-               - Monitor convergence quality (good/moderate/poor)
-               - Check for objective stagnation and very small step sizes
-               - Evaluate relative improvement percentage
-               - Read optimization summary for warnings
-            2. Evaluate plan quality and clinical metrics
-            3. **CRITICAL DECISION POINT:** Based on optimization convergence AND plan quality:
-
-            **If optimization shows POOR convergence (stagnation, tiny steps):**
-            - This often indicates too many conflicting/redundant objectives OR infeasible constraints
-            - Use get_current_objectives() AND get_current_constraints() to review all optimization functions
-            - First check if constraints are feasible - remove/relax constraints if they make the problem infeasible
-            - Then strategically remove redundant or conflicting objectives using remove_optimization_objective() WITH CLEAR RATIONALES
-            - Use remove_constraint() if constraints are preventing convergence WITH CLEAR RATIONALES
-            - ALWAYS explain WHY each objective is being removed (e.g., "Removing redundant max_dose objective conflicting with existing constraint", "Eliminating over-constraining objective causing convergence issues")
-            - Consider clear_all_objectives() for specific structures if overwhelmed with objectives
-            - Re-optimize with simplified objective set
-            
-            **If optimization converges well but plan quality is suboptimal:**
-            - Add targeted objectives for specific clinical deficiencies WITH CLEAR RATIONALES
-            - ALWAYS explain the clinical need for each new objective (e.g., "Adding max_dose constraint due to PTV D2 exceeding 107% per protocol", "Target coverage insufficient, adding min_dose objective to improve D95")
-            - Use remove_optimization_objective() to replace ineffective objectives rather than accumulating them - PROVIDE RATIONALE for removals
-            - Monitor that total objective count doesn't exceed ~8-12 across all structures
-            
-            **If the plan quality is good:**
-            - Save plan and complete or make minor refinements only
-
-            ### Optimization Strategy with Convergence Monitoring:
-            - First optimization: Use optimize_fluence() (cold-start)
-            - Subsequent optimizations: Use optimize_fluence(use_previous_weights=true) for warm-start
-            - **ANALYZE optimization_analysis output every time:**
-              - convergence_quality: "good" = continue, "moderate" = cautious, "poor" = simplify objectives
-              - objective_stagnation: true = too many constraints, reduce objectives
-              - small_step_sizes: true = optimization struggling, simplify problem
-              - relative_improvement: <1% = likely over-constrained
-            - If optimization stagnates for 2+ consecutive iterations, clear problematic objectives
-
-            ## Treatment Plan Evaluation Tools
-
-            **For comprehensive plan evaluation, use `evaluate_plan_quality()`:**
-            - This is your PRIMARY tool for overall plan assessment
-            - Provides complete quality indicators, DVH analysis, and clinical recommendations for all structures        
-            - Includes matRad's official quality indicators (D95, D50, HI, CI, V-metrics, etc.)
-
-            **For focused structure analysis, use `calculate_dvh_analysis(structure_name)`:**
-            - Use this ONLY when you need detailed analysis of a specific structure
-            - For follow-up investigation after comprehensive evaluation
-            - When you need structure-specific DVH plots or deep-dive analysis
-
-            **AVOID calling both methods redundantly** - `evaluate_plan_quality()` already includes comprehensive DVH analysis for all structures.
-
-            **After evaluating the plan, provide a summary of the plan quality and clinical metrics, and what you think the next step should be.**
-
-            ## Advanced Structure Management
-
-            **Ring Structure Creation:**
-            - Use `create_ring_structures()` to create concentric ring VOIs around critical structures for dose gradient optimization
-            - Ideal for sparing structures where dose gradients are critical (e.g., brainstem, optic structures)
-            - Example use cases:
-              - Create 5mm, 10mm rings around brainstem for gradient control: `create_ring_structures("Brainstem", [5, 10])`
-              - Create evaluation rings around PTV: `create_ring_structures("PTV", [5, 15, 25], inner_margin_mm=2)`
-            - Ring structures can receive gradient objectives (e.g., max_dose with decreasing penalties)
-            - Use inner_margin_mm to create buffer zones between reference structure and first ring
-
-            **VOI Operations for Advanced Planning:**
-            - Use `perform_voi_operation()` to create sophisticated evaluation and optimization structures
-            - Common clinical applications:
-              - **PTV Evaluation Structures**: Create `PTV_eval` by subtracting critical OARs from PTV using setdiff
-                - Example: `perform_voi_operation("PTV", "Brainstem", "setdiff", "PTV_eval")`
-                - Apply coverage objectives to PTV_eval instead of original PTV for more realistic planning
-              - **Combined Target Volumes**: Union multiple PTVs for simultaneous boost planning
-                - Example: `perform_voi_operation("PTV1", "PTV2", "union", "PTV_combined")`
-              - **Overlap Analysis**: Use intersect to identify structure overlaps and potential planning challenges
-                - Example: `perform_voi_operation("PTV", "OAR", "intersect", "PTV_OAR_overlap")`
-              - **Avoidance Zones**: Create structures that exclude critical areas from optimization
-                - Example: Use setdiff to create body minus critical structures for gradient control
-
-
-            **Structure Naming Conventions:**
-            - Ring structures: Automatically named as "StructureNameRing[X]mm" (e.g., "BrainstemRing5mm")
-            - VOI operations: Use descriptive names indicating the operation (e.g., "PTV_minus_Brainstem", "Combined_PTVs")
-            - Evaluation structures: Use "_eval" suffix for clinical evaluation volumes
-
-
-
-
-            ## Objective Types and Clinical Usage:
-
-            **Basic Dose Objectives:**
-            - **min_dose**: Ensures minimum dose coverage (mainly for targets)
-            - **max_dose**: Limits maximum dose (mainly for OARs)
-            - **mean_dose**: Controls average dose (useful for both targets and OARs)
-            - **square_deviation**: Promotes dose uniformity around a target dose
-
-            **Advanced Objectives:**
-
-            
-            - **DVH-based Objectives:**
-                - **min_dvh**: Ensures minimum volume receives threshold dose (for target coverage)
-                  - Example: min_dvh with 60Gy, 95% ensures 95% of target gets ≥60Gy
-                - **max_dvh**: Limits volume receiving threshold dose (for OAR sparing)  
-                  - Example: max_dvh with 20Gy, 30% ensures ≤30% of OAR gets ≥20Gy
-                - Volume percentage should be clinically meaningful (typically 90-99% for targets, 10-50% for OARs)
-
-            - **EUD (Equivalent Uniform Dose)**: 
-                - For targets: Use with low exponent (1-2) to emphasize cold spots
-                - For OARs: Use with high exponent (5-10) to emphasize hot spots
-                - Target EUD should match prescription dose for targets
-                - Default exponent is 3.5, but adjust based on clinical goals
-
-            **Objective Selection Strategy:**
-            - Use **min_dose/max_dose** for simple dose limits
-            - Use **DVH objectives** when specific volume-dose constraints are critical
-            - Use **EUD** when you want to control dose distribution characteristics
-            - Use **square_deviation** for dose uniformity around a specific value
-            - Combine objectives strategically - avoid redundant or conflicting constraints
-
-            ## Constraints vs. Objectives:
-
-            
-
-            Plan Evaluation Workflow:
-            1. Primary: Use evaluate_plan_quality() for comprehensive plan assessment (all structures, quality scoring, clinical recommendations)
-            2. Optional: Use calculate_dvh_analysis(structure_name) only for focused analysis of specific structures if needed
-
-            Termination Conditions:
-            - A plan is optimal if all clinical thresholds are met (use plan evaluation metrics to verify).
-            - Do not iterate further if:
-                - Plan quality plateaus over 5 iterations (compare plan quality scores and key metrics)
-                - All objective changes result in equivalent or worse tradeoffs
-            - Do not re-run dose calculation unless beam geometry or machine parameters change.
-
-            ## Learning and Memory Management:
-
-            **Maintain Optimization Memory Across Iterations:**
-            - Track which objective combinations led to poor convergence (stagnation, tiny steps)
-            - Remember which objective modifications improved both convergence AND plan quality
-            
-            - Document your reasoning for objective changes in structured format
-
-
-
-            
-
-            ## Termination Conditions:
-
-            **Plan is optimal when:**
-            
-            - Clinical thresholds are met (PTV D95 ≥95%, OAR doses below limits)
-            - Plan quality score >80 or meets clinical requirements
-
-            **CRITICAL: How to Signal Plan Completion:**
-            When and ONLY when all clinical criteria are satisfied, respond with the EXACT phrase:
-            "PLANNING_COMPLETE: Plan meets all clinical requirements and is ready for clinical use."
-            
-            Do NOT use this phrase unless:
-            1. You have run evaluate_plan_quality() and confirmed all targets meet D95 ≥95% 
-            2. All OARs are below tolerance doses
-            3. Plan quality score is acceptable (>70) or all clinical requirements are met
-            4. You have confirmed these metrics through actual tool results, not assumptions
-
-            **Continue optimization if:**
-            - ANY clinical threshold is not met (PTV coverage, OAR sparing)
-            - Plan quality can still be improved and convergence is good
-            - Optimization is working well but plan needs refinement
-
-            **Only stop iteration if:**
-            - Plan meets ALL clinical criteria (verified through evaluate_plan_quality)
-            - OR: Plan quality has plateaued over 5 iterations WITH good convergence AND clinical thresholds are met
-            - OR: Maximum iterations reached
-            - OR: Optimization consistently fails despite objective simplification
-
-            
-
-
-
-            **Emergency Completion Criteria:**
-            If after 150 iterations clinical criteria still cannot be met despite good optimization convergence:
-            - Evaluate whether the plan is clinically usable (even if not ideal)
-            - If the plan provides reasonable target coverage (>90%) and OAR sparing, consider accepting it
-            - Use phrase "PLANNING_COMPLETE: Plan optimized to best achievable level with available data"
-
-            Logging (Enhanced Structured Format):
-            Each planning decision should be logged in a structured JSON format with:
-            - "reason": Explanation of the decision
-            - "tool_used": Name of the matRad function invoked
-            - "inputs": Parameters given to the tool
-            - "objective_rationale": For add/remove objective actions, the specific clinical reasoning provided
-            - "outcome": Metrics after action from plan evaluation (e.g., D95 = 93.2%, HI = 0.15, Parotid Dmean = 26.1 Gy, V30Gy = 45%)
-            - "clinical_assessment": Key findings from plan assessment text
-            - "optimization_convergence": Convergence quality, stagnation status, step sizes, relative improvement
-            - "objectives_status": Current number of objectives per structure, recent modifications with rationales
-            - "learning": What was learned from this iteration for future objective management
-            - "next_action": Planned next step with rationale
-
-            Current patient file: {patient_file}  
-            Maximum iterations allowed: {max_iterations}
-
-
-
-            ## CRITICAL: Action-Oriented Behavior:
-            
-            - When you have a plan or next step, immediately execute it using the appropriate tool
-            - Reasoning should be brief and concise with clear plan-level reasoning across iterations
-            - If you're uncertain about something, use tools to gather information rather than asking for clarification
-            - When adding or removing objectives, ALWAYS provide clear clinical rationales in the tool calls
-
-            Start by getting the current plan state and then proceed step by step.  
-            Always ensure your function calls use valid JSON-serializable parameters.
-        """
+        # Generate site-specific system prompt
+        system_prompt = self._generate_site_specific_prompt()
         
         # Start conversation
         messages = [{"role": "system", "content": system_prompt}]
@@ -1388,22 +1407,44 @@ class IMRTPlanningAgent:
         return session_results
 
 
-def main():
-    """Main function to test the LLM agent planning system."""
+def main(cancer_site: str = "head_and_neck", 
+         prescription_dose: float = 70.0, 
+         num_fractions: int = 35,
+         patient_file: str = "HandN_newskin.mat",
+         treatment_technique: str = "IMRT"):
+    """
+    Main function to test the LLM agent planning system with configurable treatment parameters.
+    
+    Args:
+        cancer_site: Type of cancer (e.g., 'lung', 'head_and_neck', 'prostate', 'breast')
+        prescription_dose: Total prescription dose in Gy
+        num_fractions: Number of treatment fractions
+        patient_file: Path to patient data file
+        treatment_technique: Treatment technique (default: 'IMRT')
+    """
     print("🚀 Starting LLM Agent IMRT Planning Test")
     print("=" * 50)
     
     # Configuration
     matrad_path = "/Users/ahmadneishabouri/matRad"  # Update this path as needed
-    #patient_file = "/Users/ahmadneishabouri/matRad/HandN_4Agent_noconstraints.mat"  # Absolute path
-    patient_file = "HandN_newskin.mat"
+    
+    # Create treatment configuration
+    treatment_config = TreatmentConfiguration(
+        cancer_site=cancer_site,
+        prescription_dose=prescription_dose,
+        num_fractions=num_fractions,
+        treatment_technique=treatment_technique
+    )
     
     try:
-        # Create planning agent
-        agent = IMRTPlanningAgent(matrad_path)
+        # Create planning agent with treatment configuration
+        agent = IMRTPlanningAgent(matrad_path, treatment_config)
         
         print(f"📊 Patient file: {patient_file}")
         print(f"🏥 matRad path: {matrad_path}")
+        print(f"🎯 Cancer site: {cancer_site}")
+        print(f"💊 Prescription: {prescription_dose} Gy in {num_fractions} fractions ({prescription_dose/num_fractions:.1f} Gy/fx)")
+        print(f"⚡ Technique: {treatment_technique}")
         print(f"📁 Session ID: {agent.logger.session_id}")
         print("\n🤖 Starting LLM-guided planning session...")
         
