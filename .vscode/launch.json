@@ -1,17 +1,138 @@
 {
-    // Use IntelliSense to learn about possible attributes.
-    // Hover to view descriptions of existing attributes.
-    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
     "version": "0.2.0",
     "configurations": [
-
-        {
-            "name": "Python Debugger: Current File",
-            "type": "debugpy",
-            "request": "launch",
-            "program": "${file}",
-            "console": "integratedTerminal",
-            "python": "/Users/ahmadneishabouri/matlab_env/bin/python",
-        }
+      {
+        "name": "Site-specific (prompted)",
+        "type": "python",
+        "request": "launch",
+        "program": "${workspaceFolder}/LLM_Agent_Planner/run_site_specific_planning.py",
+        "console": "integratedTerminal",
+        "cwd": "${workspaceFolder}",
+        "justMyCode": false,
+        "env": {
+          "PYTHONUNBUFFERED": "1",
+          "PYTHONPATH": "${workspaceFolder}"
+        },
+        "args": [
+          "--site", "${input:site}",
+          "--dose", "${input:dose}",
+          "--fractions", "${input:fractions}",
+          "--patient", "${input:patient}",
+          "--technique", "${input:technique}",
+          "--max-iterations", "${input:maxIterations}"
+        ]
+      },
+  
+      {
+        "name": "Lung (60 Gy / 30 fx)",
+        "type": "python",
+        "request": "launch",
+        "program": "${workspaceFolder}/LLM_Agent_Planner/run_site_specific_planning.py",
+        "console": "integratedTerminal",
+        "cwd": "${workspaceFolder}",
+        "justMyCode": false,
+        "env": {
+          "PYTHONUNBUFFERED": "1",
+          "PYTHONPATH": "${workspaceFolder}"
+        },
+        "args": [
+          "--site", "lung",
+          "--dose", "60",
+          "--fractions", "30",
+          "--patient", "lung_patient.mat",
+          "--technique", "IMRT",
+          "--max-iterations", "200"
+        ]
+      },
+  
+      {
+        "name": "Head & Neck (70 Gy / 35 fx)",
+        "type": "python",
+        "request": "launch",
+        "program": "${workspaceFolder}/LLM_Agent_Planner/run_site_specific_planning.py",
+        "console": "integratedTerminal",
+        "cwd": "${workspaceFolder}",
+        "justMyCode": false,
+        "env": {
+          "PYTHONUNBUFFERED": "1",
+          "PYTHONPATH": "${workspaceFolder}"
+        },
+        "args": [
+          "--site", "head_and_neck",
+          "--dose", "70",
+          "--fractions", "35",
+          "--patient", "HandN.mat",
+          "--technique", "IMRT",
+          "--max-iterations", "200"
+        ]
+      },
+  
+      {
+        "name": "Prostate (78 Gy / 39 fx)",
+        "type": "python",
+        "request": "launch",
+        "program": "${workspaceFolder}/run_site_specific_planning.py",
+        "console": "integratedTerminal",
+        "cwd": "${workspaceFolder}",
+        "justMyCode": false,
+        "env": {
+          "PYTHONUNBUFFERED": "1",
+          "PYTHONPATH": "${workspaceFolder}"
+        },
+        "args": [
+          "--site", "prostate",
+          "--dose", "78",
+          "--fractions", "39",
+          "--patient", "prostate_patient.mat",
+          "--technique", "IMRT",
+          "--max-iterations", "200"
+        ]
+      }
+    ],
+    "inputs": [
+      {
+        "id": "site",
+        "type": "pickString",
+        "description": "Cancer site",
+        "options": [
+          "lung",
+          "head_and_neck",
+          "prostate",
+          "breast"
+        ],
+        "default": "lung"
+      },
+      {
+        "id": "dose",
+        "type": "promptString",
+        "description": "Total dose (Gy)",
+        "default": "60"
+      },
+      {
+        "id": "fractions",
+        "type": "promptString",
+        "description": "Number of fractions",
+        "default": "30"
+      },
+      {
+        "id": "patient",
+        "type": "promptString",
+        "description": "Patient file (.mat)",
+        "default": "lung_patient.mat"
+      },
+      {
+        "id": "technique",
+        "type": "pickString",
+        "description": "Technique",
+        "options": ["IMRT", "VMAT", "3DCRT", "SBRT"],
+        "default": "IMRT"
+      },
+      {
+        "id": "maxIterations",
+        "type": "promptString",
+        "description": "Max optimization iterations",
+        "default": "200"
+      }
     ]
-}
+  }
+  

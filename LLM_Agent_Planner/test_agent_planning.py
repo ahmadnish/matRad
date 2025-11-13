@@ -96,7 +96,7 @@ class IMRTPlanningAgent:
         """Generate a site-specific system prompt based on treatment configuration."""
         if not self.treatment_config:
             # Default to head and neck if no config provided
-            return self._get_head_and_neck_prompt()
+            return self._get_generic_prompt()
         
         site = self.treatment_config.cancer_site.lower()
         
@@ -381,7 +381,7 @@ class IMRTPlanningAgent:
             2. Examine structure information
             3. Create treatment plan with appropriate beam configuration
             4. Generate beam geometry and calculate dose influence matrix
-            5. Add site-appropriate objectives and constraints
+            5. Add site-appropriate objectives and/or constraints
             6. Optimize and evaluate plan quality
             7. Iterate until clinical criteria are met
 
@@ -1410,7 +1410,7 @@ class IMRTPlanningAgent:
 def main(cancer_site: str = "head_and_neck", 
          prescription_dose: float = 70.0, 
          num_fractions: int = 35,
-         patient_file: str = "HandN_newskin.mat",
+         patient_file: str = "HandN.mat",
          treatment_technique: str = "IMRT"):
     """
     Main function to test the LLM agent planning system with configurable treatment parameters.
