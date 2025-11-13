@@ -164,12 +164,6 @@ def main_cli():
     # Print treatment summary
     print_treatment_summary(args)
     
-    # Confirm before proceeding
-    response = input("Proceed with treatment planning? (y/N): ")
-    if response.lower() not in ['y', 'yes']:
-        print("Planning cancelled.")
-        sys.exit(0)
-    
     try:
         # Run the planning session
         main(
