@@ -1286,11 +1286,16 @@ classdef matRad_ViewingWidget < matRad_Widget
             if evalin('base','exist(''resultGUI'')')                   
                 result = evalin('base','resultGUI');
                 
+                % Check if result is a struct before using dot indexing
+                if ~isstruct(result) || isempty(result)
+                    return;
+                end
+                
                 this.DispInfo = fieldnames(result);
                 for i = 1:size(this.DispInfo,1)
                     
                     % delete weight vectors in Result struct for plotting
-                    if isstruct(result.(this.DispInfo{i,1})) || isvector(result.(this.DispInfo{i,1}))
+                    if isfield(result, this.DispInfo{i,1}) && (isstruct(result.(this.DispInfo{i,1})) || isvector(result.(this.DispInfo{i,1})))
                         result = rmfield(result,this.DispInfo{i,1});
                         this.DispInfo{i,2}=false;
                     else
