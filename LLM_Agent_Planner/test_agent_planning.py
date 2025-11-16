@@ -938,6 +938,25 @@ class IMRTPlanningAgent:
                         "additionalProperties": False
                     }
                 }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "record_thoughts",
+                    "description": "Record agent thoughts, reasoning, or planning notes. Use this to summarize current thinking, plan next steps, or note important observations.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "thoughts": {
+                                "type": "string",
+                                "description": "Agent thoughts, reasoning, or planning notes"
+                            }
+                        },
+                        "required": ["thoughts"],
+                        "additionalProperties": False
+                    }
+                }
+            },
             }
         ]
     
