@@ -2928,6 +2928,10 @@ class MatRadEngine:
                         "voxels_added": 0  # Unknown
                     })
             
+            # Set priorities for newly created ring structures
+            for ring in ring_info:
+                self._set_new_structure_priority(ring["name"])
+            
             return {
                 "success": True,
                 "message": f"Created {len(ring_margins_mm)} ring structures around {reference_structure}",
@@ -3041,6 +3045,9 @@ class MatRadEngine:
             
             # Get new structure information
             new_struct_info = self.eng.eval("newStructInfo")
+            
+            # Set priority for newly created structure
+            self._set_new_structure_priority(new_structure_name, str(new_struct_info["type"]))
             
             return {
                 "success": True,
@@ -3343,6 +3350,52 @@ class MatRadEngine:
                 priorities[struct] = 10
                 
         return priorities
+
+    def _set_new_structure_priority(self, structure_name: str, structure_type: str = None) -> None:
+        """Set appropriate priority for newly created structure."""
+        try:
+            # Determine priority based on structure name and type
+            name_upper = structure_name.upper()
+            
+            # Ring structures get medium priority (for gradient control)
+            if "RING" in name_upper:
+                priority = 40
+            # Evaluation structures inherit from parent structure type
+            elif "EVAL" in name_upper or "_EVAL" in name_upper:
+                if any(target in name_upper for target in ["PTV", "GTV", "CTV"]):
+                    priority = 15
+                else:
+                    priority = 10
+            # Combined structures (unions, intersections)
+            elif any(combo in name_upper for combo in ["COMBINED", "UNION", "ALL"]):
+                if any(target in name_upper for target in ["PTV", "GTV", "CTV"]):
+                    priority = 20
+                else:
+                    priority = 15
+            # Body minus structures (spillage control)
+            elif "MINUS" in name_upper or "BODY_" in name_upper:
+                priority = 8
+            # Default based on structure type if provided
+            elif structure_type == "TARGET":
+                priority = 15
+            elif structure_type == "OAR":
+                priority = 50
+            else:
+                priority = 10
+                
+            # Set the priority in MATLAB
+            self.eng.eval(f"""
+            for i = 1:size(cst, 1)
+                if strcmp(cst{{i, 2}}, '{structure_name}')
+                    cst{{i, 5}}.Priority = {priority};
+                    break;
+                end
+            end
+            """, nargout=0)
+            
+        except Exception:
+            # If priority setting fails, continue silently
+            pass
 
     def save_plan(self, output_file: str, save_results: bool = True) -> Dict[str, Any]:
         """
