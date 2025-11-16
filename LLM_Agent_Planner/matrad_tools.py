@@ -1368,7 +1368,7 @@ class MatRadEngine:
                     {optimization_cmd}
                     opt_success = true;
                     opt_error = '';
-                    save('resultGUI.mat');
+                    save(['resultGUIs/resultGUI_' datestr(now,'yyyymmdd_HHMM') '.mat']);
                 catch ME
                     opt_success = false;
                     opt_error = ME.message;

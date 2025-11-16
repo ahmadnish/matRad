@@ -1390,6 +1390,12 @@ class IMRTPlanningAgent:
             "content": "Begin IMRT planning for this patient immediately. Start by checking the plan state and then proceed with the planning workflow. Take action now - do not just provide reasoning without using tools."
         })
         
+        # Print messages content to file
+        with open('messages_debug.txt', 'w') as f:
+            import json
+            f.write("=== INITIAL MESSAGES ===\n")
+            f.write(json.dumps(messages, indent=2))
+        
         iteration = 0
         while iteration < max_iterations:
             try:
@@ -1403,12 +1409,28 @@ class IMRTPlanningAgent:
                 
                 # Add assistant message (simplified version)
                 assistant_message = response.choices[0].message
+                tool_calls_serializable = None
+                if assistant_message.tool_calls:
+                    tool_calls_serializable = [
+                        {
+                            "id": tc.id,
+                            "type": "function",
+                            "function": {"name": tc.function.name, "arguments": tc.function.arguments}
+                        } for tc in assistant_message.tool_calls
+                    ]
                 simplified_assistant = {
                     "role": "assistant",
                     "content": assistant_message.content,
-                    "tool_calls": assistant_message.tool_calls
+                    "tool_calls": tool_calls_serializable
                 }
                 messages.append(simplified_assistant)
+                
+                # Count tokens and log messages at each iteration
+                total_chars = sum(len(str(msg.get('content', ''))) for msg in messages)
+                with open('messages_debug.txt', 'w') as f:
+                    f.write(f"\n\n=== ITERATION {iteration} ===\n")
+                    f.write(f"Total chars: {total_chars}, Est tokens: {total_chars//4}\n")
+                    f.write(json.dumps(messages, indent=2))
                 
                 # Check if LLM wants to call functions
                 if assistant_message.tool_calls:
