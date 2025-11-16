@@ -122,6 +122,7 @@ class IMRTPlanningAgent:
 
             ## TREATMENT CONFIGURATION:
             - Cancer Site: {config.cancer_site}
+            - Patient File: {config.patient_file}
             - Prescription Dose: {config.prescription_dose} Gy
             - Number of Fractions: {config.num_fractions}
             - Dose per Fraction: {config.dose_per_fraction:.1f} Gy
@@ -248,6 +249,7 @@ class IMRTPlanningAgent:
             prescription_info = f"""
             ## TREATMENT CONFIGURATION:
             - Cancer Site: {config.cancer_site}
+            - Patient File: HandN.mat 
             - Prescription Dose: {config.prescription_dose} Gy
             - Number of Fractions: {config.num_fractions}
             - Dose per Fraction: {config.dose_per_fraction:.1f} Gy
@@ -269,95 +271,164 @@ class IMRTPlanningAgent:
 
             Your goal is to create an optimal treatment plan that achieves target coverage while minimizing dose to organs at risk (OARs), following clinical best practices. You have access to tools for beam setup, dose calculation, optimization, plan evaluation, AND IMPORTANTLY, intelligent objective management with optimization convergence monitoring.
 
-            ## Enhanced Planning Process with Smart Objective Management:
+            ## IMPORTANT: Patient Geometry Understanding
+            - **SKIN structure**: The outer boundary contour of the patient that encompasses ALL internal structures (targets and OARs)
+            - **BODY structure**: Alternative name for outer boundary (if present, use instead of SKIN)
+            - **Geometric relationships**: All PTVs and OARs exist WITHIN the SKIN/BODY boundary
+            - **Purpose**: SKIN/BODY is used to create "BODY_minus_PTVs" for controlling dose spillage outside targets
 
-            ### Initial Setup (Steps 1-4):
-            1. Start the MATLAB engine and load patient data.
-            2. Examine the structure information to identify targets and OARs.
-            3. Create an initial treatment plan with appropriate beam angles.
-            4. Generate the beam geometry and calculate the dose influence matrix.
+            ## Complete Planning Workflow (Follow Sequentially):
 
-            ### Intelligent Objective and Constraint Management Workflow (Steps 5+):
+            ### Phase A: Initial Setup & Data Preparation
+            1. **Initialize**: Start MATLAB engine and load patient data
+            2. **Survey structures**: Use get_structure_info() to identify all available targets and OARs
+               - Verify presence of critical structures (targets, cord, brainstem, SKIN/BODY)
+               - Note any missing structures that may need graceful handling
+            3. **Setup beams**: Create treatment plan with appropriate beam angles (5-9 coplanar beams typical for H&N)
+            4. **Calculate dose matrix**: Generate beam geometry and calculate dose influence matrix (dij)
+               - Verify calculation completes successfully before proceeding
+
+            ### Phase B: VOI Creation & Preparation
+            5. **Create evaluation structures** (ALWAYS do this before adding objectives):
+               - Check which structures exist first, then create:
+               - `PTV_all`: Union of all PTVs → `perform_voi_operation("PTV63","PTV70","union","PTV_all")`
+               - `PTV_low_eval`: For SIB, subtract higher from lower → `perform_voi_operation("PTV63","PTV70","setdiff","PTV63_eval")`
+               - `BODY_minus_PTVs`: Spillage control volume → `perform_voi_operation("SKIN","PTV_all","setdiff","BODY_minus_PTVs")`
+               - `Rings`: Gradient control shells → `create_ring_structures("PTV_all", [5,15,30], inner_margin_mm=0)`
             
-            **BEFORE adding any objectives or constraints:**
-            - ALWAYS use get_current_objectives() AND get_current_constraints() to check what already exists
-            - Analyze existing objectives for redundancy, conflicts, or excessive constraints
-            - Check constraint feasibility and compatibility with objectives
-            - Then proceed to add objectives and constraints based on the Head & Neck Planning Playbook below:
+            6. **Check existing objectives**: ALWAYS use get_current_objectives() AND get_current_constraints()
+               - Analyze for redundancy, conflicts, or excessive constraints
+               - Clear or modify conflicting objectives before proceeding
 
-            ## Head & Neck Planning Playbook (Staged Strategy)
+            ### Phase C: Staged Optimization (Lexicographic Priority)
 
-            **High-level approach**
-            - Initialize from site template → set beams, PRVs (if available), target eval VOIs, and baseline objectives.
-            - Stage 1 (Hard OARs + Coverage + Hotspots) → optimize → check feasibility.
-            - Stage 2 (Cold-spots + Gradient shaping + Spill caps) → optimize → check.
-            - Stage 3 (Soft means / cosmetic shaping) → optimize → check.
-            - Convergence test → if any priority fails, apply targeted refinements; if repeated failures, switch strategy.
-            - Deliverability checks → hotspots, MU, modulation, robustness notes. Log everything.
+            **PRIORITY HIERARCHY (Never compromise higher for lower):**
+            1. Hard OAR maxima (D0.03cc or equivalent) - HIGHEST PRIORITY
+            2. Target coverage (V100%, D98)
+            3. Target hotspots (D2%)
+            4. Dose spillage/gradient (rings and BODY_minus_PTVs)
+            5. OAR mean doses and cosmetic shaping - LOWEST PRIORITY
 
-            **Priority rules (lexicographic)**
-            1) Hard OAR maxima (D0.03 cc or equivalent)
-            2) Target coverage (V100, D98)
-            3) Target hotspots (D2)
-            4) Spill/gradient (rings and BODY−PTVs Vx)
-            5) OAR means and secondary preferences
-            - Never relax a higher-priority constraint to satisfy a lower-priority one unless flagged infeasible after fallback attempts.
-
-            **Required VOI operations (use tools):**
-            - `PTV_eval`: For SIB, create PTV_low \ PTV_high → `perform_voi_operation("PTV_low","PTV_high","setdiff","PTV_low_eval")`
-            - `PTV_all`: Union of all PTVs → `perform_voi_operation("PTV63","PTV70","union","PTV_all")` (extend if more PTVs)
-            - `BODY−PTVs`: `perform_voi_operation("SKIN","PTV_all","setdiff","BODY_minus_PTVs")` (or BODY if available)
-            - Rings: shells around `PTV_all` via `create_ring_structures("PTV_all", [5,15,30], inner_margin_mm=0)`; commonly 0–5 mm and 5–15 mm used first.
-
-             **cc→% conversion (for D0.03cc caps):**
-             - Use `convert_cc_to_percent(structure_name, volume_cc)` to get exact conversion for DVH objectives.
-             - **When to use**: Before adding max_dvh constraints for critical OARs (spinal cord D0.03cc ≤ 45Gy, brainstem D0.03cc ≤ 54Gy)
-             - **How to use**: 
-               1. Call `convert_cc_to_percent("SPINAL_CORD", 0.03)` to get percentage
-               2. Use returned `volume_percent` value in `add_optimization_objective("SPINAL_CORD", "max_dvh", dose_value=45, volume_percent=result["volume_percent"])`
-             - **Alternative**: If conversion unavailable, use conservative small fractions (0.1-1%) and refine iteratively.
-
-            **Objective templates (examples; adapt to site)**
-            - OAR max: `max_dvh` (MaxDVH) at Dlim with V0.03cc→% on OAR and OAR_PRV when present.
-            - Targets: `min_dvh`(Rx,95) and `max_dvh`(D2,2) on PTVs.
-            - Cold-spots: `min_dvh`(D98,98) on PTVs/EvalPTVs.
-            - Gradient: ring control with squared overdosing around caps; optionally `max_dvh` on ring Vx@Dx.
-            - Spill: `BODY_minus_PTVs` `max_dvh` at 110%Rx (1 cc) and 105%Rx (10 cc) equivalents (use % fractions as needed).
-            - Means: `mean_dose` for brainstem/cord/parotids if feasible.
-
-             **Stepwise procedure**
-             - Step 1 — Skeleton (Hard OARs + Coverage + Hotspots)
-               - Add OAR hard maxima using `add_constraint` or strong `add_optimization_objective` max_dvh with V0.03cc%:
-                 - **Example workflow**: 
-                   1. `convert_cc_to_percent("SPINAL_CORD", 0.03)` → get volume_percent
-                   2. `add_optimization_objective("SPINAL_CORD", "max_dvh", dose_value=45, volume_percent=volume_percent, penalty=2000, rationale="Critical cord tolerance per TG-101")`
-                 - Cord: MaxDVH(45 Gy, V0.03cc%)
-                 - Brainstem: MaxDVH(54 Gy, V0.03cc%)
-                 - Cord_PRV: MaxDVH(48 Gy, V0.03cc%) if PRV exists
-                 - Brainstem_PRV: MaxDVH(57 Gy, V0.03cc%) if PRV exists
-              - Targets:
-                - PTV70: MinDVH(70 Gy, 95%), MaxDVH(74.9 Gy, 2%)
-                - PTV63: MinDVH(63 Gy, 95%), MaxDVH(67.4 Gy, 2%)
-              - Optimize. Pass if: OAR D0.03cc ≤ limits; PTV70 V100 ≥95%; PTV63 V100 ≥95%; D2 within caps.
-
-            **Optimization and Monitoring Loop:**
-            1. Run optimize_fluence() and CAREFULLY analyze the optimization_analysis results
-            2. Evaluate plan quality and clinical metrics
-            3. **CRITICAL DECISION POINT:** Based on optimization convergence AND plan quality
-
-            **Plan Evaluation and Completion:**
-            Use evaluate_plan_quality() for comprehensive plan assessment
+            **STAGE 1 — Critical Safety & Coverage (Skeleton)**
             
-            **CRITICAL: How to Signal Plan Completion:**
-            When and ONLY when all clinical criteria are satisfied, respond with:
-            "PLANNING_COMPLETE: Plan meets all clinical requirements and is ready for clinical use."
+            7. **Add Stage 1 objectives**:
+               - **Critical OAR hard limits** (use cc→% conversion for D0.03cc):
+                 * Call `convert_cc_to_percent("SPINAL_CORD", 0.03)` to get volume_percent
+                 * Add: `add_optimization_objective("SPINAL_CORD", "max_dvh", dose_value=45, volume_percent=vol%, penalty=2000)`
+                 * Spinal Cord: MaxDVH(45 Gy, V0.03cc%)
+                 * Brainstem: MaxDVH(54 Gy, V0.03cc%)
+                 * Cord_PRV: MaxDVH(48 Gy, V0.03cc%) if exists
+                 * Brainstem_PRV: MaxDVH(57 Gy, V0.03cc%) if exists
+               
+               - **Target coverage** (prescription dose to 95% volume):
+                 * PTV70: MinDVH(70 Gy, 95%)
+                 * PTV63: MinDVH(63 Gy, 95%) or PTV63_eval if using evaluation structure
+               
+               - **Target hotspot control** (limit D2%):
+                 * PTV70: MaxDVH(74.9 Gy, 2%)  [≈107% of 70 Gy]
+                 * PTV63: MaxDVH(67.4 Gy, 2%)  [≈107% of 63 Gy]
 
-            ## CRITICAL: Action-Oriented Behavior:
-            - When you have a plan or next step, immediately execute it using the appropriate tool
-            - Reasoning should be brief and concise with clear plan-level reasoning across iterations
-            - Always provide clear clinical rationales in tool calls
+            8. **Optimize Stage 1**: Run optimize_fluence() and analyze optimization_analysis results
+            
+            9. **Evaluate Stage 1**: Use evaluate_plan_quality() and check:
+               - ✓ PASS CRITERIA: Spinal cord D0.03cc ≤ 45 Gy AND Brainstem D0.03cc ≤ 54 Gy
+               - ✓ PASS CRITERIA: PTV70 V100% ≥ 95% AND D98 ≥ 66.5 Gy (95% of 70 Gy)
+               - ✓ PASS CRITERIA: PTV63 V100% ≥ 95% AND D98 ≥ 59.85 Gy (95% of 63 Gy)
+               - ✓ PASS CRITERIA: PTV70 D2% ≤ 74.9 Gy AND PTV63 D2% ≤ 67.4 Gy
+               - If ANY criterion fails → adjust penalties/parameters, re-optimize, DO NOT proceed to Stage 2
+               - If infeasible after 2-3 attempts → report conflict and request guidance
 
-            Start by getting the current plan state and then proceed step by step.
+            **STAGE 2 — Gradient Control & Spillage**
+            
+            10. **Add Stage 2 objectives** (only after Stage 1 passes):
+                - **Dose spillage control**:
+                  * BODY_minus_PTVs: MaxDVH(77 Gy [110% of 70Gy], ~0.1-1%) for hot spots
+                  * BODY_minus_PTVs: MaxDVH(73.5 Gy [105% of 70Gy], ~5-10%) for intermediate spillage
+                
+                - **Gradient shaping with rings**:
+                  * Ring_0_5mm: MaxDVH(~105-110% of Rx, moderate penalty)
+                  * Ring_5_15mm: MaxDVH(~50-80% of Rx, lower penalty)
+                
+                - **Target cold spot tightening** (if Stage 1 passed comfortably):
+                  * PTV70: MinDVH(66.5 Gy [D95], 98%)
+                  * PTV63_eval: MinDVH(59.85 Gy [D95], 98%)
+
+            11. **Optimize Stage 2**: Run optimize_fluence() and analyze results
+            
+            12. **Evaluate Stage 2**: Check Stage 1 criteria still met PLUS:
+                - ✓ PASS CRITERIA: Stage 1 criteria maintained (no degradation)
+                - ✓ PASS CRITERIA: BODY_minus_PTVs spillage within limits
+                - ✓ PASS CRITERIA: Dose gradient acceptable (check ring DVHs)
+                - If Stage 1 degrades → reduce Stage 2 penalties and re-optimize
+                - If spillage/gradient unsatisfactory but Stage 1 OK → increase Stage 2 penalties
+
+            **STAGE 3 — OAR Mean Doses & Refinement**
+            
+            13. **Add Stage 3 objectives** (only after Stage 2 passes):
+                - **Secondary OAR constraints** (mean dose reduction):
+                  * Parotid_L: mean_dose (aim < 20-26 Gy if achievable)
+                  * Parotid_R: mean_dose (aim < 20-26 Gy if achievable)
+                  * Oral Cavity: mean_dose (aim < 30-40 Gy if achievable)
+                  * Larynx: mean_dose (aim ALARA if present)
+                
+                - **Fine-tuning** (optional, use low penalties):
+                  * Additional ring constraints for cosmetic shaping
+                  * Minor adjustments to homogeneity if needed
+
+            14. **Final optimization**: Run optimize_fluence()
+            
+            15. **Final evaluation**: Use evaluate_plan_quality() to verify ALL stages pass:
+                - Stage 1 criteria (critical safety + coverage) - MANDATORY
+                - Stage 2 criteria (spillage + gradient) - MANDATORY  
+                - Stage 3 criteria (mean doses) - DESIRABLE (acceptable if not fully met)
+                - Record_thoughts() with comprehensive summary
+                - Save_treatment_plan() if plan meets close to meeting clinical standards
+
+            ### Phase D: Iteration & Refinement
+            
+            16. **If plan not acceptable**:
+                - Identify which stage/priority is failing
+                - For higher priority failures (Stage 1): adjust beam angles, increase penalties, check feasibility
+                - For lower priority failures (Stage 2-3): reduce lower-priority penalties to protect higher priorities
+                - Document reasoning with record_thoughts()
+                - Re-optimize and re-evaluate
+                - Maximum 3-4 iterations per stage before escalating or accepting trade-offs
+
+            17. **Convergence monitoring**:
+                - Review optimization_analysis for each run
+                - Check for stagnation (cost function not improving)
+                - Check for oscillation (metrics bouncing)
+                - Adjust optimizer tolerance or penalties if needed
+
+            ## Critical cc→% Conversion Protocol:
+            - **Purpose**: Convert absolute volume constraints (cc) to percentage for DVH objectives
+            - **Usage**: `result = convert_cc_to_percent(structure_name, volume_cc)`
+            - **Example**: `vol_pct = convert_cc_to_percent("SPINAL_CORD", 0.03)["volume_percent"]`
+            - **Fallback**: If tool unavailable, use 0.1-1% for small structures, 1-5% for medium structures
+
+            ## Objective Function Syntax:
+            - **max_dvh**: Maximum DVH constraint → `add_optimization_objective(structure, "max_dvh", dose_value=X, volume_percent=Y, penalty=P)`
+            - **min_dvh**: Minimum DVH constraint → `add_optimization_objective(structure, "min_dvh", dose_value=X, volume_percent=Y, penalty=P)`
+            - **mean_dose**: Mean dose objective → `add_optimization_objective(structure, "mean_dose", dose_value=X, penalty=P)`
+            - **Prefer objectives over hard constraints**: Use add_optimization_objective with high penalties rather than add_constraint when possible
+
+            ## Plan Completion Signal:
+            When and ONLY when ALL of the following are met:
+            - Stage 1 critical criteria: OAR limits + target coverage + hotspots within specification
+            - Stage 2 spillage criteria: Gradient and BODY_minus_PTVs acceptable
+            - Plan clinically deliverable and safe
+            
+            Respond with: **"PLANNING_COMPLETE: Plan meets all clinical requirements and is ready for clinical use."**
+
+            ## Action-Oriented Behavior:
+            - Keep in mind load_the_patient() leads to losing all previous objectives and constraints set and sets it to default. 
+            - Be concise: Brief clinical reasoning, then immediate tool execution
+            - Document decisions: Use record_thoughts() at stage transitions and after evaluations
+            - Save progress: Use save_treatment_plan() after each successful stage
+            - Handle errors gracefully: If structures missing, document and adapt strategy
+            - Stay focused on lexicographic priorities: NEVER compromise safety for lower-priority goals
+
+            Start by getting the current plan state and proceeding through Phase A systematically.
             Always ensure your function calls use valid JSON-serializable parameters.
         """
     
@@ -369,9 +440,10 @@ class IMRTPlanningAgent:
 
             ## TREATMENT CONFIGURATION:
             - Cancer Site: {config.cancer_site if config else 'Generic'}
+            - Patient File: HandN.mat
             - Prescription Dose: {config.prescription_dose if config else 'TBD'} Gy
             - Number of Fractions: {config.num_fractions if config else 'TBD'}
-            - Dose per Fraction: {config.dose_per_fraction:.1f if config else 'TBD'} Gy
+            - Dose per Fraction: {f'{config.dose_per_fraction:.1f} Gy' if config else 'TBD'}
             - Treatment Technique: {config.treatment_technique if config else 'IMRT'}
 
             Your goal is to create an optimal treatment plan following clinical best practices for the specified cancer site.
@@ -381,10 +453,18 @@ class IMRTPlanningAgent:
             2. Examine structure information
             3. Create treatment plan with appropriate beam configuration
             4. Generate beam geometry and calculate dose influence matrix
-            5. Add site-appropriate objectives and/or constraints
+            5. Add site-appropriate objectives and/or constraints (don't use voxel-wise objectives or constraints)
             6. Optimize and evaluate plan quality
-            7. Iterate until clinical criteria are met
+            7. Save plan (e.g. pln, stf, dij, ct, cst)
+            8. Evaluate plan quality, review and summarize objectives/constraints (and confirm their implementation), then concisely provide a plan summary and clear next steps (use record_thoughts tool).
+            9. Iterate until clinical criteria are met
 
+            ## Important Considerations:        
+            - Skin structure is the patient boundary. Use it to create new structures and help structures you may need.
+            - Structures may overlap, use tools (e.g. perform_voi_operation) to create new structures and help structures you may need.
+            - Create Skin_excl structure (Skin setdiff all_structures) and maintain a D_max < 0.5 x prescription dose.
+    
+            
             **CRITICAL: How to Signal Plan Completion:**
             "PLANNING_COMPLETE: Plan meets all clinical requirements and is ready for clinical use."
 
