@@ -3282,16 +3282,17 @@ class MatRadEngine:
         """
         Generate default overlap priorities based on clinical importance.
         
-        Priority hierarchy (higher numbers = higher priority):
-        - Critical OARs (spinal cord, brainstem): 90-100
-        - Major OARs (heart, lungs, kidneys): 70-89  
-        - Minor OARs (parotids, etc.): 50-69
-        - Targets (PTVs, GTVs): 10-49
-        - Support structures (body, skin): 1-9
+        CRITICAL: Lower numbers = higher priority in matRad!
+        Priority hierarchy (lower numbers = higher priority):
+        - Critical OARs (spinal cord, brainstem): 1-10
+        - Major OARs (heart, lungs, kidneys): 11-20  
+        - Minor OARs (parotids, etc.): 21-30
+        - Targets (PTVs, GTVs): 31-40
+        - Support structures (body, skin): 41-50
         """
         priorities = {}
         
-        # Critical OARs - highest priority
+        # Critical OARs - HIGHEST priority (lowest numbers)
         critical_oars = [
             "SPINAL_CORD", "SPINALCORD", "CORD", "SC",
             "BRAINSTEM", "BRAIN_STEM", "BS",
@@ -3320,68 +3321,68 @@ class MatRadEngine:
             "BODY", "SKIN", "EXTERNAL", "PATIENT"
         ]
         
-        # Assign priorities
+        # Assign priorities (LOWER numbers = HIGHER priority)
         for struct in available_structures:
             struct_upper = struct.upper()
             
-            # Check critical OARs first
+            # Check critical OARs first - LOWEST numbers (highest priority)
             if any(critical in struct_upper for critical in critical_oars):
-                priorities[struct] = 95
+                priorities[struct] = 1
             # Check major OARs
             elif any(major in struct_upper for major in major_oars):
-                priorities[struct] = 75
+                priorities[struct] = 15
             # Check minor OARs
             elif any(minor in struct_upper for minor in minor_oars):
-                priorities[struct] = 55
+                priorities[struct] = 25
             # Check targets
             elif any(target in struct_upper for target in targets):
-                # Higher dose targets get higher priority
+                # Higher dose targets get slightly higher priority
                 if "70" in struct or "7000" in struct:
-                    priorities[struct] = 25
+                    priorities[struct] = 35
                 elif "63" in struct or "6300" in struct:
-                    priorities[struct] = 20
+                    priorities[struct] = 37
                 else:
-                    priorities[struct] = 15
-            # Support structures
+                    priorities[struct] = 40
+            # Support structures - LOWEST priority (highest numbers)
             elif any(support in struct_upper for support in support):
-                priorities[struct] = 5
+                priorities[struct] = 50
             # Default priority for unrecognized structures
             else:
-                priorities[struct] = 10
+                priorities[struct] = 45
                 
         return priorities
 
     def _set_new_structure_priority(self, structure_name: str, structure_type: str = None) -> None:
-        """Set appropriate priority for newly created structure."""
+        """Set appropriate priority for newly created structure. LOWER numbers = HIGHER priority."""
         try:
             # Determine priority based on structure name and type
             name_upper = structure_name.upper()
             
             # Ring structures get medium priority (for gradient control)
             if "RING" in name_upper:
-                priority = 40
+                priority = 30
             # Evaluation structures inherit from parent structure type
             elif "EVAL" in name_upper or "_EVAL" in name_upper:
                 if any(target in name_upper for target in ["PTV", "GTV", "CTV"]):
-                    priority = 15
+                    priority = 38
                 else:
-                    priority = 10
+                    priority = 45
             # Combined structures (unions, intersections)
             elif any(combo in name_upper for combo in ["COMBINED", "UNION", "ALL"]):
                 if any(target in name_upper for target in ["PTV", "GTV", "CTV"]):
-                    priority = 20
+                    priority = 36
                 else:
-                    priority = 15
+                    priority = 42
             # Body minus structures (spillage control)
             elif "MINUS" in name_upper or "BODY_" in name_upper:
-                priority = 8
+                priority = 48
             # Default based on structure type if provided
             elif structure_type == "TARGET":
-                priority = 15
+                priority = 40
             elif structure_type == "OAR":
-                priority = 50
+                priority = 25
             else:
-                priority = 10
+                priority = 45
                 
             # Set the priority in MATLAB
             self.eng.eval(f"""
