@@ -3221,7 +3221,12 @@ class MatRadEngine:
             if not structure_info["success"]:
                 return {"success": False, "error": "Could not get structure names"}
             
-            available_structures = structure_info["structure_names"]
+            # Combine all structure types into a single list
+            available_structures = (
+                structure_info.get("targets", []) + 
+                structure_info.get("oars", []) + 
+                structure_info.get("other", [])
+            )
             
             # Use default priorities if none provided
             if structure_priorities is None:
@@ -3251,10 +3256,7 @@ class MatRadEngine:
                 priority_updates.append(f"{struct_name}: {priority}")
             
             # Apply overlap priorities using matRad function
-            self.eng.eval("cst = matRad_setOverlapPriorities(cst, size(ct.cubeHU{1}));", nargout=0)
-            
-            # Update stored cst
-            self.cst = self.eng.workspace['cst']
+            self.eng.eval("cst = matRad_setOverlapPriorities(cst, size(ct.cubeHU{1}));", nargout=0)                        
             
             return {
                 "success": True,

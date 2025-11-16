@@ -71,7 +71,7 @@
         "name": "Prostate (78 Gy / 39 fx)",
         "type": "python",
         "request": "launch",
-        "program": "${workspaceFolder}/run_site_specific_planning.py",
+        "program": "${workspaceFolder}/LLM_Agent_Planner/run_site_specific_planning.py",
         "console": "integratedTerminal",
         "cwd": "${workspaceFolder}",
         "justMyCode": false,
