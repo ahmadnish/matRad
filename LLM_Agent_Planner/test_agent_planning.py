@@ -412,6 +412,13 @@ class IMRTPlanningAgent:
             - **mean_dose**: Mean dose objective → `add_optimization_objective(structure, "mean_dose", dose_value=X, penalty=P)`
             - **Prefer objectives over hard constraints**: Use add_optimization_objective with high penalties rather than add_constraint when possible
 
+            ## Structure Overlap Management
+
+            **When to use set_overlap_priorities?**
+            - IMMEDIATELY after loading patient data and BEFORE dose calculation
+            - When structures overlap (common: PTV overlaps with critical OARs like spinal cord, brainstem)
+            **CRITICAL:** Always call this BEFORE `calculate_dose_influence_matrix()` to ensure proper voxel assignment in overlapping regions.
+
             ## Plan Completion Signal:
             When and ONLY when ALL of the following are met:
             - Stage 1 critical criteria: OAR limits + target coverage + hotspots within specification
