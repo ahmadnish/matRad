@@ -957,6 +957,25 @@ class IMRTPlanningAgent:
                     }
                 }
             },
+            {
+                "type": "function",
+                "function": {
+                    "name": "set_overlap_priorities",
+                    "description": "Set overlap priorities for structures to handle overlapping volumes. When structures overlap, matRad needs to know which structure takes priority for the overlapping voxels. Higher priority numbers take precedence. Critical OARs should have higher priority than targets.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "structure_priorities": {
+                                "type": "object",
+                                "description": "Dictionary mapping structure names to priority values (higher numbers = higher priority). If not provided, uses intelligent defaults based on clinical importance.",
+                                "additionalProperties": {
+                                    "type": "integer"
+                                }
+                            }
+                        },
+                        "additionalProperties": False
+                    }
+                }
             }
         ]
     
@@ -1244,6 +1263,26 @@ class IMRTPlanningAgent:
                     arguments["volume_cc"]
                 )
                 result_dict = convert_matlab_types(result_dict)
+                
+            elif tool_name == "set_overlap_priorities":
+                structure_priorities = arguments.get("structure_priorities")
+                result_dict = self.engine.set_overlap_priorities(structure_priorities)
+                result_dict = convert_matlab_types(result_dict)
+                
+            elif tool_name == "record_thoughts":
+                # Store thoughts in plan state and return success
+                thoughts = arguments["thoughts"]
+                if "thoughts" not in self.plan_state:
+                    self.plan_state["thoughts"] = []
+                self.plan_state["thoughts"].append({
+                    "timestamp": time.time(),
+                    "content": thoughts
+                })
+                result_dict = {
+                    "success": True,
+                    "message": "Thoughts recorded successfully",
+                    "thoughts": thoughts
+                }
                 
             else:
                 result_dict = {"success": False, "error": f"Unknown tool: {tool_name}"}
