@@ -10,3 +10,6 @@ logs/
 CONTRIBUTING.md
 LICENSE.md
 matRad_buildStandalone.m
+agent_output_4Jakob.txt
+messages_debug.txt
+LLM_Agent_Planner/logs/*
