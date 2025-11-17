@@ -1024,7 +1024,8 @@ class IMRTPlanningAgent:
                 result_dict = convert_matlab_types(result_dict)
                 
             elif tool_name == "create_treatment_plan":
-                result_dict = self.engine.create_empty_plan()
+                num_fractions = self.treatment_config.num_fractions if self.treatment_config else 30
+                result_dict = self.engine.create_empty_plan(num_fractions=num_fractions)
                 result_dict = convert_matlab_types(result_dict)
                 if result_dict.get("success"):
                     self.plan_state["plan_created"] = True

@@ -252,9 +252,12 @@ class MatRadEngine:
         except Exception as e:
             return {"success": False, "error": str(e)}
     
-    def create_empty_plan(self) -> Dict[str, Any]:
+    def create_empty_plan(self, num_fractions: int = 30) -> Dict[str, Any]:
         """
         Create an empty treatment plan structure.
+        
+        Args:
+            num_fractions: Number of treatment fractions (default: 30)
         
         Returns:
             Dict with plan information or error status.
@@ -267,11 +270,11 @@ class MatRadEngine:
             
         try:
             # Create a new plan
-            self.eng.eval("""
+            self.eng.eval(f"""
             pln = struct();
             pln.radiationMode   = 'photons';
             pln.machine         = 'Generic';
-            pln.numOfFractions  = 30;
+            pln.numOfFractions  = {num_fractions};
              
             % Default beam setup - will be modified later
             pln.propStf.gantryAngles    = [0:72:359];
@@ -309,7 +312,7 @@ class MatRadEngine:
             return {
                 "success": True,
                 "radiation_mode": "photons",
-                "num_fractions": 30,
+                "num_fractions": num_fractions,
                 "num_beams": num_beams,
                 "gantry_angles": list(gantry_angles[0]),
                 "message": "Treatment plan initialized successfully"
