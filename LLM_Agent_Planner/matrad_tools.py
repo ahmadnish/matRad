@@ -494,12 +494,57 @@ class MatRadEngine:
             return {"success": False, "error": "No beam geometry created. Call generate_beam_geometry first."}
             
         try:
-            # Calculate dose influence matrix
-            print("Calculating dose influence matrix (this may take some time)...")
-            start_time = time.time()
-            self.eng.eval("dij = matRad_calcDoseInfluence(ct,cst,stf,pln);", nargout=0)
-            calc_time = time.time() - start_time
-            self.eng.eval("save('dij.mat', 'dij', '-v7.3')", nargout=0)
+            import numpy as np
+
+            # Check gantry and couch angles for all beams
+            num_beams = int(self.eng.eval("numel(stf)", nargout=1))
+            gantry_angles = []
+            couch_angles = []
+            for i in range(1, num_beams + 1):
+                gantry = float(self.eng.eval(f"stf({i}).gantryAngle", nargout=1))
+                couch = float(self.eng.eval(f"stf({i}).couchAngle", nargout=1))
+                gantry_angles.append(gantry)
+                couch_angles.append(couch)
+
+            # Utility: check if all couch angles are zero & gantry equidistant
+            all_couch_zero = all(np.isclose(c, 0.0) for c in couch_angles)
+            if all_couch_zero and num_beams > 1:
+                # Calculate differences between sorted angles modulo 360
+                sorted_gantry = sorted([g % 360 for g in gantry_angles])
+                diffs = [(sorted_gantry[(i+1)%num_beams] - sorted_gantry[i]) % 360 for i in range(num_beams)]
+                uniform_step = np.round(np.mean(diffs), 2)
+                is_equidistant = all(np.isclose(d, uniform_step, atol=1e-3) for d in diffs)
+
+                if is_equidistant:
+                    # Construct file name
+                    step_int = int(round(uniform_step))
+                    dij_name = f"dij_{num_beams}_{step_int}.mat"
+                    import os
+                    if os.path.exists(dij_name):
+                        print(f"Loading precomputed dose-influence matrix from '{dij_name}'...")
+                        self.eng.eval(f"load('{dij_name}', 'dij');", nargout=0)
+                        calc_time = 0
+                    else:
+                        print(f"Calculating dose influence matrix (equidistant gantry, will save as '{dij_name}') ...")
+                        start_time = time.time()
+                        self.eng.eval("dij = matRad_calcDoseInfluence(ct,cst,stf,pln);", nargout=0)
+                        calc_time = time.time() - start_time
+                        print(f"Saving dose-influence matrix as '{dij_name}'...")
+                        self.eng.eval(f"save('{dij_name}', 'dij', '-v7.3')", nargout=0)
+                else:
+                    # Not equidistant, compute and save as default
+                    print("Calculating dose influence matrix (non-uniform gantry/couch)...")
+                    start_time = time.time()
+                    self.eng.eval("dij = matRad_calcDoseInfluence(ct,cst,stf,pln);", nargout=0)
+                    calc_time = time.time() - start_time
+                    self.eng.eval("save('dij.mat', 'dij', '-v7.3')", nargout=0)
+            else:
+                # Not all couch angles zero, compute and save as default
+                print("Calculating dose influence matrix (may take some time)...")
+                start_time = time.time()
+                self.eng.eval("dij = matRad_calcDoseInfluence(ct,cst,stf,pln);", nargout=0)
+                calc_time = time.time() - start_time
+                self.eng.eval("save('dij.mat', 'dij', '-v7.3')", nargout=0)
             
             # Instead of trying to get the entire dij struct, just keep track that it exists
             # self.dij = self.eng.workspace["dij"]
@@ -1370,8 +1415,9 @@ class MatRadEngine:
                     fprintf('Optimzation initiating...\\n');
                     {optimization_cmd}
                     opt_success = true;
-                    opt_error = '';
+                    opt_error = '';                    
                     save(['resultGUIs/resultGUI_' datestr(now,'yyyymmdd_HHMM') '.mat']);
+                    fprintf('Optimization successful: resultGUI saved to resultGUIs/resultGUI_%s.mat\\n', datestr(now,'yyyymmdd_HHMM'));
                 catch ME
                     opt_success = false;
                     opt_error = ME.message;

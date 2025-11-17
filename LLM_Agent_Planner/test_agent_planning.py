@@ -1481,7 +1481,7 @@ class IMRTPlanningAgent:
                 
                 # Count tokens and log messages at each iteration
                 total_chars = sum(len(str(msg.get('content', ''))) for msg in messages)
-                with open('messages_debug.txt', 'w') as f:
+                with open('messages_debug.txt', 'a') as f:
                     f.write(f"\n\n=== ITERATION {iteration} ===\n")
                     f.write(f"Total chars: {total_chars}, Est tokens: {total_chars//4}\n")
                     f.write(json.dumps(messages, indent=2))
@@ -1600,8 +1600,8 @@ def main(cancer_site: str = "head_and_neck",
     print("🚀 Starting LLM Agent IMRT Planning Test")
     print("=" * 50)
     
-    # Configuration
-    matrad_path = "/Users/ahmadneishabouri/matRad"  # Update this path as needed
+    # Configuration        
+    matrad_path = os.path.expanduser("~/matRad")
     
     # Create treatment configuration
     treatment_config = TreatmentConfiguration(
