@@ -9,11 +9,11 @@ Usage examples:
     # Lung cancer planning
     python run_site_specific_planning.py --site lung --dose 60 --fractions 30 --patient lung_patient.mat
     
-    # Head and neck planning  
-    python run_site_specific_planning.py --site head_and_neck --dose 70 --fractions 35 --patient HandN_newskin.mat
+    # Head and neck planning with specific model
+    python run_site_specific_planning.py --site head_and_neck --dose 70 --fractions 35 --patient HandN_newskin.mat --model gpt-5.1
     
-    # Prostate planning
-    python run_site_specific_planning.py --site prostate --dose 78 --fractions 39 --patient prostate_patient.mat
+    # Prostate planning with Anthropic model
+    python run_site_specific_planning.py --site prostate --dose 78 --fractions 39 --patient prostate_patient.mat --model claude-sonnet-4-5-20250929
 """
 
 import argparse
@@ -28,23 +28,27 @@ def parse_arguments():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Lung cancer (60 Gy in 30 fractions)
+  # Lung cancer (60 Gy in 30 fractions) with default model
   python %(prog)s --site lung --dose 60 --fractions 30 --patient lung_patient.mat
   
-  # Head and neck cancer (70 Gy in 35 fractions)  
-  python %(prog)s --site head_and_neck --dose 70 --fractions 35 --patient HandN_newskin.mat
+  # Head and neck cancer with specific model
+  python %(prog)s --site head_and_neck --dose 70 --fractions 35 --patient HandN_newskin.mat --model gpt-5.1
   
-  # Prostate cancer (78 Gy in 39 fractions)
-  python %(prog)s --site prostate --dose 78 --fractions 39 --patient prostate_patient.mat
+  # Prostate cancer with Anthropic model
+  python %(prog)s --site prostate --dose 78 --fractions 39 --patient prostate_patient.mat --model claude-sonnet-4-5-20250929
   
-  # Breast cancer (50 Gy in 25 fractions)
-  python %(prog)s --site breast --dose 50 --fractions 25 --patient breast_patient.mat
+  # Breast cancer with GPT-4o
+  python %(prog)s --site breast --dose 50 --fractions 25 --patient breast_patient.mat --model gpt-4o
 
 Supported cancer sites:
   - lung, nsclc, lung_cancer
   - head_and_neck, head_neck, hnc, oropharynx, larynx
   - prostate
   - breast
+
+Supported models (default: gpt-5.1):
+  OpenAI: gpt-5.1, gpt-5, gpt-4o, gpt-4o-mini, gpt-4-turbo
+  Anthropic: claude-sonnet-4-5-20250929, claude-opus-4-1-20250805, claude-haiku-4-5-20251001, claude-3-5-sonnet-latest
         """
     )
     
@@ -91,30 +95,15 @@ Supported cancer sites:
         help="Maximum optimization iterations (default: 200)"
     )
     
+    parser.add_argument(
+        "--model", "-m",
+        type=str,
+        default="gpt-5.1",
+        help="LLM model to use (default: gpt-5.1). Options: gpt-5.1, gpt-5, gpt-4o, claude-sonnet-4-5-20250929, claude-opus-4-1-20250805, claude-haiku-4-5-20251001, etc."
+    )
+    
     return parser.parse_args()
 
-def validate_inputs(args):
-    """Validate input parameters."""
-    errors = []
-    
-    # Check dose per fraction is reasonable
-    dose_per_fraction = args.dose / args.fractions
-    if dose_per_fraction < 1.0 or dose_per_fraction > 20.0:
-        errors.append(f"Dose per fraction ({dose_per_fraction:.1f} Gy) is outside reasonable range (1-20 Gy)")
-    
-    # Check total dose is reasonable
-    if args.dose < 10.0 or args.dose > 100.0:
-        errors.append(f"Total dose ({args.dose} Gy) is outside reasonable range (10-100 Gy)")
-    
-    # Check fractions
-    if args.fractions < 1 or args.fractions > 50:
-        errors.append(f"Number of fractions ({args.fractions}) is outside reasonable range (1-50)")
-    
-    # Check patient file exists (if it's not just a filename)
-    if "/" in args.patient and not os.path.exists(args.patient):
-        errors.append(f"Patient file not found: {args.patient}")
-    
-    return errors
 
 def print_treatment_summary(args):
     """Print a summary of the treatment configuration."""
@@ -127,6 +116,7 @@ def print_treatment_summary(args):
     print(f"Number of Fractions: {args.fractions}")
     print(f"Dose per Fraction:  {dose_per_fraction:.1f} Gy")
     print(f"Treatment Technique: {args.technique}")
+    print(f"LLM Model:          {args.model}")
     print(f"Patient File:       {args.patient}")
     print(f"Max Iterations:     {args.max_iterations}")
     print("=" * 50)
@@ -152,15 +142,7 @@ def print_treatment_summary(args):
 def main_cli():
     """Main CLI function."""
     args = parse_arguments()
-    
-    # Validate inputs
-    errors = validate_inputs(args)
-    if errors:
-        print("❌ Input validation errors:")
-        for error in errors:
-            print(f"   - {error}")
-        sys.exit(1)
-    
+        
     # Print treatment summary
     print_treatment_summary(args)
     
@@ -171,7 +153,8 @@ def main_cli():
             prescription_dose=args.dose,
             num_fractions=args.fractions,
             patient_file=args.patient,
-            treatment_technique=args.technique
+            treatment_technique=args.technique,
+            model=args.model
         )
         
     except KeyboardInterrupt:
