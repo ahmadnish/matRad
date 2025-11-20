@@ -1,8 +1,41 @@
 """
-Test script for LLM Agent-based IMRT Planning using OpenAI Agents SDK
+Test script for LLM Agent-based IMRT Planning using OpenAI or Anthropic Models
 
 This script demonstrates how an LLM agent can make autonomous decisions
 to create and iteratively improve an IMRT treatment plan using matRad tools.
+
+SUPPORTED MODELS (Top Models for Agentic Work - Updated Nov 2025):
+    OpenAI (GPT-5 Series - Latest):
+        - gpt-5.1: Latest model with improved reasoning and warmer personality (Nov 2025)
+        - gpt-5: Multimodal with advanced reasoning capabilities (Aug 2025)
+        - gpt-4o (default): Reliable balance of speed and capability
+        - gpt-4o-mini: Faster, cost-effective option
+        - gpt-4-turbo: Strong reasoning and function calling
+    
+    Anthropic (Claude 4.5/4.1 Series - Latest):
+        - claude-sonnet-4-5-20250929: Excellent for coding and agentic tasks (Sep 2025)
+        - claude-opus-4-1-20250805: Most capable for complex reasoning (Aug 2025)
+        - claude-haiku-4-5-20251001: Fast and efficient for simpler tasks (Oct 2025)
+        - claude-3-5-sonnet-latest: Previous generation, proven performance
+        - claude-3-5-sonnet-20241022: Stable version with excellent capabilities
+
+USAGE:
+    # With default model (gpt-4o - stable and reliable)
+    python test_agent_planning.py
+    
+    # With latest OpenAI models
+    from test_agent_planning import main, print_supported_models
+    main(model="gpt-5.1")      # Latest GPT-5.1 (Nov 2025)
+    main(model="gpt-5")        # GPT-5 (Aug 2025)
+    main(model="gpt-4o-mini")  # Cost-effective option
+    
+    # With latest Anthropic models (requires: pip install anthropic)
+    main(model="claude-sonnet-4-5-20250929")  # Latest Sonnet (Sep 2025)
+    main(model="claude-opus-4-1-20250805")    # Latest Opus (Aug 2025)
+    main(model="claude-haiku-4-5-20251001")   # Latest Haiku (Oct 2025)
+    
+    # Print all supported models
+    print_supported_models()
 
 IMPORTANT: Before running this script, source the project environment:
     source /Users/ahmadneishabouri/matlab_env/bin/activate
@@ -15,12 +48,35 @@ import numpy as np
 from typing import Dict, Any, List, Optional, Union
 from pydantic import BaseModel, Field
 from openai import OpenAI
+try:
+    from anthropic import Anthropic
+    ANTHROPIC_AVAILABLE = True
+except ImportError:
+    ANTHROPIC_AVAILABLE = False
 from matrad_tools import MatRadEngine
 from logger import PlanningLogger
 from guidelines_loader import GuidelinesLoader
 
-# Initialize OpenAI client
-client = OpenAI()
+# Supported models for agentic work (Top 5+ from OpenAI and Anthropic - Updated Nov 2025)
+SUPPORTED_MODELS = {
+    # OpenAI models - Latest GPT-5 series (Released Aug-Nov 2025)
+    "gpt-5.1": {"provider": "openai", "description": "GPT-5.1 - Latest with improved reasoning (Nov 2025)"},
+    "gpt-5": {"provider": "openai", "description": "GPT-5 - Multimodal with advanced reasoning (Aug 2025)"},
+    "gpt-4o": {"provider": "openai", "description": "GPT-4 Omni - Reliable balance of speed and capability"},
+    "gpt-4o-mini": {"provider": "openai", "description": "GPT-4 Omni Mini - Faster, cost-effective"},
+    "gpt-4-turbo": {"provider": "openai", "description": "GPT-4 Turbo - Strong reasoning and function calling"},
+    
+    # Anthropic models - Latest Claude 4.5 and 4.1 series (Released 2025)
+    "claude-sonnet-4-5-20250929": {"provider": "anthropic", "description": "Claude Sonnet 4.5 - Excellent for coding and agentic tasks (Sep 2025)"},
+    "claude-opus-4-1-20250805": {"provider": "anthropic", "description": "Claude Opus 4.1 - Most capable for complex reasoning (Aug 2025)"},
+    "claude-haiku-4-5-20251001": {"provider": "anthropic", "description": "Claude Haiku 4.5 - Fast and efficient for simpler tasks (Oct 2025)"},
+    "claude-3-5-sonnet-20241022": {"provider": "anthropic", "description": "Claude 3.5 Sonnet - Proven stable version"},
+    "claude-3-5-sonnet-latest": {"provider": "anthropic", "description": "Claude 3.5 Sonnet Latest - Most recent 3.5 version"},
+}
+
+# Initialize clients (will be used based on selected model)
+openai_client = OpenAI()
+anthropic_client = Anthropic() if ANTHROPIC_AVAILABLE else None
 
 def convert_matlab_types(obj):
     """
@@ -55,19 +111,43 @@ class TreatmentConfiguration:
                  prescription_dose: float,
                  num_fractions: int,
                  treatment_technique: str = "IMRT",
-                 risk_level: str = "high_risk"):
+                 patient_file: str = "HandN.mat"):
         self.cancer_site = cancer_site
         self.prescription_dose = prescription_dose
         self.num_fractions = num_fractions
-        self.treatment_technique = treatment_technique
-        self.risk_level = risk_level
+        self.treatment_technique = treatment_technique        
         self.dose_per_fraction = prescription_dose / num_fractions
+        self.patient_file = patient_file
 
 class IMRTPlanningAgent:
-    """LLM Agent for IMRT Planning using OpenAI function calling with structured outputs."""
+    """LLM Agent for IMRT Planning using OpenAI/Anthropic function calling with structured outputs."""
     
-    def __init__(self, matrad_path: str = None, treatment_config: TreatmentConfiguration = None):
-        """Initialize the planning agent with matRad engine and treatment configuration."""
+    def __init__(self, matrad_path: str = None, treatment_config: TreatmentConfiguration = None, model: str = "gpt-5.1"):
+        """
+        Initialize the planning agent with matRad engine and treatment configuration.
+        
+        Args:
+            matrad_path: Path to matRad installation
+            treatment_config: Treatment configuration object
+            model: Model to use (e.g., "gpt-4o", "claude-3-5-sonnet-latest")
+        """
+        # Validate model
+        if model not in SUPPORTED_MODELS:
+            print(f"⚠️  Warning: Model '{model}' not in supported list. Attempting to use anyway.")
+            print(f"   Supported models: {list(SUPPORTED_MODELS.keys())}")
+            # Infer provider from model name
+            if "claude" in model.lower():
+                self.model_provider = "anthropic"
+            else:
+                self.model_provider = "openai"
+        else:
+            self.model_provider = SUPPORTED_MODELS[model]["provider"]
+        
+        # Check if Anthropic is available if needed
+        if self.model_provider == "anthropic" and not ANTHROPIC_AVAILABLE:
+            raise ImportError("Anthropic client not available. Install with: pip install anthropic")
+        
+        self.model = model
         self.engine = MatRadEngine(matrad_path)
         self.logger = PlanningLogger()
         self.conversation_history = []
@@ -90,7 +170,10 @@ class IMRTPlanningAgent:
         
         # Log initialization
         self.logger.log_action("initialization", "Agent initialized", 
-                              {"matrad_path": matrad_path, "treatment_config": self.plan_state["treatment_config"]})
+                              {"matrad_path": matrad_path, 
+                               "treatment_config": self.plan_state["treatment_config"],
+                               "model": self.model,
+                               "model_provider": self.model_provider})
     
     def _generate_site_specific_prompt(self) -> str:
         """Generate a site-specific system prompt based on treatment configuration."""
@@ -103,6 +186,7 @@ class IMRTPlanningAgent:
         if site in ['lung', 'nsclc', 'lung_cancer']:
             return self._get_lung_prompt()
         elif site in ['head_and_neck', 'head_neck', 'hnc', 'oropharynx', 'larynx']:
+            print("Getting head and neck prompt")            
             return self._get_head_and_neck_prompt()
         elif site in ['prostate']:
             return self._get_prostate_prompt()
@@ -253,7 +337,7 @@ class IMRTPlanningAgent:
             prescription_info = f"""
             ## TREATMENT CONFIGURATION:
             - Cancer Site: {config.cancer_site}
-            - Patient File: HandN.mat 
+            - Patient File: {config.patient_file}
             - Prescription Dose: {config.prescription_dose} Gy
             - Number of Fractions: {config.num_fractions}
             - Dose per Fraction: {config.dose_per_fraction:.1f} Gy
@@ -316,11 +400,12 @@ class IMRTPlanningAgent:
             **STAGE 1 — Target Coverage, Hotspots & Basic BODY_minus_PTVs Guardrail**
             
             7. **Add Stage 1 objectives (TARGETS + BASIC BODY_minus_PTVs GUARDRAIL)**:
-               - **Target coverage** (prescription dose to 95% volume):
-                 * PTV70: MinDVH(70 Gy, 95%)
-                 * PTV63: MinDVH(63 Gy, 95%) or PTV63_eval if using evaluation structure
+               - **Target coverage and homogeneity**:
+                 * Prefer using `square_deviation`, `underdosing`, and `overdosing` objectives as the **primary tools** to shape PTV dose around the prescription (e.g. center PTV70 around 70 Gy, PTV63/PTV63_eval around 63 Gy).
+                 * Use MinDVH/MaxDVH **secondarily** to lock in edge coverage and hard caps once a reasonable dose distribution is established.                 
                
                - **Target hotspot control** (limit D2%):
+                 * Prefer `overdosing` objectives to limit high-dose voxels inside targets, and use MaxDVH mainly as a hard cap.
                  * PTV70: MaxDVH(74.9 Gy, 2%)  [≈107% of 70 Gy]
                  * PTV63 or PTV63_eval: MaxDVH(67.4 Gy, 2%)  [≈107% of 63 Gy]
                
@@ -413,10 +498,14 @@ class IMRTPlanningAgent:
             - Every time you call `evaluate_plan_quality()`, you MUST immediately call `record_thoughts()` to document the current plan quality, your clinical interpretation, and your next actions.
             
             ## Objective Function Syntax:
+            - **square_deviation**: Dose homogeneity / coverage objective → `add_optimization_objective(structure, "square_deviation", dose_value=X, penalty=P)`
+            - **underdosing**: Penalize doses below a threshold → `add_optimization_objective(structure, "underdosing", dose_value=X, penalty=P)`
+            - **overdosing**: Penalize doses above a threshold → `add_optimization_objective(structure, "overdosing", dose_value=X, penalty=P)`
             - **max_dvh**: Maximum DVH constraint → `add_optimization_objective(structure, "max_dvh", dose_value=X, volume_percent=Y, penalty=P)`
             - **min_dvh**: Minimum DVH constraint → `add_optimization_objective(structure, "min_dvh", dose_value=X, volume_percent=Y, penalty=P)`
             - **mean_dose**: Mean dose objective → `add_optimization_objective(structure, "mean_dose", dose_value=X, penalty=P)`
-            - **Prefer objectives over hard constraints**: Use add_optimization_objective with high penalties rather than add_constraint when possible
+            - **Preference rule**: Generally **use `square_deviation` / `underdosing` / `overdosing` as the primary objectives** for shaping target and OAR doses; **add DVH objectives (min_dvh / max_dvh) only if those are insufficient**, and use hard constraints only as a last resort.
+            - **Constraint rule**: Prefer objectives with high penalties over hard constraints, and **do NOT use voxel-wise constraints**.
 
             ## Structure Overlap Management
 
@@ -438,8 +527,7 @@ class IMRTPlanningAgent:
             - Keep in mind load_the_patient() leads to losing all previous objectives and constraints set and sets it to default. 
             - Be concise: Brief clinical reasoning, then immediate tool execution
             - Document decisions: Use record_thoughts() at stage transitions and after evaluations
-            - Save progress: Use save_treatment_plan() after each successful stage
-            - Handle errors gracefully: If structures missing, document and adapt strategy
+            - Save progress: Use save_treatment_plan() after each successful stage        
             - Stay focused on lexicographic priorities: NEVER compromise safety for lower-priority goals
 
             Start by getting the current plan state and proceeding through Phase A systematically.
@@ -468,8 +556,7 @@ class IMRTPlanningAgent:
             3. Create treatment plan with appropriate beam configuration
             4. Generate beam geometry and calculate dose influence matrix
             5. Add site-appropriate objectives and/or constraints (don't use voxel-wise objectives or constraints)
-            6. Optimize and evaluate plan quality
-            7. Save plan (e.g. pln, stf, dij, ct, cst)
+            6. Optimize fluence.            
             8. Evaluate plan quality using evaluate_plan_quality(), then ALWAYS use record_thoughts() to review and summarize objectives/constraints (and confirm their implementation), then concisely provide a plan summary and clear next steps.
             9. Iterate until clinical criteria are met
 
@@ -477,7 +564,8 @@ class IMRTPlanningAgent:
             - Skin structure is the patient boundary. Use it to create new structures and help structures you may need.
             - Structures may overlap, use tools (e.g. perform_voi_operation) to create new structures and help structures you may need.
             - Create Skin_excl structure (Skin setdiff all_structures) and maintain a D_max < 0.5 x prescription dose.
-    
+            - Keep in mind load_the_patient() leads to losing all previous objectives and constraints set and sets it to default. 
+            - Use set_overlap_priorities() to manage structure overlap ALWAYS BEFORE calculate_dose_influence_matrix() and optimize_fluence() to ensure proper voxel assignment in overlapping regions.
             
             **CRITICAL: How to Signal Plan Completion:**
             "PLANNING_COMPLETE: Plan meets all clinical requirements and is ready for clinical use."
@@ -981,7 +1069,7 @@ class IMRTPlanningAgent:
                         "properties": {
                             "structure_priorities": {
                                 "type": "object",
-                                "description": "Dictionary mapping structure names to priority values (higher numbers = higher priority). If not provided, uses intelligent defaults based on clinical importance.",
+                                "description": "Dictionary mapping structure names to priority values (Lower numbers = higher priority). If not provided, uses intelligent defaults based on clinical importance.",
                                 "additionalProperties": {
                                     "type": "integer"
                                 }
@@ -1359,6 +1447,97 @@ class IMRTPlanningAgent:
         compressed.extend(other_msgs[-keep_last:])
         return compressed
     
+    def _convert_to_anthropic_messages(self, messages: List[Dict]) -> List[Dict]:
+        """
+        Convert OpenAI-style messages to Anthropic format.
+        Anthropic doesn't support 'tool' role - tool results must be in 'user' messages.
+        """
+        anthropic_messages = []
+        
+        for msg in messages:
+            if msg["role"] == "system":
+                continue  # System messages handled separately
+            elif msg["role"] == "tool":
+                # Convert tool result to user message with tool_result content
+                anthropic_messages.append({
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": msg.get("tool_call_id", "unknown"),
+                            "content": msg["content"]
+                        }
+                    ]
+                })
+            elif msg["role"] == "assistant" and msg.get("tool_calls"):
+                # Convert assistant message with tool calls to Anthropic format
+                content = []
+                if msg.get("content"):
+                    content.append({"type": "text", "text": msg["content"]})
+                
+                for tc in msg["tool_calls"]:
+                    content.append({
+                        "type": "tool_use",
+                        "id": tc["id"],
+                        "name": tc["function"]["name"],
+                        "input": json.loads(tc["function"]["arguments"])
+                    })
+                
+                anthropic_messages.append({
+                    "role": "assistant",
+                    "content": content
+                })
+            else:
+                # Regular user or assistant message
+                anthropic_messages.append(msg)
+        
+        return anthropic_messages
+    
+    def _call_llm(self, messages: List[Dict], tools: List[Dict]) -> Any:
+        """
+        Call the appropriate LLM provider (OpenAI or Anthropic) based on configured model.
+        
+        Args:
+            messages: Conversation messages
+            tools: Available tools/functions
+            
+        Returns:
+            LLM response object
+        """
+        if self.model_provider == "openai":
+            return openai_client.chat.completions.create(
+                model=self.model,
+                messages=messages,
+                tools=tools,
+                tool_choice="auto"
+            )
+        elif self.model_provider == "anthropic":
+            # Extract system message
+            system_message = next((msg["content"] for msg in messages if msg["role"] == "system"), "")
+            
+            # Convert messages to Anthropic format (handles tool role conversion)
+            anthropic_messages = self._convert_to_anthropic_messages(messages)
+            
+            # Convert tools to Anthropic format
+            anthropic_tools = []
+            for tool in tools:
+                func = tool["function"]
+                anthropic_tools.append({
+                    "name": func["name"],
+                    "description": func["description"],
+                    "input_schema": func["parameters"]
+                })
+            
+            return anthropic_client.messages.create(
+                model=self.model,
+                max_tokens=4096,
+                system=system_message,
+                messages=anthropic_messages,
+                tools=anthropic_tools
+            )
+        else:
+            raise ValueError(f"Unsupported model provider: {self.model_provider}")
+    
     def _configure_fmincon_tolerances(self):
         """
         Configure fmincon tolerances to prevent early stopping.
@@ -1454,30 +1633,70 @@ class IMRTPlanningAgent:
         while iteration < max_iterations:
             try:
                 # Get LLM response with function calling
-                response = client.chat.completions.create(
-                    model="gpt-5",
-                    messages=messages,
-                    tools=self.get_available_tools(),
-                    tool_choice="auto"
-                )
+                response = self._call_llm(messages, self.get_available_tools())
                 
-                # Add assistant message (simplified version)
-                assistant_message = response.choices[0].message
-                tool_calls_serializable = None
-                if assistant_message.tool_calls:
-                    tool_calls_serializable = [
-                        {
-                            "id": tc.id,
-                            "type": "function",
-                            "function": {"name": tc.function.name, "arguments": tc.function.arguments}
-                        } for tc in assistant_message.tool_calls
-                    ]
-                simplified_assistant = {
-                    "role": "assistant",
-                    "content": assistant_message.content,
-                    "tool_calls": tool_calls_serializable
-                }
-                messages.append(simplified_assistant)
+                # Parse response based on provider
+                if self.model_provider == "openai":
+                    assistant_message = response.choices[0].message
+                    tool_calls_serializable = None
+                    if assistant_message.tool_calls:
+                        tool_calls_serializable = [
+                            {
+                                "id": tc.id,
+                                "type": "function",
+                                "function": {"name": tc.function.name, "arguments": tc.function.arguments}
+                            } for tc in assistant_message.tool_calls
+                        ]
+                    simplified_assistant = {
+                        "role": "assistant",
+                        "content": assistant_message.content,
+                        "tool_calls": tool_calls_serializable
+                    }
+                    messages.append(simplified_assistant)
+                    
+                elif self.model_provider == "anthropic":
+                    # Convert Anthropic response to OpenAI-like format
+                    content_text = ""
+                    tool_calls_serializable = []
+                    
+                    for content_block in response.content:
+                        if content_block.type == "text":
+                            content_text = content_block.text
+                        elif content_block.type == "tool_use":
+                            tool_calls_serializable.append({
+                                "id": content_block.id,
+                                "type": "function",
+                                "function": {
+                                    "name": content_block.name,
+                                    "arguments": json.dumps(content_block.input)
+                                }
+                            })
+                    
+                    simplified_assistant = {
+                        "role": "assistant",
+                        "content": content_text if content_text else None,
+                        "tool_calls": tool_calls_serializable if tool_calls_serializable else None
+                    }
+                    messages.append(simplified_assistant)
+                    
+                    # Create a simple object to mimic OpenAI's structure
+                    class SimpleMessage:
+                        def __init__(self, content, tool_calls):
+                            self.content = content
+                            self.tool_calls = []
+                            if tool_calls:
+                                for tc in tool_calls:
+                                    class ToolCall:
+                                        def __init__(self, tc_dict):
+                                            self.id = tc_dict["id"]
+                                            class Function:
+                                                def __init__(self, func_dict):
+                                                    self.name = func_dict["name"]
+                                                    self.arguments = func_dict["arguments"]
+                                            self.function = Function(tc_dict["function"])
+                                    self.tool_calls.append(ToolCall(tc))
+                    
+                    assistant_message = SimpleMessage(content_text, tool_calls_serializable)
                 
                 # Count tokens and log messages at each iteration
                 total_chars = sum(len(str(msg.get('content', ''))) for msg in messages)
@@ -1582,11 +1801,35 @@ class IMRTPlanningAgent:
         return session_results
 
 
+def print_supported_models():
+    """Print list of supported models for agentic work."""
+    print("\n" + "=" * 70)
+    print("🤖 SUPPORTED MODELS FOR AGENTIC PLANNING")
+    print("=" * 70)
+    
+    openai_models = {k: v for k, v in SUPPORTED_MODELS.items() if v["provider"] == "openai"}
+    anthropic_models = {k: v for k, v in SUPPORTED_MODELS.items() if v["provider"] == "anthropic"}
+    
+    print("\n📘 OpenAI Models:")
+    for model_name, info in openai_models.items():
+        print(f"  • {model_name:30s} - {info['description']}")
+    
+    print("\n📗 Anthropic Models:")
+    for model_name, info in anthropic_models.items():
+        print(f"  • {model_name:30s} - {info['description']}")
+    
+    print("\n" + "=" * 70)
+    print("💡 Usage: Set model parameter when calling main() or IMRTPlanningAgent()")
+    print("   Example: main(model='gpt-4o') or main(model='claude-3-5-sonnet-latest')")
+    print("=" * 70 + "\n")
+
+
 def main(cancer_site: str = "head_and_neck", 
          prescription_dose: float = 70.0, 
          num_fractions: int = 35,
          patient_file: str = "HandN.mat",
-         treatment_technique: str = "IMRT"):
+         treatment_technique: str = "IMRT",
+         model: str = "gpt-4o"):
     """
     Main function to test the LLM agent planning system with configurable treatment parameters.
     
@@ -1596,6 +1839,7 @@ def main(cancer_site: str = "head_and_neck",
         num_fractions: Number of treatment fractions
         patient_file: Path to patient data file
         treatment_technique: Treatment technique (default: 'IMRT')
+        model: LLM model to use (default: 'gpt-4o'). See print_supported_models() for options.
     """
     print("🚀 Starting LLM Agent IMRT Planning Test")
     print("=" * 50)
@@ -1608,18 +1852,20 @@ def main(cancer_site: str = "head_and_neck",
         cancer_site=cancer_site,
         prescription_dose=prescription_dose,
         num_fractions=num_fractions,
-        treatment_technique=treatment_technique
+        treatment_technique=treatment_technique,
+        patient_file=patient_file
     )
     
     try:
         # Create planning agent with treatment configuration
-        agent = IMRTPlanningAgent(matrad_path, treatment_config)
+        agent = IMRTPlanningAgent(matrad_path, treatment_config, model=model)
         
         print(f"📊 Patient file: {patient_file}")
         print(f"🏥 matRad path: {matrad_path}")
         print(f"🎯 Cancer site: {cancer_site}")
         print(f"💊 Prescription: {prescription_dose} Gy in {num_fractions} fractions ({prescription_dose/num_fractions:.1f} Gy/fx)")
         print(f"⚡ Technique: {treatment_technique}")
+        print(f"🤖 Model: {model} ({SUPPORTED_MODELS.get(model, {}).get('provider', 'unknown')})")
         print(f"📁 Session ID: {agent.logger.session_id}")
         print("\n🤖 Starting LLM-guided planning session...")
         
@@ -1666,4 +1912,21 @@ def main(cancer_site: str = "head_and_neck",
 
 
 if __name__ == "__main__":
-    main() 
+    # Print available models
+    # print_supported_models()
+    
+    # Run with default model (gpt-5.1 - stable and reliable)
+    main()
+    
+    # Examples with different models:
+    
+    # Latest OpenAI models (GPT-5 series):
+    # main(model="gpt-5.1")      # Latest GPT-5.1 with improved reasoning (Nov 2025)
+    # main(model="gpt-5")        # GPT-5 multimodal with advanced reasoning (Aug 2025)
+    # main(model="gpt-4o-mini")  # Faster, cost-effective GPT-4 option
+    
+    # Latest Anthropic models (Claude 4.5/4.1 series - requires: pip install anthropic):
+    # main(model="claude-sonnet-4-5-20250929")  # Latest Sonnet for coding and agentic tasks (Sep 2025)
+    # main(model="claude-opus-4-1-20250805")    # Latest Opus for complex reasoning (Aug 2025)
+    # main(model="claude-haiku-4-5-20251001")   # Latest Haiku, fast and efficient (Oct 2025)
+    # main(model="claude-3-5-sonnet-latest")    # Previous generation, proven performance 
