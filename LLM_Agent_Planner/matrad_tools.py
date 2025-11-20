@@ -2979,7 +2979,15 @@ class MatRadEngine:
             
             # Set priorities for newly created ring structures
             for ring in ring_info:
-                self._set_new_structure_priority(ring["name"])
+                # Set minimal priority for ring structure
+                self.eng.eval(f"""
+                for i = 1:size(cst, 1)
+                    if strcmp(cst{{i, 2}}, '{ring["name"]}')
+                        cst{{i, 5}}.Priority = 3;
+                        break;
+                    end
+                end
+                """, nargout=0)
             
             return {
                 "success": True,
@@ -3096,7 +3104,22 @@ class MatRadEngine:
             new_struct_info = self.eng.eval("newStructInfo")
             
             # Set priority for newly created structure
-            self._set_new_structure_priority(new_structure_name, str(new_struct_info["type"]))
+            # Set minimal priority based on structure type
+            if str(new_struct_info["type"]) == "TARGET":
+                priority = 1
+            elif str(new_struct_info["type"]) == "OAR":
+                priority = 2
+            else:
+                priority = 3
+                
+            self.eng.eval(f"""
+            for i = 1:size(cst, 1)
+                if strcmp(cst{{i, 2}}, '{new_structure_name}')
+                    cst{{i, 5}}.Priority = {priority};
+                    break;
+                end
+            end
+            """, nargout=0)
             
             return {
                 "success": True,
@@ -3242,210 +3265,29 @@ class MatRadEngine:
             return {"success": False, "error": str(e)}
     
     def set_overlap_priorities(self, structure_priorities: Dict[str, int] = None) -> Dict[str, Any]:
-        """
-        Set overlap priorities for structures to handle overlapping volumes.
-        
-        When structures overlap, matRad needs to know which structure takes priority
-        for the overlapping voxels. Higher priority numbers take precedence.
-        
-        Args:
-            structure_priorities: Dict mapping structure names to priority values.
-                                Higher numbers = higher priority. If None, uses default priorities.
-                                
-        Returns:
-            Dict with success status and priority information
-            
-        Example:
-            # Set priorities so critical OARs take precedence over targets
-            priorities = {
-                "SPINAL_CORD": 100,
-                "BRAINSTEM": 95, 
-                "PTV70": 10,
-                "PTV63": 5
-            }
-            result = engine.set_overlap_priorities(priorities)
-        """
-        if not self.initialized:
-            return {"success": False, "error": "MATLAB Engine not initialized"}
-        
-        if not self.patient_loaded:
-            return {"success": False, "error": "No patient data loaded"}
+        """Set minimal overlap priorities: TARGET=1, OAR=2, other=3."""
+        if not self.initialized or not self.patient_loaded:
+            return {"success": False, "error": "Engine not initialized or no patient loaded"}
             
         try:
-            # Get current structure names
-            structure_info = self.get_structure_names()
-            if not structure_info["success"]:
-                return {"success": False, "error": "Could not get structure names"}
-            
-            # Combine all structure types into a single list
-            available_structures = (
-                structure_info.get("targets", []) + 
-                structure_info.get("oars", []) + 
-                structure_info.get("other", [])
-            )
-            
-            # Use default priorities if none provided
-            if structure_priorities is None:
-                structure_priorities = self._get_default_overlap_priorities(available_structures)
-            
-            # Validate structure names
-            invalid_structures = []
-            for struct_name in structure_priorities.keys():
-                if struct_name not in available_structures:
-                    invalid_structures.append(struct_name)
-            
-            if invalid_structures:
-                return {
-                    "success": False, 
-                    "error": f"Invalid structure names: {invalid_structures}",
-                    "available_structures": available_structures
-                }
-            
-            # Set priorities in cst structure
-            priority_updates = []
-            for struct_name, priority in structure_priorities.items():
-                # Find structure index in cst
-                struct_idx = available_structures.index(struct_name) + 1  # MATLAB 1-based indexing
-                
-                # Set priority in cst{i,5}.Priority
-                self.eng.eval(f"cst{{{struct_idx},5}}.Priority = {priority};", nargout=0)
-                priority_updates.append(f"{struct_name}: {priority}")
-            
-            # Apply overlap priorities using matRad function
-            self.eng.eval("cst = matRad_setOverlapPriorities(cst, size(ct.cubeHU{1}));", nargout=0)                        
-            
-            return {
-                "success": True,
-                "message": "Overlap priorities set successfully",
-                "priority_updates": priority_updates,
-                "total_structures_updated": len(priority_updates)
-            }
-            
-        except Exception as e:
-            return {
-                "success": False,
-                "error": f"Failed to set overlap priorities: {str(e)}"
-            }
-    
-    def _get_default_overlap_priorities(self, available_structures: List[str]) -> Dict[str, int]:
-        """
-        Generate default overlap priorities based on clinical importance.
-        
-        CRITICAL: Lower numbers = higher priority in matRad!
-        Priority hierarchy (lower numbers = higher priority):
-        - Critical OARs (spinal cord, brainstem): 1-10
-        - Major OARs (heart, lungs, kidneys): 11-20  
-        - Minor OARs (parotids, etc.): 21-30
-        - Targets (PTVs, GTVs): 31-40
-        - Support structures (body, skin): 41-50
-        """
-        priorities = {}
-        
-        # Critical OARs - HIGHEST priority (lowest numbers)
-        critical_oars = [
-            "SPINAL_CORD", "SPINALCORD", "CORD", "SC",
-            "BRAINSTEM", "BRAIN_STEM", "BS",
-            "CORD_PRV", "SPINALCORD_PRV", "BRAINSTEM_PRV"
-        ]
-        
-        # Major OARs
-        major_oars = [
-            "HEART", "LUNG_L", "LUNG_R", "LUNGS", "LUNG_LEFT", "LUNG_RIGHT",
-            "KIDNEY_L", "KIDNEY_R", "KIDNEYS", "LIVER", "STOMACH"
-        ]
-        
-        # Minor OARs  
-        minor_oars = [
-            "PAROTID_L", "PAROTID_R", "PAROTIDS", "PAROTID_LEFT", "PAROTID_RIGHT",
-            "ORAL_CAVITY", "LARYNX", "PHARYNX", "ESOPHAGUS", "BLADDER", "RECTUM"
-        ]
-        
-        # Targets
-        targets = [
-            "PTV", "GTV", "CTV", "ITV"
-        ]
-        
-        # Support structures
-        support = [
-            "BODY", "SKIN", "EXTERNAL", "PATIENT"
-        ]
-        
-        # Assign priorities (LOWER numbers = HIGHER priority)
-        for struct in available_structures:
-            struct_upper = struct.upper()
-            
-            # Check critical OARs first - LOWEST numbers (highest priority)
-            if any(critical in struct_upper for critical in critical_oars):
-                priorities[struct] = 1
-            # Check major OARs
-            elif any(major in struct_upper for major in major_oars):
-                priorities[struct] = 15
-            # Check minor OARs
-            elif any(minor in struct_upper for minor in minor_oars):
-                priorities[struct] = 25
-            # Check targets
-            elif any(target in struct_upper for target in targets):
-                # Higher dose targets get slightly higher priority
-                if "70" in struct or "7000" in struct:
-                    priorities[struct] = 35
-                elif "63" in struct or "6300" in struct:
-                    priorities[struct] = 37
-                else:
-                    priorities[struct] = 40
-            # Support structures - LOWEST priority (highest numbers)
-            elif any(support in struct_upper for support in support):
-                priorities[struct] = 50
-            # Default priority for unrecognized structures
-            else:
-                priorities[struct] = 45
-                
-        return priorities
-
-    def _set_new_structure_priority(self, structure_name: str, structure_type: str = None) -> None:
-        """Set appropriate priority for newly created structure. LOWER numbers = HIGHER priority."""
-        try:
-            # Determine priority based on structure name and type
-            name_upper = structure_name.upper()
-            
-            # Ring structures get medium priority (for gradient control)
-            if "RING" in name_upper:
-                priority = 30
-            # Evaluation structures inherit from parent structure type
-            elif "EVAL" in name_upper or "_EVAL" in name_upper:
-                if any(target in name_upper for target in ["PTV", "GTV", "CTV"]):
-                    priority = 38
-                else:
-                    priority = 45
-            # Combined structures (unions, intersections)
-            elif any(combo in name_upper for combo in ["COMBINED", "UNION", "ALL"]):
-                if any(target in name_upper for target in ["PTV", "GTV", "CTV"]):
-                    priority = 36
-                else:
-                    priority = 42
-            # Body minus structures (spillage control)
-            elif "MINUS" in name_upper or "BODY_" in name_upper:
-                priority = 48
-            # Default based on structure type if provided
-            elif structure_type == "TARGET":
-                priority = 40
-            elif structure_type == "OAR":
-                priority = 25
-            else:
-                priority = 45
-                
-            # Set the priority in MATLAB
-            self.eng.eval(f"""
-            for i = 1:size(cst, 1)
-                if strcmp(cst{{i, 2}}, '{structure_name}')
-                    cst{{i, 5}}.Priority = {priority};
-                    break;
+            # Set minimal priorities: TARGET=1, OAR=2, other=3
+            self.eng.eval("""
+            for i = 1:size(cst,1)
+                if strcmp(cst{i,3}, 'TARGET')
+                    cst{i,5}.Priority = 1;
+                elseif strcmp(cst{i,3}, 'OAR')
+                    cst{i,5}.Priority = 2;
+                else
+                    cst{i,5}.Priority = 3;
                 end
             end
+            cst = matRad_setOverlapPriorities(cst);
             """, nargout=0)
             
-        except Exception:
-            # If priority setting fails, continue silently
-            pass
+            return {"success": True, "message": "Minimal overlap priorities applied (TARGET=1, OAR=2, other=3)"}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+    
 
     def save_plan(self, output_file: str, save_results: bool = True) -> Dict[str, Any]:
         """
