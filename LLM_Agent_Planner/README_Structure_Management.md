@@ -169,6 +169,29 @@ Both functions are integrated as LLM agent tools with structured parameter valid
    - Assess dose gradients using ring structure metrics
    - Verify coverage on evaluation volumes
 
+### Overlap Priorities (`set_overlap_priorities`)
+
+Manages overlapping structure priorities using a minimal approach:
+- **TARGET structures**: Priority 1 (highest)
+- **OAR structures**: Priority 2 (medium)  
+- **Other structures**: Priority 3 (lowest)
+
+When structures overlap, higher priority structures take precedence for voxel assignment during optimization.
+
+#### Interface
+```python
+set_overlap_priorities(structure_priorities: Dict[str, int] = None)
+```
+
+#### Usage
+```python
+# Use minimal defaults (recommended)
+set_overlap_priorities()
+
+# Or set custom priorities
+set_overlap_priorities({"PTV": 1, "Brainstem": 2, "BODY": 3})
+```
+
 ### Structure Naming Conventions
 
 - **Ring Structures**: Auto-generated as `{StructureName}Ring{X}mm`

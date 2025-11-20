@@ -1063,13 +1063,13 @@ class IMRTPlanningAgent:
                 "type": "function",
                 "function": {
                     "name": "set_overlap_priorities",
-                    "description": "Set overlap priorities for structures to handle overlapping volumes. When structures overlap, matRad needs to know which structure takes priority for the overlapping voxels. Higher priority numbers take precedence. Critical OARs should have higher priority than targets.",
+                    "description": "Set minimal overlap priorities: TARGET=1, OAR=2, other=3. Optionally provide custom priorities.",
                     "parameters": {
                         "type": "object",
                         "properties": {
                             "structure_priorities": {
                                 "type": "object",
-                                "description": "Dictionary mapping structure names to priority values (Lower numbers = higher priority). If not provided, uses intelligent defaults based on clinical importance.",
+                                "description": "Optional dictionary mapping structure names to priority values. If not provided, uses minimal defaults.",
                                 "additionalProperties": {
                                     "type": "integer"
                                 }
