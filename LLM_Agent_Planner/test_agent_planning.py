@@ -108,16 +108,26 @@ class TreatmentConfiguration:
     """Configuration class for treatment parameters."""
     def __init__(self, 
                  cancer_site: str,
-                 prescription_dose: float,
+                 prescription_dose: Union[float, Dict[str, float]],
                  num_fractions: int,
                  treatment_technique: str = "IMRT",
                  patient_file: str = "HandN.mat"):
         self.cancer_site = cancer_site
-        self.prescription_dose = prescription_dose
         self.num_fractions = num_fractions
-        self.treatment_technique = treatment_technique        
-        self.dose_per_fraction = prescription_dose / num_fractions
+        self.treatment_technique = treatment_technique
         self.patient_file = patient_file
+        
+        # Handle both single and multi-level prescriptions
+        if isinstance(prescription_dose, dict):
+            self.prescription_doses = prescription_dose
+            self.prescription_dose = max(prescription_dose.values())  # Primary dose
+            self.is_sib = True
+        else:
+            self.prescription_dose = prescription_dose
+            self.prescription_doses = {"primary": prescription_dose}
+            self.is_sib = False
+            
+        self.dose_per_fraction = self.prescription_dose / num_fractions
 
 class IMRTPlanningAgent:
     """LLM Agent for IMRT Planning using OpenAI/Anthropic function calling with structured outputs."""
@@ -334,7 +344,21 @@ class IMRTPlanningAgent:
         """Generate head and neck specific planning prompt (existing implementation)."""
         config = self.treatment_config
         if config:
-            prescription_info = f"""
+            # Handle multi-level prescriptions
+            if config.is_sib:
+                dose_info = "\n".join([f"    * {target}: {dose} Gy" for target, dose in config.prescription_doses.items()])
+                prescription_info = f"""
+            ## TREATMENT CONFIGURATION:
+            - Cancer Site: {config.cancer_site}
+            - Patient File: {config.patient_file}
+            - Prescription Doses (SIB):
+{dose_info}
+            - Number of Fractions: {config.num_fractions}
+            - Primary Dose per Fraction: {config.dose_per_fraction:.1f} Gy
+            - Treatment Technique: {config.treatment_technique}
+            """
+            else:
+                prescription_info = f"""
             ## TREATMENT CONFIGURATION:
             - Cancer Site: {config.cancer_site}
             - Patient File: {config.patient_file}
@@ -378,10 +402,12 @@ class IMRTPlanningAgent:
 
             ### Phase B: VOI Creation & Preparation
             5. **Create evaluation structures** (ALWAYS do this before adding objectives):
-               - Check which structures exist first, then create:
-               - `PTV_all`: Union of all PTVs → `perform_voi_operation("PTV63","PTV70","union","PTV_all")`
-               - `PTV_low_eval`: For SIB, subtract higher from lower → `perform_voi_operation("PTV63","PTV70","setdiff","PTV63_eval")`
-               - `BODY_minus_PTVs`: Spillage control volume → `perform_voi_operation("SKIN","PTV_all","setdiff","BODY_minus_PTVs")`
+               - **IMPORTANT**: First examine structure names using get_structure_information() to identify actual PTV names
+               - Check which structures exist first, then create appropriate evaluation volumes:
+               - For this phantom, expect structures like: PTV6996 (≈70 Gy), PTV5610 (≈56 Gy)
+               - `PTV_all`: Union of all PTVs → `perform_voi_operation("PTV5610","PTV6996","union","PTV_all")`
+               - `PTV_low_eval`: For SIB, subtract higher from lower → `perform_voi_operation("PTV5610","PTV6996","setdiff","PTV5610_eval")`
+               - `BODY_minus_PTVs`: Spillage control volume → `perform_voi_operation("body","PTV_all","setdiff","BODY_minus_PTVs")`
                - `Rings`: Gradient control shells → `create_ring_structures("PTV_all", [5,15,30], inner_margin_mm=0)`
             
             6. **Check existing objectives**: ALWAYS use get_current_objectives() AND get_current_constraints()
@@ -401,13 +427,14 @@ class IMRTPlanningAgent:
             
             7. **Add Stage 1 objectives (TARGETS + BASIC BODY_minus_PTVs GUARDRAIL)**:
                - **Target coverage and homogeneity**:
-                 * Prefer using `square_deviation`, `underdosing`, and `overdosing` objectives as the **primary tools** to shape PTV dose around the prescription (e.g. center PTV70 around 70 Gy, PTV63/PTV63_eval around 63 Gy).
-                 * Use MinDVH/MaxDVH **secondarily** to lock in edge coverage and hard caps once a reasonable dose distribution is established.                 
+                 * Prefer using `square_deviation`, `underdosing`, and `overdosing` objectives as the **primary tools** to shape PTV dose around the prescription
+                 * For this phantom: center PTV6996 around 70 Gy, PTV5610_eval around 56 Gy
+                 * Use MinDVH/MaxDVH **secondarily** to lock in edge coverage and hard caps once a reasonable dose distribution is established                 
                
                - **Target hotspot control** (limit D2%):
-                 * Prefer `overdosing` objectives to limit high-dose voxels inside targets, and use MaxDVH mainly as a hard cap.
-                 * PTV70: MaxDVH(74.9 Gy, 2%)  [≈107% of 70 Gy]
-                 * PTV63 or PTV63_eval: MaxDVH(67.4 Gy, 2%)  [≈107% of 63 Gy]
+                 * Prefer `overdosing` objectives to limit high-dose voxels inside targets, and use MaxDVH mainly as a hard cap
+                 * PTV6996: MaxDVH(74.9 Gy, 2%)  [≈107% of 70 Gy]
+                 * PTV5610 or PTV5610_eval: MaxDVH(59.9 Gy, 2%)  [≈107% of 56 Gy]
                
                - **Basic BODY_minus_PTVs hotspot guardrail** (to avoid extreme non-PTV hot spots while keeping targets dominant):
                  * BODY_minus_PTVs: MaxDVH(prescription_dose, ~0.1-1%) to keep the maximum dose outside PTVs at or below the primary prescription dose (use lower penalty than target coverage/hotspot objectives)
@@ -415,9 +442,9 @@ class IMRTPlanningAgent:
             8. **Optimize Stage 1**: Run optimize_fluence() and analyze optimization_analysis results
             
             9. **Evaluate Stage 1**: Use evaluate_plan_quality() then record_thoughts() to document assessment and check:
-               - ✓ PASS CRITERIA: PTV70 V100% ≥ 95% AND D98 ≥ 66.5 Gy (95% of 70 Gy)
-               - ✓ PASS CRITERIA: PTV63 V100% ≥ 95% AND D98 ≥ 59.85 Gy (95% of 63 Gy)
-               - ✓ PASS CRITERIA: PTV70 D2% ≤ 74.9 Gy AND PTV63 D2% ≤ 67.4 Gy
+               - ✓ PASS CRITERIA: PTV6996 V100% ≥ 95% AND D98 ≥ 66.5 Gy (95% of 70 Gy)
+               - ✓ PASS CRITERIA: PTV5610 V100% ≥ 95% AND D98 ≥ 53.2 Gy (95% of 56 Gy)
+               - ✓ PASS CRITERIA: PTV6996 D2% ≤ 74.9 Gy AND PTV5610 D2% ≤ 59.9 Gy
                - If ANY criterion fails → adjust penalties/parameters, re-optimize, DO NOT proceed to Stage 2
                - If infeasible after 2-3 attempts → report conflict and request guidance
            
@@ -449,14 +476,14 @@ class IMRTPlanningAgent:
                  * Ring_5_15mm: MaxDVH(~50-80% of Rx, lower penalty)
                
                - **Target cold spot tightening** (only if Stage 1 coverage is comfortably met):
-                 * PTV70: MinDVH(66.5 Gy [D95], 98%)
-                 * PTV63_eval: MinDVH(59.85 Gy [D95], 98%)
+                 * PTV6996: MinDVH(66.5 Gy [D95], 98%)
+                 * PTV5610_eval: MinDVH(53.2 Gy [D95], 98%)
                
                - **Secondary OAR constraints** (mean dose reduction, lowest priority within Stage 3):
-                 * Parotid_L: mean_dose (aim < 20-26 Gy if achievable)
-                 * Parotid_R: mean_dose (aim < 20-26 Gy if achievable)
-                 * Oral Cavity: mean_dose (aim < 30-40 Gy if achievable)
-                 * Larynx: mean_dose (aim ALARA if present)
+                 * L parotid: mean_dose (aim < 20-26 Gy if achievable)
+                 * R parotid: mean_dose (aim < 20-26 Gy if achievable)
+                 * esophagus: mean_dose (aim < 30-40 Gy if achievable)
+                 * Other OARs: mean_dose (aim ALARA if present)
                
                - **Fine-tuning** (optional, use low penalties and never at expense of higher stages):
                  * Additional ring constraints for cosmetic shaping
@@ -1825,7 +1852,7 @@ def print_supported_models():
 
 
 def main(cancer_site: str = "head_and_neck", 
-         prescription_dose: float = 70.0, 
+         prescription_dose: Union[float, Dict[str, float]] = 70.0, 
          num_fractions: int = 35,
          patient_file: str = "HandN.mat",
          treatment_technique: str = "IMRT",
@@ -1835,7 +1862,7 @@ def main(cancer_site: str = "head_and_neck",
     
     Args:
         cancer_site: Type of cancer (e.g., 'lung', 'head_and_neck', 'prostate', 'breast')
-        prescription_dose: Total prescription dose in Gy
+        prescription_dose: Total prescription dose in Gy, or dict for SIB (e.g., {"PTV6996": 70.0, "PTV5610": 56.0})
         num_fractions: Number of treatment fractions
         patient_file: Path to patient data file
         treatment_technique: Treatment technique (default: 'IMRT')
@@ -1863,7 +1890,12 @@ def main(cancer_site: str = "head_and_neck",
         print(f"📊 Patient file: {patient_file}")
         print(f"🏥 matRad path: {matrad_path}")
         print(f"🎯 Cancer site: {cancer_site}")
-        print(f"💊 Prescription: {prescription_dose} Gy in {num_fractions} fractions ({prescription_dose/num_fractions:.1f} Gy/fx)")
+        if isinstance(prescription_dose, dict):
+            dose_info = ", ".join([f"{target}: {dose} Gy" for target, dose in prescription_dose.items()])
+            primary_dose = max(prescription_dose.values())
+            print(f"💊 Prescription (SIB): {dose_info} in {num_fractions} fractions ({primary_dose/num_fractions:.1f} Gy/fx primary)")
+        else:
+            print(f"💊 Prescription: {prescription_dose} Gy in {num_fractions} fractions ({prescription_dose/num_fractions:.1f} Gy/fx)")
         print(f"⚡ Technique: {treatment_technique}")
         print(f"🤖 Model: {model} ({SUPPORTED_MODELS.get(model, {}).get('provider', 'unknown')})")
         print(f"📁 Session ID: {agent.logger.session_id}")
