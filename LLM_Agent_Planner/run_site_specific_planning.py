@@ -19,7 +19,21 @@ Usage examples:
 import argparse
 import sys
 import os
+from typing import Dict, Union
 from test_agent_planning import main, TreatmentConfiguration
+
+def parse_dose_argument(dose_str: str) -> Union[float, Dict[str, float]]:
+    """Parse dose argument - handles both single dose and SIB format."""
+    if ':' in dose_str and ',' in dose_str:
+        # SIB format: "PTV6996:70.0,PTV5610:56.0"
+        dose_dict = {}
+        for pair in dose_str.split(','):
+            target, dose = pair.split(':')
+            dose_dict[target.strip()] = float(dose.strip())
+        return dose_dict
+    else:
+        # Single dose format
+        return float(dose_str)
 
 def parse_arguments():
     """Parse command line arguments."""
@@ -61,9 +75,9 @@ Supported models (default: gpt-5.1):
     
     parser.add_argument(
         "--dose", "-d",
-        type=float,
+        type=str,
         required=True,
-        help="Total prescription dose in Gy"
+        help='Total prescription dose in Gy. For SIB, use format "PTV1:dose1,PTV2:dose2" (e.g., "PTV6996:70.0,PTV5610:56.0")'
     )
     
     parser.add_argument(
@@ -107,14 +121,26 @@ Supported models (default: gpt-5.1):
 
 def print_treatment_summary(args):
     """Print a summary of the treatment configuration."""
-    dose_per_fraction = args.dose / args.fractions
+    # Parse dose argument
+    prescription_dose = parse_dose_argument(args.dose)
     
     print("🎯 TREATMENT CONFIGURATION")
     print("=" * 50)
     print(f"Cancer Site:        {args.site}")
-    print(f"Prescription Dose:  {args.dose} Gy")
-    print(f"Number of Fractions: {args.fractions}")
-    print(f"Dose per Fraction:  {dose_per_fraction:.1f} Gy")
+    
+    if isinstance(prescription_dose, dict):
+        primary_dose = max(prescription_dose.values())
+        dose_per_fraction = primary_dose / args.fractions
+        dose_info = ", ".join([f"{target}: {dose} Gy" for target, dose in prescription_dose.items()])
+        print(f"Prescription (SIB): {dose_info}")
+        print(f"Number of Fractions: {args.fractions}")
+        print(f"Primary Dose/Fx:    {dose_per_fraction:.1f} Gy")
+    else:
+        dose_per_fraction = prescription_dose / args.fractions
+        print(f"Prescription Dose:  {prescription_dose} Gy")
+        print(f"Number of Fractions: {args.fractions}")
+        print(f"Dose per Fraction:  {dose_per_fraction:.1f} Gy")
+    
     print(f"Treatment Technique: {args.technique}")
     print(f"LLM Model:          {args.model}")
     print(f"Patient File:       {args.patient}")
@@ -147,10 +173,13 @@ def main_cli():
     print_treatment_summary(args)
     
     try:
+        # Parse dose argument
+        prescription_dose = parse_dose_argument(args.dose)
+        
         # Run the planning session
         main(
             cancer_site=args.site,
-            prescription_dose=args.dose,
+            prescription_dose=prescription_dose,
             num_fractions=args.fractions,
             patient_file=args.patient,
             treatment_technique=args.technique,

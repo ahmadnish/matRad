@@ -48,6 +48,52 @@
       },
   
       {
+        "name": "Head & Neck SIB (Head_and_Neck_1.mat) - GPT-5.1",
+        "type": "python",
+        "request": "launch",
+        "program": "${workspaceFolder}/LLM_Agent_Planner/run_site_specific_planning.py",
+        "console": "integratedTerminal",
+        "cwd": "${workspaceFolder}",
+        "justMyCode": false,
+        "env": {
+          "PYTHONUNBUFFERED": "1",
+          "PYTHONPATH": "${workspaceFolder}"
+        },
+        "args": [
+          "--site", "head_and_neck",
+          "--dose", "PTV6996:70.0,PTV5610:56.0",
+          "--fractions", "35",
+          "--patient", "Head_and_Neck_1.mat",
+          "--technique", "IMRT",
+          "--model", "gpt-5.1",
+          "--max-iterations", "200"
+        ]
+      },
+
+      {
+        "name": "Head & Neck SIB (Head_and_Neck_1.mat) - Claude Sonnet 4.5",
+        "type": "python",
+        "request": "launch",
+        "program": "${workspaceFolder}/LLM_Agent_Planner/run_site_specific_planning.py",
+        "console": "integratedTerminal",
+        "cwd": "${workspaceFolder}",
+        "justMyCode": false,
+        "env": {
+          "PYTHONUNBUFFERED": "1",
+          "PYTHONPATH": "${workspaceFolder}"
+        },
+        "args": [
+          "--site", "head_and_neck",
+          "--dose", "PTV6996:70.0,PTV5610:56.0",
+          "--fractions", "35",
+          "--patient", "Head_and_Neck_1.mat",
+          "--technique", "IMRT",
+          "--model", "claude-sonnet-4-5-20250929",
+          "--max-iterations", "200"
+        ]
+      },
+
+      {
         "name": "Head & Neck (70 Gy / 35 fx) - Claude Sonnet 4.5",
         "type": "python",
         "request": "launch",
@@ -132,7 +178,7 @@
       {
         "id": "dose",
         "type": "promptString",
-        "description": "Total dose (Gy)",
+        "description": "Total dose (Gy) or SIB format (e.g., PTV6996:70.0,PTV5610:56.0)",
         "default": "60"
       },
       {
@@ -143,9 +189,16 @@
       },
       {
         "id": "patient",
-        "type": "promptString",
+        "type": "pickString",
         "description": "Patient file (.mat)",
-        "default": "lung_patient.mat"
+        "options": [
+          "HandN.mat",
+          "Head_and_Neck_1.mat",
+          "lung_patient.mat",
+          "prostate_patient.mat",
+          "breast_patient.mat"
+        ],
+        "default": "HandN.mat"
       },
       {
         "id": "technique",

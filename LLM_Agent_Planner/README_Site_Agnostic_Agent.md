@@ -10,9 +10,10 @@ The agent has been updated to be **site-agnostic**, meaning it can automatically
 
 ### 🎯 **Configurable Treatment Parameters**
 - **Cancer Site**: Specify the type of cancer (lung, head_and_neck, prostate, breast, etc.)
-- **Prescription Dose**: Total dose in Gy
+- **Prescription Dose**: Total dose in Gy, or multi-level dict for SIB planning
 - **Number of Fractions**: Treatment fractions
 - **Treatment Technique**: IMRT, VMAT, SBRT, etc.
+- **SIB Support**: Simultaneous Integrated Boost with multiple dose levels
 
 ### 🧠 **Site-Specific Intelligence**
 - **Automatic Guidelines**: Loads QUANTEC/ESTRO constraints for the specified site
@@ -46,7 +47,15 @@ main(
     treatment_technique="IMRT"
 )
 
-# Head and neck example
+# Head and neck example with SIB
+main(
+    cancer_site="head_and_neck",
+    prescription_dose={"PTV6996": 70.0, "PTV5610": 56.0},  # SIB prescription
+    num_fractions=35,
+    patient_file="Head_and_Neck_1.mat"
+)
+
+# Head and neck example (single dose)
 main(
     cancer_site="head_and_neck", 
     prescription_dose=70.0,
