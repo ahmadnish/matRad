@@ -1416,7 +1416,7 @@ class MatRadEngine:
                     {optimization_cmd}
                     opt_success = true;
                     opt_error = '';                    
-                    save(['resultGUIs/resultGUI_' datestr(now,'yyyymmdd_HHMM') '.mat']);
+                    save(['resultGUIs/resultGUI_' datestr(now,'yyyymmdd_HHMM') '.mat', 'resultGUI', 'ct', 'cst', 'pln', 'stf']);
                     fprintf('Optimization successful: resultGUI saved to resultGUIs/resultGUI_%s.mat\\n', datestr(now,'yyyymmdd_HHMM'));
                 catch ME
                     opt_success = false;
