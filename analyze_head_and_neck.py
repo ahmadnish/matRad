@@ -12,7 +12,7 @@ eng.matRad_rc(nargout=0)
 
 # Load the HEAD_AND_NECK.mat file
 print("Loading HEAD_AND_NECK.mat...")
-eng.load('matRad/phantoms/HEAD_AND_NECK.mat', nargout=0)
+eng.load('~/matRad/matRad/phantoms/HIT_HandN_PAT0.mat', nargout=0)
 
 # Display basic information about the dataset
 print("\n=== HEAD_AND_NECK Dataset Overview ===")

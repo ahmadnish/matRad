@@ -513,7 +513,7 @@ class MatRadEngine:
                 sorted_gantry = sorted([g % 360 for g in gantry_angles])
                 diffs = [(sorted_gantry[(i+1)%num_beams] - sorted_gantry[i]) % 360 for i in range(num_beams)]
                 uniform_step = np.round(np.mean(diffs), 2)
-                is_equidistant = all(np.isclose(d, uniform_step, atol=1e-3) for d in diffs)
+                is_equidistant = False #all(np.isclose(d, uniform_step, atol=1e-3) for d in diffs)
 
                 if is_equidistant:
                     # Construct file name
@@ -1420,7 +1420,7 @@ class MatRadEngine:
                     fprintf('Optimization successful: resultGUI saved to resultGUIs/resultGUI_%s.mat\\n', datestr(now,'yyyymmdd_HHMM'));
                 catch ME
                     opt_success = false;
-                    opt_error = ME.message;
+                    opt_error = getReport(ME, 'extended');
                     fprintf('Optimization failed: %s\\n', ME.message);
                 end
                 
