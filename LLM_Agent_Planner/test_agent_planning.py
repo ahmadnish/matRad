@@ -1105,6 +1105,23 @@ class IMRTPlanningAgent:
                         "additionalProperties": False
                     }
                 }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "analyze_and_filter_structures",
+                    "description": "LLM-based structure analysis tool. Removes helper/evaluation structures, keeps only main targets and critical OARs, infers prescription dose from structure names, and provides QUANTEC-based OAR sparing guidelines.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "provided_prescription_dose": {
+                                "type": "number",
+                                "description": "Optional prescription dose in Gy to validate against inferred dose from structure names"
+                            }
+                        },
+                        "additionalProperties": False
+                    }
+                }
             }
         ]
     
@@ -1397,6 +1414,11 @@ class IMRTPlanningAgent:
             elif tool_name == "set_overlap_priorities":
                 structure_priorities = arguments.get("structure_priorities")
                 result_dict = self.engine.set_overlap_priorities(structure_priorities)
+                result_dict = convert_matlab_types(result_dict)
+                
+            elif tool_name == "analyze_and_filter_structures":
+                provided_dose = arguments.get("provided_prescription_dose")
+                result_dict = self.engine.analyze_and_filter_structures(provided_dose)
                 result_dict = convert_matlab_types(result_dict)
                 
             elif tool_name == "record_thoughts":
