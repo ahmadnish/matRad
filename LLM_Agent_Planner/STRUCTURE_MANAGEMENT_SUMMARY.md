@@ -37,17 +37,32 @@ This environment contains the MATLAB Engine for Python and all required dependen
   - `new_structure_name`: Name for the resulting structure
 - **Returns**: Success status and new structure information
 
+#### `analyze_and_filter_structures()`
+- **Purpose**: LLM-based structure analysis and filtering tool
+- **Uses**: OpenAI GPT-4o for intelligent structure analysis
+- **Parameters**:
+  - `provided_prescription_dose`: Optional prescription dose to validate against inferred dose
+- **Functionality**:
+  - Removes helper/evaluation structures (eval, union, diff, ring, minus, plus, combined, etc.)
+  - Keeps only main target structures and critical/important OARs
+  - Infers prescription dose from structure names (e.g., PTV6996 = 69.96 Gy)
+  - Provides QUANTEC-based OAR sparing guidelines
+  - Validates inferred prescription against provided dose
+- **Returns**: Filtered structures, inferred prescription, OAR guidelines, and validation results
+
 ### 2. LLM Agent Tools (`test_agent_planning.py`)
 
 #### Tool Definitions
 - Added `create_ring_structures` tool with structured parameters
 - Added `perform_voi_operation` tool with operation validation
-- Both tools integrated into agent's available tools list
+- Added `analyze_and_filter_structures` tool for LLM-based structure filtering
+- All tools integrated into agent's available tools list
 
 #### Tool Execution Handlers
-- Added execution logic in `execute_tool()` method
+- Added execution logic in `execute_tool()` method for all structure management tools
 - Proper error handling and result conversion
 - Logging integration for planning decisions
+- LLM integration for intelligent structure analysis
 
 ### 3. Enhanced System Prompt
 
@@ -128,9 +143,57 @@ perform_voi_operation("PTV_eval_step1", "SpinalCord", "setdiff", "PTV_eval")
 ### Data Flow
 1. Agent calls tool with parameters
 2. Tool validates inputs and finds structure indices
-3. MATLAB functions execute with proper error catching
+3. MATLAB functions execute with proper error catching (or LLM analysis for structure filtering)
 4. Results converted from MATLAB to Python format
 5. Success/failure status returned to agent
+
+### Usage Example - Structure Filtering
+
+```python
+# Example usage of the LLM-based structure filtering tool
+from test_agent_planning import IMRTPlanningAgent, TreatmentConfiguration
+
+# Create agent
+config = TreatmentConfiguration("head_and_neck", 70.0, 35, "IMRT", "HandN.mat")
+agent = IMRTPlanningAgent(model="gpt-4o", treatment_config=config)
+
+# Start engine and load patient
+agent.execute_tool("start_matlab_engine", {})
+agent.execute_tool("load_patient_data", {"patient_file": "HandN.mat"})
+
+# Analyze and filter structures
+result = agent.execute_tool("analyze_and_filter_structures", {
+    "provided_prescription_dose": 70.0  # Optional validation
+})
+
+# Example output:
+{
+    "success": True,
+    "analysis": {
+        "keep_structures": [
+            {"name": "PTV70", "type": "TARGET", "rationale": "Primary target volume"},
+            {"name": "SPINAL_CORD", "type": "OAR", "rationale": "Critical organ at risk"}
+        ],
+        "remove_structures": [
+            {"name": "PTV70_eval", "rationale": "Evaluation helper structure"},
+            {"name": "BODY_minus_PTVs", "rationale": "Combined helper structure"}
+        ],
+        "inferred_prescription": {
+            "primary_dose_gy": 70.0,
+            "target_doses": {"PTV70": 70.0},
+            "confidence": "high",
+            "rationale": "Dose inferred from PTV70 structure name"
+        },
+        "quantec_guidelines": [
+            {"structure": "SPINAL_CORD", "constraint": "D_max ≤ 45 Gy", "endpoint": "myelopathy"},
+            {"structure": "BRAINSTEM", "constraint": "D_max ≤ 54 Gy", "endpoint": "necrosis"}
+        ]
+    },
+    "dose_validation": {"valid": True, "message": ""},
+    "structures_removed": 2,
+    "structures_kept": 8
+}
+```
 
 ### Integration Points
 - Seamless integration with existing planning workflow

@@ -3287,7 +3287,149 @@ class MatRadEngine:
             return {"success": True, "message": "Minimal overlap priorities applied (TARGET=1, OAR=2, other=3)"}
         except Exception as e:
             return {"success": False, "error": str(e)}
-    
+
+    def analyze_and_filter_structures(self, provided_prescription_dose: Optional[float] = None) -> Dict[str, Any]:
+        """
+        LLM-based structure analysis and filtering tool.
+        
+        Analyzes all structures in the plan, removes helper/evaluation structures,
+        keeps only main targets and critical OARs, infers prescription dose from
+        structure names, and provides QUANTEC-based OAR sparing guidelines.
+        
+        Args:
+            provided_prescription_dose: Optional prescription dose to validate against inferred dose
+            
+        Returns:
+            Dict with filtered structures, inferred prescription, and OAR guidelines
+        """
+        if not self.initialized:
+            return {"success": False, "error": "MATLAB engine not initialized"}
+        
+        if not self.patient_loaded:
+            return {"success": False, "error": "No patient data loaded"}
+        
+        try:
+            # Get all structure information
+            struct_info = self.get_structure_names()
+            if not struct_info.get("success"):
+                return {"success": False, "error": "Could not get structure information"}
+            
+            # Get all structure names and types
+            all_structures = []
+            targets = struct_info.get("targets", [])
+            oars = struct_info.get("oars", [])
+            others = struct_info.get("other", [])
+            
+            for target in targets:
+                all_structures.append({"name": target, "type": "TARGET"})
+            for oar in oars:
+                all_structures.append({"name": oar, "type": "OAR"})
+            for other in others:
+                all_structures.append({"name": other, "type": "OTHER"})
+            
+            # Use LLM to analyze structures
+            from openai import OpenAI
+            client = OpenAI()
+            
+            structure_list = "\n".join([f"- {s['name']} ({s['type']})" for s in all_structures])
+            
+            prompt = f"""
+            You are a clinical radiotherapy expert. Analyze these structures from a treatment plan and provide:
+
+            1. KEEP: Main target structures and critical/important OARs only
+            2. REMOVE: Helper structures (eval, union, diff, ring, minus, plus, combined, etc.)
+            3. INFER: Prescription dose from target structure names (e.g., PTV6996 = 69.96 Gy, PTV70 = 70 Gy)
+            4. PROVIDE: QUANTEC-based OAR sparing guidelines
+
+            STRUCTURES:
+            {structure_list}
+
+            Respond in this exact JSON format:
+            {{
+                "keep_structures": [
+                    {{"name": "structure_name", "type": "TARGET|OAR", "rationale": "why keep"}}
+                ],
+                "remove_structures": [
+                    {{"name": "structure_name", "rationale": "why remove"}}
+                ],
+                "inferred_prescription": {{
+                    "primary_dose_gy": 70.0,
+                    "target_doses": {{"PTV70": 70.0}},
+                    "confidence": "high|medium|low",
+                    "rationale": "how dose was inferred"
+                }},
+                "quantec_guidelines": [
+                    {{"structure": "SPINAL_CORD", "constraint": "D_max ≤ 45 Gy", "endpoint": "myelopathy"}},
+                    {{"structure": "BRAINSTEM", "constraint": "D_max ≤ 54 Gy", "endpoint": "necrosis"}}
+                ]
+            }}
+
+            Focus on:
+            - Keep only essential clinical structures
+            - Remove any helper/evaluation/combined structures  
+            - Infer dose from numeric patterns in target names
+            - Provide standard QUANTEC constraints for identified OARs
+            """
+
+            response = client.chat.completions.create(
+                model="gpt-4o",
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.1
+            )
+                    
+            analysis = json.loads(response.choices[0].message.content)
+            
+            # Validate inferred prescription against provided dose
+            inferred_dose = analysis["inferred_prescription"]["primary_dose_gy"]
+            dose_validation = {"valid": True, "message": ""}
+            
+            if provided_prescription_dose is not None:
+                if abs(inferred_dose - provided_prescription_dose) > 1.0:  # Allow 1 Gy tolerance
+                    dose_validation = {
+                        "valid": False,
+                        "message": f"Prescription mismatch: provided {provided_prescription_dose} Gy vs inferred {inferred_dose} Gy"
+                    }
+            
+            # Remove structures marked for removal
+            structures_to_remove = [s["name"] for s in analysis["remove_structures"]]
+            removal_results = []
+            
+            for struct_name in structures_to_remove:
+                try:
+                    # Find structure index in CST
+                    matlab_code = f"""
+                    remove_idx = 0;
+                    for i = 1:size(cst, 1)
+                        if strcmp(cst{{i, 2}}, '{struct_name}')
+                            remove_idx = i;
+                            break;
+                        end
+                    end
+                    """
+                    self.eng.eval(matlab_code, nargout=0)
+                    remove_idx = int(self.eng.eval("remove_idx"))
+                    
+                    if remove_idx > 0:
+                        # Remove the structure from CST
+                        self.eng.eval(f"cst({remove_idx}, :) = [];", nargout=0)
+                        removal_results.append({"name": struct_name, "removed": True})
+                    else:
+                        removal_results.append({"name": struct_name, "removed": False, "reason": "not found"})
+                        
+                except Exception as e:
+                    removal_results.append({"name": struct_name, "removed": False, "reason": str(e)})
+            
+            return {
+                "success": True,
+                "analysis": analysis,
+                "dose_validation": dose_validation,
+                "removal_results": removal_results,
+                "structures_removed": len([r for r in removal_results if r["removed"]]),
+                "structures_kept": len(analysis["keep_structures"])
+            }
+            
+        except Exception as e:
+            return {"success": False, "error": str(e)}    
 
     def save_plan(self, output_file: str, save_results: bool = True) -> Dict[str, Any]:
         """
