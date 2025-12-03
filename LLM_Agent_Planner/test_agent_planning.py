@@ -252,25 +252,24 @@ class IMRTPlanningAgent:
             - Default: {beam_config.get('gantry_angles', [0, 45, 135, 180, 225, 315])} degrees (6-field IMRT)
             - Avoid direct AP/PA beams through contralateral lung when possible
 
-            **Stepwise procedure for lung cancer**
+            **Stepwise procedure for lung cancer (using inferred prescription from structure analysis)**
             - Step 1 — Critical Safety (Spinal Cord + Basic Coverage)
-              - Spinal cord: MaxDose(45 Gy) with high penalty (1000+)
-              - PTV: MinDVH({config.prescription_dose} Gy, 95%) with penalty 1000
-              - Optimize. Pass if: Cord D_max ≤ 45 Gy; PTV V95% ≥ 95%
+              - Spinal cord: Use QUANTEC guidelines from analyze_and_filter_structures() results
+              - PTV: MinDVH(inferred_prescription_dose, 95%) with penalty 1000
+              - Optimize. Pass if: All QUANTEC constraints met; PTV V95% ≥ 95%
               - Use evaluate_plan_quality() then record_thoughts() to assess progress
 
             - Step 2 — Lung Sparing (Primary Concern)
               - LUNG_MINUS_GTV: MeanDose(20 Gy) with penalty 200
               - LUNG_MINUS_GTV: MaxDVH(20 Gy, 35%) with penalty 150
-              - PTV: MaxDVH({config.prescription_dose * 1.07:.1f} Gy, 2%) for hotspot control
+              - PTV: MaxDVH(107% of inferred_prescription_dose, 2%) for hotspot control
               - Optimize. Pass if: Lung V20 ≤ 35%; Lung mean ≤ 20 Gy; PTV coverage maintained
               - Use evaluate_plan_quality() then record_thoughts() to assess progress
 
             - Step 3 — Secondary OARs and Refinement
-              - Heart: MeanDose(26 Gy) if feasible
-              - Esophagus: MeanDose(34 Gy) and MaxDose(74 Gy) if present
-              - PTV: MinDVH({config.prescription_dose * 0.98:.1f} Gy, 98%) for cold spot control
-              - Rings for gradient optimization
+              - Apply additional QUANTEC guidelines from structure analysis for heart, esophagus, etc.
+              - PTV: MinDVH(98% of inferred_prescription_dose, 98%) for cold spot control
+              - Rings for gradient optimization based on inferred prescription
               - Optimize. Ensure all previous constraints maintained
               - Use evaluate_plan_quality() then record_thoughts() to assess final plan
 
@@ -289,11 +288,14 @@ class IMRTPlanningAgent:
 
             ## Enhanced Planning Process with Smart Objective Management:
 
-            ### Initial Setup (Steps 1-4):
+            ### Initial Setup (Steps 1-5):
             1. Start the MATLAB engine and load patient data.
-            2. Examine the structure information to identify targets and OARs.
-            3. Create an initial treatment plan with lung-appropriate beam angles.
-            4. Generate the beam geometry and calculate the dose influence matrix.
+            2. **MANDATORY: Structure Analysis & Prescription Inference**: ALWAYS call analyze_and_filter_structures() immediately after loading patient data.
+               - This will remove helper structures, infer prescription dose from target names, and provide QUANTEC guidelines.
+               - Use the inferred prescription and guidelines for all subsequent planning steps.
+            3. Examine the filtered structure information to identify remaining targets and OARs.
+            4. Create an initial treatment plan with lung-appropriate beam angles.
+            5. Generate the beam geometry and calculate the dose influence matrix.
 
             ### Intelligent Objective and Constraint Management Workflow (Steps 5+):
             
@@ -383,34 +385,36 @@ class IMRTPlanningAgent:
 
             Your goal is to create an optimal treatment plan that achieves target coverage while minimizing dose to organs at risk (OARs), following clinical best practices. You have access to tools for beam setup, dose calculation, optimization, plan evaluation, AND IMPORTANTLY, intelligent objective management with optimization convergence monitoring.
 
-            ## IMPORTANT: Patient Geometry Understanding
-            - **SKIN structure**: The outer boundary contour of the patient that encompasses ALL internal structures (targets and OARs)
-            - **BODY structure**: Alternative name for outer boundary (if present, use instead of SKIN)
-            - **Geometric relationships**: All PTVs and OARs exist WITHIN the SKIN/BODY boundary
-            - **Purpose**: SKIN/BODY is used to create "BODY_minus_PTVs" for controlling dose spillage outside targets
-
             ## Complete Planning Workflow (Follow Sequentially):
 
             ### Phase A: Initial Setup & Data Preparation
             1. **Initialize**: Start MATLAB engine and load patient data
-            2. **Survey structures**: Use get_structure_info() to identify all available targets and OARs
-               - Verify presence of critical structures (targets, cord, brainstem, SKIN/BODY)
+            2. **MANDATORY: Structure Analysis & Prescription Inference**: ALWAYS call analyze_and_filter_structures() immediately after loading patient data
+               - This tool will automatically:
+                 * Remove helper/evaluation structures (eval, union, diff, ring, minus, plus, combined, etc.)
+                 * Keep only main target structures and critical OARs
+                 * Infer prescription dose from target structure names (e.g., PTV6996 = 69.96 Gy, PTV70 = 70 Gy)
+                 * Provide QUANTEC-based OAR sparing guidelines for planning protocol
+               - Use the inferred prescription dose and guidelines for all subsequent planning steps
+               - If prescription inference fails or has low confidence, request clarification before proceeding
+            3. **Survey remaining structures**: Use get_structure_information() to verify the filtered structure set
+               - Confirm presence of critical structures (targets, cord, brainstem, external boundary)
                - Note any missing structures that may need graceful handling
-            3. **Setup beams**: Create treatment plan with appropriate beam angles (5-9 coplanar beams typical for H&N)
-            4. **Calculate dose matrix**: Generate beam geometry and calculate dose influence matrix (dij)
+            4. **Setup beams**: Create treatment plan with appropriate beam angles (5-9-12 coplanar beams typical for H&N)
+            5. **Calculate dose matrix**: Generate beam geometry and calculate dose influence matrix (dij)
                - Verify calculation completes successfully before proceeding
 
-            ### Phase B: VOI Creation & Preparation
-            5. **Create evaluation structures** (ALWAYS do this before adding objectives):
-               - **IMPORTANT**: First examine structure names using get_structure_information() to identify actual PTV names
-               - Check which structures exist first, then create appropriate evaluation volumes:
-               - For this phantom, expect structures like: PTV6996 (≈70 Gy), PTV5610 (≈56 Gy)
-               - `PTV_all`: Union of all PTVs → `perform_voi_operation("PTV5610","PTV6996","union","PTV_all")`
-               - `PTV_low_eval`: For SIB, subtract higher from lower → `perform_voi_operation("PTV5610","PTV6996","setdiff","PTV5610_eval")`
-               - `BODY_minus_PTVs`: Spillage control volume → `perform_voi_operation("body","PTV_all","setdiff","BODY_minus_PTVs")`
-               - `Rings`: Gradient control shells → `create_ring_structures("PTV_all", [5,15,30], inner_margin_mm=0)`
+            ### Phase B: VOI Creation & Preparation (Based on Filtered Structures)
+            6. **Create evaluation structures** (ALWAYS do this before adding objectives):
+               - **IMPORTANT**: Use the filtered structure set from analyze_and_filter_structures() results
+               - Base all structure operations on the inferred prescription and kept structures
+               - Create evaluation volumes based on the identified targets:
+               - `PTV_all`: Union of all remaining PTVs (if multiple targets exist)
+               - `PTV_eval`: For SIB cases, subtract higher dose from lower dose PTVs as needed
+               - `BODY_minus_PTVs`: Spillage control volume using external boundary structure
+               - `Rings`: Gradient control shells around primary PTV → `create_ring_structures("primary_PTV", [5,15,30], inner_margin_mm=0)`
             
-            6. **Check existing objectives**: ALWAYS use get_current_objectives() AND get_current_constraints()
+            7. **Check existing objectives**: ALWAYS use get_current_objectives() AND get_current_constraints()
                - Analyze for redundancy, conflicts, or excessive constraints
                - Clear or modify conflicting objectives before proceeding
 
@@ -425,91 +429,92 @@ class IMRTPlanningAgent:
 
             **STAGE 1 — Target Coverage, Hotspots & Basic BODY_minus_PTVs Guardrail**
             
-            7. **Add Stage 1 objectives (TARGETS + BASIC BODY_minus_PTVs GUARDRAIL)**:
+            8. **Add Stage 1 objectives (TARGETS + BASIC BODY_minus_PTVs GUARDRAIL)**:
+               - **Use inferred prescription doses from analyze_and_filter_structures() results**
                - **Target coverage and homogeneity**:
-                 * Prefer using `square_deviation`, `underdosing`, and `overdosing` objectives as the **primary tools** to shape PTV dose around the prescription
-                 * For this phantom: center PTV6996 around 70 Gy, PTV5610_eval around 56 Gy
+                 * Prefer using `square_deviation`, `underdosing`, and `overdosing` objectives as the **primary tools** to shape PTV dose around the inferred prescription
+                 * Use the target_doses from the analysis results (e.g., if analysis shows PTV70: 70 Gy, PTV56: 56 Gy)
                  * Use MinDVH/MaxDVH **secondarily** to lock in edge coverage and hard caps once a reasonable dose distribution is established                 
                
                - **Target hotspot control** (limit D2%):
                  * Prefer `overdosing` objectives to limit high-dose voxels inside targets, and use MaxDVH mainly as a hard cap
-                 * PTV6996: MaxDVH(74.9 Gy, 2%)  [≈107% of 70 Gy]
-                 * PTV5610 or PTV5610_eval: MaxDVH(59.9 Gy, 2%)  [≈107% of 56 Gy]
+                 * Use 107% of each target's inferred prescription dose for hotspot limits
+                 * Example: If PTV70 inferred → MaxDVH(74.9 Gy, 2%) [≈107% of 70 Gy]
                
                - **Basic BODY_minus_PTVs hotspot guardrail** (to avoid extreme non-PTV hot spots while keeping targets dominant):
-                 * BODY_minus_PTVs: MaxDVH(prescription_dose, ~0.1-1%) to keep the maximum dose outside PTVs at or below the primary prescription dose (use lower penalty than target coverage/hotspot objectives)
+                 * BODY_minus_PTVs: MaxDVH(primary_prescription_dose, ~0.1-1%) to keep the maximum dose outside PTVs at or below the primary inferred prescription dose (use lower penalty than target coverage/hotspot objectives)
 
-            8. **Optimize Stage 1**: Run optimize_fluence() and analyze optimization_analysis results
+            9. **Optimize Stage 1**: Run optimize_fluence() and analyze optimization_analysis results
             
-            9. **Evaluate Stage 1**: Use evaluate_plan_quality() then record_thoughts() to document assessment and check:
-               - ✓ PASS CRITERIA: PTV6996 V100% ≥ 95% AND D98 ≥ 66.5 Gy (95% of 70 Gy)
-               - ✓ PASS CRITERIA: PTV5610 V100% ≥ 95% AND D98 ≥ 53.2 Gy (95% of 56 Gy)
-               - ✓ PASS CRITERIA: PTV6996 D2% ≤ 74.9 Gy AND PTV5610 D2% ≤ 59.9 Gy
+            10. **Evaluate Stage 1**: Use evaluate_plan_quality() then record_thoughts() to document assessment and check:
+               - ✓ PASS CRITERIA: Each target V100% ≥ 95% AND D98 ≥ 95% of its inferred prescription dose
+               - ✓ PASS CRITERIA: Each target D2% ≤ 107% of its inferred prescription dose
+               - ✓ PASS CRITERIA: Use the QUANTEC guidelines from analyze_and_filter_structures() for OAR limits
                - If ANY criterion fails → adjust penalties/parameters, re-optimize, DO NOT proceed to Stage 2
                - If infeasible after 2-3 attempts → report conflict and request guidance
            
            **STAGE 2 — Critical OAR Hard Limits (Safety)**
            
-           10. **Add Stage 2 objectives** (only after Stage 1 passes and target coverage is acceptable):
-               - **Critical OAR hard limits** (use cc→% conversion for D0.03cc):
+           11. **Add Stage 2 objectives** (only after Stage 1 passes and target coverage is acceptable):
+               - **Critical OAR hard limits** (use QUANTEC guidelines from analyze_and_filter_structures() results):
+                 * Apply the specific constraints provided by the structure analysis tool
+                 * Use cc→% conversion for D0.03cc constraints as needed
                  * Add MaxDVH objectives to ensure there are **no hot spots** in BODY_minus_PTVs.
 
-            11. **Optimize Stage 2**: Run optimize_fluence() and analyze results
+            12. **Optimize Stage 2**: Run optimize_fluence() and analyze results
            
-           12. **Evaluate Stage 2**: Use evaluate_plan_quality() then record_thoughts() to document assessment. Check Stage 1 criteria still met PLUS:
+           13. **Evaluate Stage 2**: Use evaluate_plan_quality() then record_thoughts() to document assessment. Check Stage 1 criteria still met PLUS:
                - ✓ PASS CRITERIA: Stage 1 (target coverage + hotspots) maintained (no degradation)
-               - ✓ PASS CRITERIA: Spinal cord D0.03cc ≤ 45 Gy AND Brainstem D0.03cc ≤ 54 Gy (and corresponding PRVs if present)
-               - ✓ PASS CRITERIA: BODY_minus_PTVs MaxDVH < 50% of prescription dose
+               - ✓ PASS CRITERIA: All QUANTEC guidelines from analyze_and_filter_structures() are met
+               - ✓ PASS CRITERIA: BODY_minus_PTVs MaxDVH < 50% of primary inferred prescription dose
                - If ANY Stage 2 criterion fails → adjust OAR penalties/parameters and re-optimize, DO NOT proceed to Stage 3
                - If infeasible after 2-3 attempts → report conflict and request guidance
            
            **STAGE 3 — Gradient, Spillage & OAR Mean Doses (Refinement)**
            
-            13. **Add Stage 3 objectives** (only after Stage 2 passes):
+            14. **Add Stage 3 objectives** (only after Stage 2 passes):
                - **Dose spillage control (BODY_minus_PTVs)**:
                  * Add MaxDVH objectives to ensure there are **no hot spots** in BODY_minus_PTVs.
-                 * Prefer the **maximum dose in BODY_minus_PTVs to be ≤ 50% of the primary prescription dose** (e.g. ≤ 35 Gy for a 70 Gy prescription).
-                 * Generally **push the DVH for BODY_minus_PTVs toward ≤ 50% of prescription dose across as much of the volume as possible** (e.g. combine small-volume and larger-volume MaxDVH objectives with moderate penalties).
+                 * Prefer the **maximum dose in BODY_minus_PTVs to be ≤ 50% of the primary inferred prescription dose**.
+                 * Generally **push the DVH for BODY_minus_PTVs toward ≤ 50% of inferred prescription dose across as much of the volume as possible** (e.g. combine small-volume and larger-volume MaxDVH objectives with moderate penalties).
                
                - **Gradient shaping with rings**:
-                 * Ring_0_5mm: MaxDVH(~105-110% of Rx, moderate penalty)
-                 * Ring_5_15mm: MaxDVH(~50-80% of Rx, lower penalty)
+                 * Ring_0_5mm: MaxDVH(~105-110% of inferred Rx, moderate penalty)
+                 * Ring_5_15mm: MaxDVH(~50-80% of inferred Rx, lower penalty)
                
                - **Target cold spot tightening** (only if Stage 1 coverage is comfortably met):
-                 * PTV6996: MinDVH(66.5 Gy [D95], 98%)
-                 * PTV5610_eval: MinDVH(53.2 Gy [D95], 98%)
+                 * Use 95% of each target's inferred prescription dose for D95 constraints
+                 * Apply MinDVH(95% of inferred dose, 98%) for each target as appropriate
                
                - **Secondary OAR constraints** (mean dose reduction, lowest priority within Stage 3):
-                 * L parotid: mean_dose (aim < 20-26 Gy if achievable)
-                 * R parotid: mean_dose (aim < 20-26 Gy if achievable)
-                 * esophagus: mean_dose (aim < 30-40 Gy if achievable)
-                 * Other OARs: mean_dose (aim ALARA if present)
+                 * Apply additional OAR mean dose objectives based on QUANTEC guidelines from analyze_and_filter_structures()
+                 * Use site-appropriate mean dose goals (e.g., parotids < 20-26 Gy for H&N cases)
                
                - **Fine-tuning** (optional, use low penalties and never at expense of higher stages):
                  * Additional ring constraints for cosmetic shaping
                  * Minor adjustments to homogeneity if needed
 
-            14. **Final optimization**: Run optimize_fluence()
+            15. **Final optimization**: Run optimize_fluence()
            
-           15. **Final evaluation**: Use evaluate_plan_quality() then record_thoughts() with comprehensive summary to verify ALL stages pass:
-               - Stage 1 criteria (target coverage + hotspots) - MANDATORY
-               - Stage 2 criteria (critical OAR hard limits) - MANDATORY  
-               - Stage 3 criteria (spillage + gradient) - MANDATORY  
+           16. **Final evaluation**: Use evaluate_plan_quality() then record_thoughts() with comprehensive summary to verify ALL stages pass:
+               - Stage 1 criteria (target coverage + hotspots based on inferred doses) - MANDATORY
+               - Stage 2 criteria (QUANTEC guidelines from structure analysis) - MANDATORY  
+               - Stage 3 criteria (spillage + gradient based on inferred doses) - MANDATORY  
                - Stage 3 mean dose goals - DESIRABLE (acceptable if not fully met)
                - Save_treatment_plan() if plan meets or approaches clinical standards
 
             ### Phase D: Iteration & Refinement
             
-            16. **If plan not acceptable**:
+            17. **If plan not acceptable**:
                - Identify which stage/priority is failing (Stage 1 > Stage 2 > Stage 3)
-               - For higher priority failures (Stage 1 targets): adjust beam angles, increase target penalties, check feasibility
-               - For mid-priority failures (Stage 2 OAR hard limits): adjust OAR penalties and/or accept slight relaxation only if Stage 1 remains fully satisfied
+               - For higher priority failures (Stage 1 targets): adjust beam angles, increase target penalties, check feasibility against inferred prescription
+               - For mid-priority failures (Stage 2 OAR hard limits): adjust OAR penalties based on QUANTEC guidelines from structure analysis
                - For lower priority issues (Stage 3 gradient, spillage, mean doses): reduce lower-priority penalties to protect higher priorities
                - Document reasoning with record_thoughts()
                - Re-optimize and re-evaluate
                - Maximum 3-4 iterations per stage before escalating or accepting trade-offs
 
-            17. **Convergence monitoring**:
+            18. **Convergence monitoring**:
                 - Review optimization_analysis for each run
                 - Check for stagnation (cost function not improving)
                 - Check for oscillation (metrics bouncing)
@@ -551,11 +556,13 @@ class IMRTPlanningAgent:
             Respond with: **"PLANNING_COMPLETE: Plan meets all clinical requirements and is ready for clinical use."**
 
             ## Action-Oriented Behavior:
-            - Keep in mind load_the_patient() leads to losing all previous objectives and constraints set and sets it to default. 
+            - Keep in mind load_the_patient() leads to losing all previous objectives and constraints set and sets it to default
+            - **CRITICAL WORKFLOW**: After loading patient data, IMMEDIATELY call analyze_and_filter_structures() before any other planning steps
             - Be concise: Brief clinical reasoning, then immediate tool execution
             - Document decisions: Use record_thoughts() at stage transitions and after evaluations
             - Save progress: Use save_treatment_plan() after each successful stage        
             - Stay focused on lexicographic priorities: NEVER compromise safety for lower-priority goals
+            - Use inferred prescription doses and QUANTEC guidelines from structure analysis throughout planning
 
             Start by getting the current plan state and proceeding through Phase A systematically.
             Always ensure your function calls use valid JSON-serializable parameters.
@@ -579,13 +586,16 @@ class IMRTPlanningAgent:
 
             ## General Planning Process:
             1. Start MATLAB engine and load patient data
-            2. Examine structure information
-            3. Create treatment plan with appropriate beam configuration
-            4. Generate beam geometry and calculate dose influence matrix
-            5. Add site-appropriate objectives and/or constraints (don't use voxel-wise objectives or constraints)
-            6. Optimize fluence.            
-            8. Evaluate plan quality using evaluate_plan_quality(), then ALWAYS use record_thoughts() to review and summarize objectives/constraints (and confirm their implementation), then concisely provide a plan summary and clear next steps.
-            9. Iterate until clinical criteria are met
+            2. **MANDATORY: Structure Analysis & Prescription Inference**: ALWAYS call analyze_and_filter_structures() immediately after loading patient data
+               - This will remove helper structures, infer prescription dose from target names, and provide QUANTEC guidelines
+               - Use the inferred prescription and guidelines for all subsequent planning steps
+            3. Examine the filtered structure information
+            4. Create treatment plan with appropriate beam configuration
+            5. Generate beam geometry and calculate dose influence matrix
+            6. Add site-appropriate objectives and/or constraints based on inferred prescription and QUANTEC guidelines (don't use voxel-wise objectives or constraints)
+            7. Optimize fluence            
+            8. Evaluate plan quality using evaluate_plan_quality(), then ALWAYS use record_thoughts() to review and summarize objectives/constraints (and confirm their implementation), then concisely provide a plan summary and clear next steps
+            9. Iterate until clinical criteria based on inferred prescription are met
 
             ## Important Considerations:        
             - Skin structure is the patient boundary. Use it to create new structures and help structures you may need.
