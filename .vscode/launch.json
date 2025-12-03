@@ -61,9 +61,8 @@
       },
       "args": [
         "--site", "head_and_neck",
-        "--dose", "PTV6996:70.0,PTV5610:56.0",
-        "--fractions", "35",
-        "--patient", "Head_and_Neck_1.mat",
+        "--fractions", "33",
+        "--patient", "HNC_010.mat",
         "--technique", "IMRT",
         "--model", "gpt-5.1",
         "--max-iterations", "200"
@@ -84,9 +83,8 @@
       },
       "args": [
         "--site", "head_and_neck",
-        "--dose", "PTV6996:70.0,PTV5610:56.0",
-        "--fractions", "35",
-        "--patient", "Head_and_Neck_1.mat",
+        "--fractions", "33",
+        "--patient", "HNC_010.mat",
         "--technique", "IMRT",
         "--model", "claude-sonnet-4-5-20250929",
         "--max-iterations", "200"
