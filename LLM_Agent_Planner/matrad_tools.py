@@ -12,6 +12,7 @@ import numpy as np
 from typing import Dict, List, Tuple, Any, Optional
 from pathlib import Path
 import math
+from openai import OpenAI
 
 import matlab.engine
 
@@ -3328,7 +3329,7 @@ class MatRadEngine:
                 all_structures.append({"name": other, "type": "OTHER"})
             
             # Use LLM to analyze structures
-            from openai import OpenAI
+            
             client = OpenAI()
             
             structure_list = "\n".join([f"- {s['name']} ({s['type']})" for s in all_structures])
@@ -3336,7 +3337,7 @@ class MatRadEngine:
             prompt = f"""
             You are a clinical radiotherapy expert. Analyze these structures from a treatment plan and provide:
 
-            1. KEEP: Main target structures and critical/important OARs only
+            1. KEEP: Main target structures and critical/important OARs only and any structure that may resemble the outer boundary of the patient (e.g. SKIN, BODY, External, etc.).
             2. REMOVE: Helper structures (eval, union, diff, ring, minus, plus, combined, etc.)
             3. INFER: Prescription dose from target structure names (e.g., PTV6996 = 69.96 Gy, PTV70 = 70 Gy)
             4. PROVIDE: QUANTEC-based OAR sparing guidelines
@@ -3371,10 +3372,69 @@ class MatRadEngine:
             - Provide standard QUANTEC constraints for identified OARs
             """
 
+            response_format = {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "structure_analysis",
+                    "schema": {
+                        "type": "object",
+                        "properties": {
+                            "keep_structures": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "name": {"type": "string"},
+                                        "type": {"type": "string"},
+                                        "rationale": {"type": "string"}
+                                    },
+                                    "required": ["name", "type", "rationale"]
+                                }
+                            },
+                            "remove_structures": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "name": {"type": "string"},
+                                        "rationale": {"type": "string"}
+                                    },
+                                    "required": ["name", "rationale"]
+                                }
+                            },
+                            "inferred_prescription": {
+                                "type": "object",
+                                "properties": {
+                                    "primary_dose_gy": {"type": "number"},
+                                    "target_doses": {"type": "object"},
+                                    "confidence": {"type": "string"},
+                                    "rationale": {"type": "string"}
+                                },
+                                "required": ["primary_dose_gy", "target_doses", "confidence", "rationale"]
+                            },
+                            "quantec_guidelines": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "structure": {"type": "string"},
+                                        "constraint": {"type": "string"},
+                                        "endpoint": {"type": "string"}
+                                    },
+                                    "required": ["structure", "constraint", "endpoint"]
+                                }
+                            }
+                        },
+                        "required": ["keep_structures", "remove_structures", "inferred_prescription", "quantec_guidelines"]
+                    }
+                }
+            }
+
             response = client.chat.completions.create(
                 model="gpt-4o",
                 messages=[{"role": "user", "content": prompt}],
-                temperature=0.1
+                temperature=0.1,
+                response_format=response_format
             )
                     
             analysis = json.loads(response.choices[0].message.content)
