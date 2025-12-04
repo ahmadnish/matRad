@@ -108,8 +108,8 @@ class TreatmentConfiguration:
     """Configuration class for treatment parameters."""
     def __init__(self, 
                  cancer_site: str,
-                 prescription_dose: Union[float, Dict[str, float]],
-                 num_fractions: int,
+                 prescription_dose: Optional[Union[float, Dict[str, float]]] = None,
+                 num_fractions: Optional[int] = None,
                  treatment_technique: str = "IMRT",
                  patient_file: str = "HandN.mat"):
         self.cancer_site = cancer_site
@@ -117,17 +117,22 @@ class TreatmentConfiguration:
         self.treatment_technique = treatment_technique
         self.patient_file = patient_file
         
-        # Handle both single and multi-level prescriptions
-        if isinstance(prescription_dose, dict):
+        # Handle prescription - can be None (to be inferred), single dose, or SIB dict
+        if prescription_dose is None:
+            self.prescription_dose = None
+            self.prescription_doses = None
+            self.dose_per_fraction = None
+            self.is_sib = False
+        elif isinstance(prescription_dose, dict):
             self.prescription_doses = prescription_dose
-            self.prescription_dose = max(prescription_dose.values())  # Primary dose
+            self.prescription_dose = max(prescription_dose.values())
             self.is_sib = True
+            self.dose_per_fraction = self.prescription_dose / num_fractions if num_fractions else None
         else:
             self.prescription_dose = prescription_dose
             self.prescription_doses = {"primary": prescription_dose}
             self.is_sib = False
-            
-        self.dose_per_fraction = self.prescription_dose / num_fractions
+            self.dose_per_fraction = prescription_dose / num_fractions if num_fractions else None
 
 class IMRTPlanningAgent:
     """LLM Agent for IMRT Planning using OpenAI/Anthropic function calling with structured outputs."""
@@ -211,16 +216,27 @@ class IMRTPlanningAgent:
         config = self.treatment_config
         beam_config = self.guidelines_loader.get_beam_arrangements('lung')
         
-        return f"""
-            You are a clinically experienced radiotherapy planning agent, specializing in IMRT optimization for LUNG CANCER using matRad with advanced objective management and optimization monitoring capabilities.
-
+        if config and config.prescription_dose is not None:
+            config_info = f"""
             ## TREATMENT CONFIGURATION:
             - Cancer Site: {config.cancer_site}
             - Patient File: {config.patient_file}
             - Prescription Dose: {config.prescription_dose} Gy
             - Number of Fractions: {config.num_fractions}
             - Dose per Fraction: {config.dose_per_fraction:.1f} Gy
-            - Treatment Technique: {config.treatment_technique}
+            - Treatment Technique: {config.treatment_technique}"""
+        else:
+            config_info = f"""
+            ## TREATMENT CONFIGURATION:
+            - Cancer Site: {config.cancer_site if config else 'Lung'}
+            - Patient File: {config.patient_file if config else 'Unknown'}
+            - Prescription Dose: **TO BE INFERRED** from structure names using analyze_and_filter_structures()
+            - Number of Fractions: **TO BE INFERRED**
+            - Treatment Technique: {config.treatment_technique if config else 'IMRT'}"""
+        
+        return f"""
+            You are a clinically experienced radiotherapy planning agent, specializing in IMRT optimization for LUNG CANCER using matRad with advanced objective management and optimization monitoring capabilities.
+{config_info}
 
             Your goal is to create an optimal treatment plan that achieves target coverage while minimizing dose to organs at risk (OARs), following clinical best practices for lung cancer radiotherapy.
 
@@ -345,7 +361,7 @@ class IMRTPlanningAgent:
     def _get_head_and_neck_prompt(self) -> str:
         """Generate head and neck specific planning prompt (existing implementation)."""
         config = self.treatment_config
-        if config:
+        if config and config.prescription_dose is not None:
             # Handle multi-level prescriptions
             if config.is_sib:
                 dose_info = "\n".join([f"    * {target}: {dose} Gy" for target, dose in config.prescription_doses.items()])
@@ -370,12 +386,13 @@ class IMRTPlanningAgent:
             - Treatment Technique: {config.treatment_technique}
             """
         else:
-            prescription_info = """
+            prescription_info = f"""
             ## TREATMENT CONFIGURATION:
-            - Cancer Site: Head and Neck (default)
-            - Prescription Dose: 70.0 Gy (high risk), 63.0 Gy (intermediate risk)
-            - Number of Fractions: 35 (2 Gy/fx standard)
-            - Treatment Technique: IMRT
+            - Cancer Site: {config.cancer_site if config else 'Head and Neck'}
+            - Patient File: {config.patient_file if config else 'Unknown'}
+            - Prescription Dose: **TO BE INFERRED** from structure names using analyze_and_filter_structures()
+            - Number of Fractions: **TO BE INFERRED**
+            - Treatment Technique: {config.treatment_technique if config else 'IMRT'}
             """
         
         return f"""
@@ -571,16 +588,28 @@ class IMRTPlanningAgent:
     def _get_generic_prompt(self) -> str:
         """Generate generic site-agnostic planning prompt."""
         config = self.treatment_config
-        return f"""
-            You are a clinically experienced radiotherapy planning agent, specializing in IMRT optimization using matRad.
-
+        
+        if config and config.prescription_dose is not None:
+            config_info = f"""
+            ## TREATMENT CONFIGURATION:
+            - Cancer Site: {config.cancer_site}
+            - Patient File: {config.patient_file}
+            - Prescription Dose: {config.prescription_dose} Gy
+            - Number of Fractions: {config.num_fractions}
+            - Dose per Fraction: {config.dose_per_fraction:.1f} Gy
+            - Treatment Technique: {config.treatment_technique}"""
+        else:
+            config_info = f"""
             ## TREATMENT CONFIGURATION:
             - Cancer Site: {config.cancer_site if config else 'Generic'}
-            - Patient File: HandN.mat
-            - Prescription Dose: {config.prescription_dose if config else 'TBD'} Gy
-            - Number of Fractions: {config.num_fractions if config else 'TBD'}
-            - Dose per Fraction: {f'{config.dose_per_fraction:.1f} Gy' if config else 'TBD'}
-            - Treatment Technique: {config.treatment_technique if config else 'IMRT'}
+            - Patient File: {config.patient_file if config else 'Unknown'}
+            - Prescription Dose: **TO BE INFERRED** from structure names using analyze_and_filter_structures()
+            - Number of Fractions: **TO BE INFERRED**
+            - Treatment Technique: {config.treatment_technique if config else 'IMRT'}"""
+        
+        return f"""
+            You are a clinically experienced radiotherapy planning agent, specializing in IMRT optimization using matRad.
+{config_info}
 
             Your goal is to create an optimal treatment plan following clinical best practices for the specified cancer site.
 
@@ -1166,7 +1195,9 @@ class IMRTPlanningAgent:
                 result_dict = convert_matlab_types(result_dict)
                 
             elif tool_name == "create_treatment_plan":
-                num_fractions = self.treatment_config.num_fractions if self.treatment_config else 30
+                num_fractions = 30  # Default
+                if self.treatment_config and self.treatment_config.num_fractions:
+                    num_fractions = self.treatment_config.num_fractions
                 result_dict = self.engine.create_empty_plan(num_fractions=num_fractions)
                 result_dict = convert_matlab_types(result_dict)
                 if result_dict.get("success"):
@@ -1884,8 +1915,8 @@ def print_supported_models():
 
 
 def main(cancer_site: str = "head_and_neck", 
-         prescription_dose: Union[float, Dict[str, float]] = 70.0, 
-         num_fractions: int = 35,
+         prescription_dose: Optional[Union[float, Dict[str, float]]] = None, 
+         num_fractions: Optional[int] = None,
          patient_file: str = "HandN.mat",
          treatment_technique: str = "IMRT",
          model: str = "gpt-4o"):
@@ -1894,8 +1925,8 @@ def main(cancer_site: str = "head_and_neck",
     
     Args:
         cancer_site: Type of cancer (e.g., 'lung', 'head_and_neck', 'prostate', 'breast')
-        prescription_dose: Total prescription dose in Gy, or dict for SIB (e.g., {"PTV6996": 70.0, "PTV5610": 56.0})
-        num_fractions: Number of treatment fractions
+        prescription_dose: Total prescription dose in Gy, or dict for SIB. If None, inferred from structure names.
+        num_fractions: Number of treatment fractions. If None, uses site-specific defaults.
         patient_file: Path to patient data file
         treatment_technique: Treatment technique (default: 'IMRT')
         model: LLM model to use (default: 'gpt-4o'). See print_supported_models() for options.
@@ -1922,7 +1953,9 @@ def main(cancer_site: str = "head_and_neck",
         print(f"📊 Patient file: {patient_file}")
         print(f"🏥 matRad path: {matrad_path}")
         print(f"🎯 Cancer site: {cancer_site}")
-        if isinstance(prescription_dose, dict):
+        if prescription_dose is None:
+            print(f"💊 Prescription: Will be inferred from structure names")
+        elif isinstance(prescription_dose, dict):
             dose_info = ", ".join([f"{target}: {dose} Gy" for target, dose in prescription_dose.items()])
             primary_dose = max(prescription_dose.values())
             print(f"💊 Prescription (SIB): {dose_info} in {num_fractions} fractions ({primary_dose/num_fractions:.1f} Gy/fx primary)")

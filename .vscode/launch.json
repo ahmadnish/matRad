@@ -127,10 +127,8 @@
         "PYTHONPATH": "${workspaceFolder}"
       },
       "args": [
-        "--site", "head_and_neck",
-        "--dose", "70",
-        "--fractions", "35",
-        "--patient", "Head_and_Neck_1.mat",
+        "--site", "head_and_neck",        
+        "--patient", "~/matRad/matRad/phantoms/HNC_010.mat",
         "--technique", "IMRT",
         "--model", "gpt-5.1",
         "--max-iterations", "200"

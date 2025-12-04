@@ -2,57 +2,35 @@
 """
 Site-Specific Treatment Planning Script
 
-This script demonstrates how to use the LLM agent for different cancer sites
-with configurable treatment parameters.
+This script uses the LLM agent for different cancer sites. Prescription dose
+and fractions are automatically inferred from structure names using the
+analyze_and_filter_structures tool.
 
 Usage examples:
-    # Lung cancer planning
-    python run_site_specific_planning.py --site lung --dose 60 --fractions 30 --patient lung_patient.mat
+    # Plan a patient (prescription inferred from structure names)
+    python run_site_specific_planning.py --site head_and_neck --patient ~/matRad/userdata/patients/HNC_001.mat
     
-    # Head and neck planning with specific model
-    python run_site_specific_planning.py --site head_and_neck --dose 70 --fractions 35 --patient HandN_newskin.mat --model gpt-5.1
-    
-    # Prostate planning with Anthropic model
-    python run_site_specific_planning.py --site prostate --dose 78 --fractions 39 --patient prostate_patient.mat --model claude-sonnet-4-5-20250929
+    # Plan with specific model
+    python run_site_specific_planning.py --site lung --patient ~/matRad/userdata/patients/LUNG_001.mat --model gpt-4o
 """
 
 import argparse
 import sys
 import os
-from typing import Dict, Union
-from test_agent_planning import main, TreatmentConfiguration
-
-def parse_dose_argument(dose_str: str) -> Union[float, Dict[str, float]]:
-    """Parse dose argument - handles both single dose and SIB format."""
-    if ':' in dose_str and ',' in dose_str:
-        # SIB format: "PTV6996:70.0,PTV5610:56.0"
-        dose_dict = {}
-        for pair in dose_str.split(','):
-            target, dose = pair.split(':')
-            dose_dict[target.strip()] = float(dose.strip())
-        return dose_dict
-    else:
-        # Single dose format
-        return float(dose_str)
+from test_agent_planning import main
 
 def parse_arguments():
     """Parse command line arguments."""
     parser = argparse.ArgumentParser(
-        description="Site-specific radiotherapy treatment planning with LLM agent",
+        description="Site-specific radiotherapy treatment planning with LLM agent. Prescription dose is inferred from structure names.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Lung cancer (60 Gy in 30 fractions) with default model
-  python %(prog)s --site lung --dose 60 --fractions 30 --patient lung_patient.mat
+  # Plan a patient (prescription inferred from structure names like PTV6996 = 69.96 Gy)
+  python %(prog)s --site head_and_neck --patient ~/matRad/userdata/patients/HNC_001.mat
   
-  # Head and neck cancer with specific model
-  python %(prog)s --site head_and_neck --dose 70 --fractions 35 --patient HandN_newskin.mat --model gpt-5.1
-  
-  # Prostate cancer with Anthropic model
-  python %(prog)s --site prostate --dose 78 --fractions 39 --patient prostate_patient.mat --model claude-sonnet-4-5-20250929
-  
-  # Breast cancer with GPT-4o
-  python %(prog)s --site breast --dose 50 --fractions 25 --patient breast_patient.mat --model gpt-4o
+  # Plan with specific model
+  python %(prog)s --site lung --patient ~/matRad/userdata/patients/LUNG_001.mat --model gpt-4o
 
 Supported cancer sites:
   - lung, nsclc, lung_cancer
@@ -74,24 +52,10 @@ Supported models (default: gpt-5.1):
     )
     
     parser.add_argument(
-        "--dose", "-d",
-        type=str,
-        required=True,
-        help='Total prescription dose in Gy. For SIB, use format "PTV1:dose1,PTV2:dose2" (e.g., "PTV6996:70.0,PTV5610:56.0")'
-    )
-    
-    parser.add_argument(
-        "--fractions", "-f",
-        type=int,
-        required=True,
-        help="Number of treatment fractions"
-    )
-    
-    parser.add_argument(
         "--patient", "-p",
         type=str,
         required=True,
-        help="Path to patient data file (.mat)"
+        help="Path to patient data file (.mat), e.g., ~/matRad/userdata/patients/HNC_001.mat"
     )
     
     parser.add_argument(
@@ -121,67 +85,34 @@ Supported models (default: gpt-5.1):
 
 def print_treatment_summary(args):
     """Print a summary of the treatment configuration."""
-    # Parse dose argument
-    prescription_dose = parse_dose_argument(args.dose)
-    
     print("🎯 TREATMENT CONFIGURATION")
     print("=" * 50)
     print(f"Cancer Site:        {args.site}")
-    
-    if isinstance(prescription_dose, dict):
-        primary_dose = max(prescription_dose.values())
-        dose_per_fraction = primary_dose / args.fractions
-        dose_info = ", ".join([f"{target}: {dose} Gy" for target, dose in prescription_dose.items()])
-        print(f"Prescription (SIB): {dose_info}")
-        print(f"Number of Fractions: {args.fractions}")
-        print(f"Primary Dose/Fx:    {dose_per_fraction:.1f} Gy")
-    else:
-        dose_per_fraction = prescription_dose / args.fractions
-        print(f"Prescription Dose:  {prescription_dose} Gy")
-        print(f"Number of Fractions: {args.fractions}")
-        print(f"Dose per Fraction:  {dose_per_fraction:.1f} Gy")
-    
+    print(f"Prescription:       Will be inferred from structure names")
     print(f"Treatment Technique: {args.technique}")
     print(f"LLM Model:          {args.model}")
-    print(f"Patient File:       {args.patient}")
+    print(f"Patient File:       {os.path.expanduser(args.patient)}")
     print(f"Max Iterations:     {args.max_iterations}")
     print("=" * 50)
-    
-    # Provide clinical context based on site and fractionation
-    if args.site.lower() in ['lung', 'nsclc', 'lung_cancer']:
-        if dose_per_fraction > 5.0:
-            print("📋 Clinical Context: SBRT/Hypofractionated lung treatment")
-        else:
-            print("📋 Clinical Context: Conventional fractionation lung cancer")
-    elif args.site.lower() in ['head_and_neck', 'head_neck', 'hnc']:
-        print("📋 Clinical Context: Head and neck cancer treatment")
-    elif args.site.lower() == 'prostate':
-        if dose_per_fraction > 3.0:
-            print("📋 Clinical Context: Hypofractionated prostate treatment")
-        else:
-            print("📋 Clinical Context: Conventional fractionation prostate cancer")
-    elif args.site.lower() == 'breast':
-        print("📋 Clinical Context: Breast cancer treatment")
-    
+    print("📋 Note: Prescription dose and fractions will be inferred")
+    print("   from target structure names (e.g., PTV6996 = 69.96 Gy)")
     print()
 
 def main_cli():
     """Main CLI function."""
     args = parse_arguments()
-        
+    
+    # Expand user path
+    patient_file = os.path.expanduser(args.patient)
+    
     # Print treatment summary
     print_treatment_summary(args)
     
     try:
-        # Parse dose argument
-        prescription_dose = parse_dose_argument(args.dose)
-        
-        # Run the planning session
+        # Run the planning session (prescription will be inferred)
         main(
             cancer_site=args.site,
-            prescription_dose=prescription_dose,
-            num_fractions=args.fractions,
-            patient_file=args.patient,
+            patient_file=patient_file,
             treatment_technique=args.technique,
             model=args.model
         )
