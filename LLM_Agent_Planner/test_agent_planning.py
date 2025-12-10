@@ -1536,26 +1536,63 @@ class IMRTPlanningAgent:
         if len(messages) <= max_messages:
             return messages
         
-        # Keep system prompt, first few messages, and recent messages
+        # Keep system prompt separate
         system_msgs = [msg for msg in messages if msg["role"] == "system"]
         other_msgs = [msg for msg in messages if msg["role"] != "system"]
         
         if len(other_msgs) <= max_messages - len(system_msgs):
             return messages
-            
-        # Keep first 5 and last 10 messages, add compression note
-        keep_first = 5
-        keep_last = max_messages - len(system_msgs) - keep_first - 1  # -1 for compression note
         
-        compressed = system_msgs + other_msgs[:keep_first]
+        # Group messages into conversation units (assistant+tool pairs, user messages)
+        conversation_units = []
+        i = 0
+        while i < len(other_msgs):
+            msg = other_msgs[i]
+            if msg["role"] == "assistant" and msg.get("tool_calls"):
+                # Find all corresponding tool messages
+                unit = [msg]
+                i += 1
+                while i < len(other_msgs) and other_msgs[i]["role"] == "tool":
+                    unit.append(other_msgs[i])
+                    i += 1
+                conversation_units.append(unit)
+            else:
+                # Single message unit
+                conversation_units.append([msg])
+                i += 1
+        
+        # Calculate how many units we can keep
+        available_slots = max_messages - len(system_msgs) - 1  # -1 for compression note
+        
+        if len(conversation_units) <= available_slots:
+            return messages
+        
+        # Keep first few and last few units
+        keep_first_units = min(3, available_slots // 2)
+        keep_last_units = available_slots - keep_first_units
+        
+        if keep_last_units < 0:
+            keep_last_units = 0
+            keep_first_units = available_slots
+        
+        # Build compressed conversation
+        compressed = system_msgs[:]
+        
+        # Add first units
+        for unit in conversation_units[:keep_first_units]:
+            compressed.extend(unit)
         
         # Add compression summary
         compressed.append({
             "role": "user", 
-            "content": f"[Conversation compressed: Kept first {keep_first} and last {keep_last} messages out of {len(other_msgs)} total messages to save context]"
+            "content": f"[Conversation compressed: Kept first {keep_first_units} and last {keep_last_units} conversation units out of {len(conversation_units)} total units to save context]"
         })
         
-        compressed.extend(other_msgs[-keep_last:])
+        # Add last units
+        if keep_last_units > 0:
+            for unit in conversation_units[-keep_last_units:]:
+                compressed.extend(unit)
+        
         return compressed
     
     def _convert_to_anthropic_messages(self, messages: List[Dict]) -> List[Dict]:
