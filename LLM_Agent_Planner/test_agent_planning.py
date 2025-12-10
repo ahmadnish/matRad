@@ -697,6 +697,18 @@ class IMRTPlanningAgent:
             {
                 "type": "function",
                 "function": {
+                    "name": "get_structure_volumes",
+                    "description": "Get detailed structure information including voxel counts (volume), types, and overlap priorities. CRITICAL for determining penalty scaling (smaller structures often need higher penalties) and checking overlap behavior (lower priority number = higher priority).",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {},
+                        "additionalProperties": False
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
                     "name": "create_treatment_plan",
                     "description": "Create an empty treatment plan with default settings.",
                     "parameters": {
@@ -1192,6 +1204,10 @@ class IMRTPlanningAgent:
                 
             elif tool_name == "get_structure_information":
                 result_dict = self.engine.get_structure_names()
+                result_dict = convert_matlab_types(result_dict)
+                
+            elif tool_name == "get_structure_volumes":
+                result_dict = self.engine.get_structure_volumes()
                 result_dict = convert_matlab_types(result_dict)
                 
             elif tool_name == "create_treatment_plan":

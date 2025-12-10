@@ -252,6 +252,69 @@ class MatRadEngine:
             
         except Exception as e:
             return {"success": False, "error": str(e)}
+
+    def get_structure_volumes(self) -> Dict[str, Any]:
+        """
+        Get structure volumes (in voxels), types, and priorities.
+        
+        Returns:
+            Dict with structure details including voxel counts and priorities, or error status.
+        """
+        if not self.initialized:
+            return {"success": False, "error": "MATLAB Engine not initialized"}
+            
+        if not self.patient_loaded:
+            return {"success": False, "error": "No patient data loaded"}
+            
+        try:
+            # First check if cst exists
+            cst_exists = self.eng.eval("exist('cst', 'var')", nargout=1)
+            if cst_exists != 1:
+                return {"success": False, "error": "CST not found in MATLAB workspace"}
+            
+            # Get cst size
+            cst_size = self.eng.eval("size(cst, 1)", nargout=1)
+            
+            structures = []
+            
+            for i in range(1, int(cst_size) + 1):
+                name = self.eng.eval(f"cst{{{i},2}}", nargout=1)
+                if not name:
+                    continue
+                
+                struct_type = self.eng.eval(f"cst{{{i},3}}", nargout=1)
+                
+                # Get volume (num voxels)
+                # cst{i,4} is a cell array of indices. For 3D, it's usually 1 element.
+                # We'll take the length of the first element.
+                num_voxels = self.eng.eval(f"numel(cst{{{i},4}}{{1}})", nargout=1)
+                
+                # Get priority
+                # cst{i,5} is a struct. Check if Priority field exists.
+                try:
+                    # Check if Priority field exists in the struct
+                    has_priority = self.eng.eval(f"isfield(cst{{{i},5}}, 'Priority')", nargout=1)
+                    if has_priority:
+                        priority = self.eng.eval(f"cst{{{i},5}}.Priority", nargout=1)
+                    else:
+                        priority = 0 # Default 
+                except:
+                    priority = 0
+                
+                structures.append({
+                    "name": str(name),
+                    "type": str(struct_type),
+                    "voxels": int(num_voxels),
+                    "priority": int(priority)
+                })
+                
+            return {
+                "success": True,
+                "structures": structures
+            }
+            
+        except Exception as e:
+            return {"success": False, "error": str(e)}
     
     def create_empty_plan(self, num_fractions: int = 30) -> Dict[str, Any]:
         """
