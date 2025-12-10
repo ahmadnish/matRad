@@ -3431,27 +3431,62 @@ class MatRadEngine:
             }
 
             response = client.chat.completions.create(
-                model="gpt-4o",
+                model="gpt-4.1",
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.1,
                 response_format=response_format
             )
                     
             analysis = json.loads(response.choices[0].message.content)
+
+            analysis_ = {                
+                "inferred_prescription": analysis.get("inferred_prescription", {}),
+                "quantec_guidelines": analysis.get("quantec_guidelines", [])
+            }            
             
             # Validate inferred prescription against provided dose
-            inferred_dose = analysis["inferred_prescription"]["primary_dose_gy"]
-            dose_validation = {"valid": True, "message": ""}
+            inferred_dose = analysis["inferred_prescription"]["primary_dose_gy"]            
             
             if provided_prescription_dose is not None:
-                if abs(inferred_dose - provided_prescription_dose) > 1.0:  # Allow 1 Gy tolerance
-                    dose_validation = {
-                        "valid": False,
-                        "message": f"Prescription mismatch: provided {provided_prescription_dose} Gy vs inferred {inferred_dose} Gy"
+                dose_difference = abs(inferred_dose - provided_prescription_dose)
+                if dose_difference > 1.0:  # Allow 5 Gy tolerance
+                    return {
+                        "success": False, 
+                        "error": f"Inferred prescription dose ({inferred_dose} Gy) differs significantly from provided dose ({provided_prescription_dose} Gy). Difference: {dose_difference:.1f} Gy"
                     }
             
             # Remove structures marked for removal
             structures_to_remove = [s["name"] for s in analysis["remove_structures"]]
+            
+            # Check keep structures for empty voxel indices and add to removal list
+            for struct_info in analysis["keep_structures"]:
+                struct_name = struct_info["name"]
+                try:
+                    # Find structure index in CST
+                    matlab_code = f"""
+                    check_idx = 0;
+                    for i = 1:size(cst, 1)
+                        if strcmp(cst{{i, 2}}, '{struct_name}')
+                            check_idx = i;
+                            break;
+                        end
+                    end
+                    """
+                    self.eng.eval(matlab_code, nargout=0)
+                    check_idx = int(self.eng.eval("check_idx"))
+                    
+                    if check_idx > 0:
+                        # Check if voxel indices (cst{i, 4}{1}) are empty
+                        has_voxels = self.eng.eval(f"~isempty(cst{{{check_idx}, 4}}) && ~isempty(cst{{{check_idx}, 4}}{{1}})", nargout=1)
+                        if not has_voxels:
+                            # Structure has no voxel data, add to removal list
+                            if struct_name not in structures_to_remove:
+                                structures_to_remove.append(struct_name)
+                                
+                except Exception as e:
+                    # If we can't check the structure, continue
+                    continue
+            
             removal_results = []
             
             for struct_name in structures_to_remove:
@@ -3479,11 +3514,13 @@ class MatRadEngine:
                 except Exception as e:
                     removal_results.append({"name": struct_name, "removed": False, "reason": str(e)})
             
+
+
+            print(f"Removal results: {removal_results}")
+
             return {
                 "success": True,
-                "analysis": analysis,
-                "dose_validation": dose_validation,
-                "removal_results": removal_results,
+                "analysis": analysis_,             
                 "structures_removed": len([r for r in removal_results if r["removed"]]),
                 "structures_kept": len(analysis["keep_structures"])
             }
