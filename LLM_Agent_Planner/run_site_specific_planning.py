@@ -18,6 +18,9 @@ import argparse
 import sys
 import os
 from test_agent_planning import main
+from dotenv import load_dotenv
+# Load environment variables
+load_dotenv()
 
 def parse_arguments():
     """Parse command line arguments."""

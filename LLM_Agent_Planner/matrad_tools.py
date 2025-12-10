@@ -9,6 +9,11 @@ import os
 import time
 import json
 import numpy as np
+
+from dotenv import load_dotenv
+# Load environment variables
+load_dotenv()
+
 from typing import Dict, List, Tuple, Any, Optional
 from pathlib import Path
 import math
@@ -1413,7 +1418,7 @@ class MatRadEngine:
                 "penalty": penalty,
                 "rationale": rationale or "No rationale provided",
                 "total_objectives": num_objectives,
-                "message": f"Added {obj_type} objective to {structure_name}. Rationale: {rationale or 'No rationale provided'}"
+                "message": f"Added {obj_type} objective to {structure_name}."
             }
             
         except Exception as e:
@@ -1480,7 +1485,7 @@ class MatRadEngine:
                     {optimization_cmd}
                     opt_success = true;
                     opt_error = '';                    
-                    save(['resultGUIs/resultGUI_' datestr(now,'yyyymmdd_HHMM') '.mat', 'resultGUI', 'ct', 'cst', 'pln', 'stf']);
+                    save(['resultGUIs/resultGUI_' datestr(now,'yyyymmdd_HHMM') '.mat'], 'resultGUI', 'ct', 'cst', 'pln', 'stf', '-v7.3');
                     fprintf('Optimization successful: resultGUI saved to resultGUIs/resultGUI_%s.mat\\n', datestr(now,'yyyymmdd_HHMM'));
                 catch ME
                     opt_success = false;
@@ -3393,7 +3398,7 @@ class MatRadEngine:
             
             # Use LLM to analyze structures
             
-            client = OpenAI()
+            client = OpenAI(base_url="https://eu.api.openai.com/v1")
             
             structure_list = "\n".join([f"- {s['name']} ({s['type']})" for s in all_structures])
             
@@ -3423,8 +3428,8 @@ class MatRadEngine:
                     "rationale": "how dose was inferred"
                 }},
                 "quantec_guidelines": [
-                    {{"structure": "SPINAL_CORD", "constraint": "D_max ≤ 45 Gy", "endpoint": "myelopathy"}},
-                    {{"structure": "BRAINSTEM", "constraint": "D_max ≤ 54 Gy", "endpoint": "necrosis"}}
+                    {{"structure": "SPINAL_CORD", "constraint": "D_max ≤ 45 Gy"}},
+                    {{"structure": "BRAINSTEM", "constraint": "D_max ≤ 54 Gy"}}
                 ]
             }}
 
@@ -3481,10 +3486,9 @@ class MatRadEngine:
                                     "type": "object",
                                     "properties": {
                                         "structure": {"type": "string"},
-                                        "constraint": {"type": "string"},
-                                        "endpoint": {"type": "string"}
+                                        "constraint": {"type": "string"}
                                     },
-                                    "required": ["structure", "constraint", "endpoint"]
+                                    "required": ["structure", "constraint"]
                                 }
                             }
                         },

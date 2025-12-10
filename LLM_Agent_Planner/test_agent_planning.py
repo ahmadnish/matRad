@@ -45,6 +45,11 @@ import os
 import json
 import time
 import numpy as np
+
+from dotenv import load_dotenv
+# Load environment variables
+load_dotenv()
+
 from typing import Dict, Any, List, Optional, Union
 from pydantic import BaseModel, Field
 from openai import OpenAI
@@ -75,8 +80,8 @@ SUPPORTED_MODELS = {
 }
 
 # Initialize clients (will be used based on selected model)
-openai_client = OpenAI()
-anthropic_client = Anthropic() if ANTHROPIC_AVAILABLE else None
+openai_client = OpenAI(base_url="https://eu.api.openai.com/v1")
+anthropic_client = Anthropic(base_url="https://eu.api.openai.com/v1") if ANTHROPIC_AVAILABLE else None
 
 def convert_matlab_types(obj):
     """
@@ -1876,7 +1881,7 @@ class IMRTPlanningAgent:
                 iteration += 1
                 
                 # Compress conversation history every 10 iterations to prevent context overflow
-                if iteration % 50 == 0:
+                if iteration % 100 == 0:
                     old_length = len(messages)
                     messages = self._compress_conversation_history(messages, max_messages=25)
                     if len(messages) < old_length:
