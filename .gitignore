@@ -16,3 +16,4 @@ messages_debug.txt
 console_output
 LLM_Agent_Planner/utils
 LLM_Agent_Planner/sessions_messages
+ipopt_mex/
