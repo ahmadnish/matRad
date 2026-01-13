@@ -13,4 +13,8 @@ LLM_Agent_Planner/utils/
 console_output/
 agent_output_*.txt
 messages_debug.txt
+LLM_Agent_Planner/examples/test_*.py
+agent_output_4Jakob.txt
+RadOnk_Hals
+RadOnk_Hals.zip
 ipopt_mex/

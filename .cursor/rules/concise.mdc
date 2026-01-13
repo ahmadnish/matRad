@@ -1,0 +1,8 @@
+---
+alwaysApply: false
+---
+Notes:
+
+- When writing or modifying code, make only the smallest necessary changes to satisfy the request. Do not introduce unrelated refactors, abstractions, or alternative implementations. Avoid generating multiple variations or expanding the codebase unnecessarily. Produce only the code that is directly required to fulfill the task
+
+- If anything in the plan/prompt is ambiguous, stop and output 2 options with trade-offs instead of guessing.

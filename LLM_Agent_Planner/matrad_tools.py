@@ -9,9 +9,15 @@ import os
 import time
 import json
 import numpy as np
+
+from dotenv import load_dotenv
+# Load environment variables
+load_dotenv()
+
 from typing import Dict, List, Tuple, Any, Optional
 from pathlib import Path
 import math
+from openai import OpenAI
 
 import matlab.engine
 
@@ -65,6 +71,10 @@ class MatRadEngine:
             print("Initializing matRad...")
             self.eng.matRad_rc(nargout=0)
             
+            # Disable GUI elements (waitbars, plot windows, etc.)
+            print("Disabling GUI elements...")
+            self.disable_gui_elements()
+            
             self.initialized = True
             print("matRad initialized successfully.")
             return True
@@ -73,6 +83,38 @@ class MatRadEngine:
             error_msg = f"Error initializing MATLAB Engine: {str(e)}"
             print(error_msg)
             raise RuntimeError(error_msg)
+    
+    def disable_gui_elements(self) -> bool:
+        """
+        Disable all GUI elements including waitbars, plot windows, and progress indicators.
+        This prevents pop-ups during dose calculation and optimization.
+        
+        Returns:
+            bool: True if successful.
+        """
+        if not self.eng:
+            return False
+            
+        try:
+            # Set global matRad configuration to disable GUI
+            self.eng.eval("""
+            % Get matRad configuration instance
+            matRad_cfg = MatRad_Config.instance();
+            
+            % Disable all GUI elements including waitbars and pop-outs
+            matRad_cfg.disableGUI = true;
+            
+            % Also disable any potential plot functions for fmincon
+            % This will be applied when the optimizer is configured
+            fprintf('✅ GUI elements disabled - no waitbars or plot windows will appear\\n');
+            """, nargout=0)
+            
+            print("✅ Successfully disabled GUI elements")
+            return True
+            
+        except Exception as e:
+            print(f"⚠️  Warning: Could not disable GUI elements: {e}")
+            return False
     
     def stop_engine(self) -> bool:
         """
@@ -215,10 +257,76 @@ class MatRadEngine:
             
         except Exception as e:
             return {"success": False, "error": str(e)}
+
+    def get_structure_volumes(self) -> Dict[str, Any]:
+        """
+        Get structure volumes (in voxels), types, and priorities.
+        
+        Returns:
+            Dict with structure details including voxel counts and priorities, or error status.
+        """
+        if not self.initialized:
+            return {"success": False, "error": "MATLAB Engine not initialized"}
+            
+        if not self.patient_loaded:
+            return {"success": False, "error": "No patient data loaded"}
+            
+        try:
+            # First check if cst exists
+            cst_exists = self.eng.eval("exist('cst', 'var')", nargout=1)
+            if cst_exists != 1:
+                return {"success": False, "error": "CST not found in MATLAB workspace"}
+            
+            # Get cst size
+            cst_size = self.eng.eval("size(cst, 1)", nargout=1)
+            
+            structures = []
+            
+            for i in range(1, int(cst_size) + 1):
+                name = self.eng.eval(f"cst{{{i},2}}", nargout=1)
+                if not name:
+                    continue
+                
+                struct_type = self.eng.eval(f"cst{{{i},3}}", nargout=1)
+                
+                # Get volume (num voxels)
+                # cst{i,4} is a cell array of indices. For 3D, it's usually 1 element.
+                # We'll take the length of the first element.
+                num_voxels = self.eng.eval(f"numel(cst{{{i},4}}{{1}})", nargout=1)
+                
+                # Get priority
+                # cst{i,5} is a struct. Check if Priority field exists.
+                try:
+                    # Check if Priority field exists in the struct
+                    has_priority = self.eng.eval(f"isfield(cst{{{i},5}}, 'Priority')", nargout=1)
+                    if has_priority:
+                        priority = self.eng.eval(f"cst{{{i},5}}.Priority", nargout=1)
+                    else:
+                        priority = 0 # Default 
+                except:
+                    priority = 0
+                
+                structures.append({
+                    "name": str(name),
+                    "type": str(struct_type),
+                    "voxels": int(num_voxels),
+                    "priority": int(priority)
+                })
+                
+            return {
+                "success": True,
+                "structures": structures
+            }
+            
+        except Exception as e:
+            return {"success": False, "error": str(e)}
     
-    def create_empty_plan(self) -> Dict[str, Any]:
+    def create_empty_plan(self, num_fractions: int = 30) -> Dict[str, Any]:
         """
         Create an empty treatment plan structure.
+        
+        Args:
+            num_fractions: Number of treatment fractions (default: 30)
         
         Returns:
             Dict with plan information or error status.
@@ -231,11 +339,11 @@ class MatRadEngine:
             
         try:
             # Create a new plan
-            self.eng.eval("""
+            self.eng.eval(f"""
             pln = struct();
             pln.radiationMode   = 'photons';
             pln.machine         = 'Generic';
-            pln.numOfFractions  = 30;
+            pln.numOfFractions  = {num_fractions};
              
             % Default beam setup - will be modified later
             pln.propStf.gantryAngles    = [0:72:359];
@@ -257,6 +365,10 @@ class MatRadEngine:
             % Default IMRT without sequencing or DAO
             pln.propSeq.runSequencing = false;
             pln.propOpt.runDAO = false;
+            
+            % Set up fmincon with GUI elements disabled
+            pln.propOpt.fmincon.Display = 'off';
+            pln.propOpt.fmincon.PlotFcn = [];  % Disable all plot functions
             """, nargout=0)
             
             # Store plan in class
@@ -269,7 +381,7 @@ class MatRadEngine:
             return {
                 "success": True,
                 "radiation_mode": "photons",
-                "num_fractions": 30,
+                "num_fractions": num_fractions,
                 "num_beams": num_beams,
                 "gantry_angles": list(gantry_angles[0]),
                 "message": "Treatment plan initialized successfully"
@@ -325,14 +437,42 @@ class MatRadEngine:
             # Clear optimized weights since beam configuration changed
             self.optimized_weights = None
             self.weights_available = False
+
+            print("Generating beam geometry...")
+            self.eng.eval("stf = matRad_generateStf(ct,cst,pln);", nargout=0)
+            
+            # Instead of trying to get the entire stf struct, just keep track that it exists
+            # self.stf = self.eng.workspace["stf"]  
+            self.stf = True  # Just mark that stf exists in MATLAB workspace
+            
+            # Get beam info
+            num_beams = self.eng.eval("numel(stf)", nargout=1)
+            num_beams_int = int(num_beams)
+            total_bixels = self.eng.eval("sum([stf.totalNumOfBixels])", nargout=1)
+            
+            # Get individual beam details
+            beam_info = []
+            for i in range(1, num_beams_int + 1):
+                gantry = self.eng.eval(f"stf({i}).gantryAngle", nargout=1)
+                couch = self.eng.eval(f"stf({i}).couchAngle", nargout=1)
+                bixels = self.eng.eval(f"stf({i}).totalNumOfBixels", nargout=1)
+                beam_info.append({
+                    "beam_id": i,
+                    "gantry_angle": gantry,
+                    "couch_angle": couch,
+                    "num_bixels": bixels
+                })
             
             return {
                 "success": True,
                 "num_beams": len(gantry_angles),
                 "gantry_angles": gantry_angles,
                 "couch_angles": couch_angles,
+                "num_beams": num_beams_int,
+                "total_bixels": total_bixels,
+                "beam_info": beam_info,
                 "weights_cleared": True,
-                "message": "Beam angles set successfully. Previous optimization weights cleared."
+                "message": "Beam angles and beam geometry set successfully. Previous optimization weights cleared."
             }
             
         except Exception as e:
@@ -451,11 +591,57 @@ class MatRadEngine:
             return {"success": False, "error": "No beam geometry created. Call generate_beam_geometry first."}
             
         try:
-            # Calculate dose influence matrix
-            print("Calculating dose influence matrix (this may take some time)...")
-            start_time = time.time()
-            self.eng.eval("dij = matRad_calcDoseInfluence(ct,cst,stf,pln);", nargout=0)
-            calc_time = time.time() - start_time
+            import numpy as np
+
+            # Check gantry and couch angles for all beams
+            num_beams = int(self.eng.eval("numel(stf)", nargout=1))
+            gantry_angles = []
+            couch_angles = []
+            for i in range(1, num_beams + 1):
+                gantry = float(self.eng.eval(f"stf({i}).gantryAngle", nargout=1))
+                couch = float(self.eng.eval(f"stf({i}).couchAngle", nargout=1))
+                gantry_angles.append(gantry)
+                couch_angles.append(couch)
+
+            # Utility: check if all couch angles are zero & gantry equidistant
+            all_couch_zero = all(np.isclose(c, 0.0) for c in couch_angles)
+            if all_couch_zero and num_beams > 1:
+                # Calculate differences between sorted angles modulo 360
+                sorted_gantry = sorted([g % 360 for g in gantry_angles])
+                diffs = [(sorted_gantry[(i+1)%num_beams] - sorted_gantry[i]) % 360 for i in range(num_beams)]
+                uniform_step = np.round(np.mean(diffs), 2)
+                is_equidistant = False #all(np.isclose(d, uniform_step, atol=1e-3) for d in diffs)
+
+                if is_equidistant:
+                    # Construct file name
+                    step_int = int(round(uniform_step))
+                    dij_name = f"dij_{num_beams}_{step_int}.mat"
+                    import os
+                    if os.path.exists(dij_name):
+                        print(f"Loading precomputed dose-influence matrix from '{dij_name}'...")
+                        self.eng.eval(f"load('{dij_name}', 'dij');", nargout=0)
+                        calc_time = 0
+                    else:
+                        print(f"Calculating dose influence matrix (equidistant gantry, will save as '{dij_name}') ...")
+                        start_time = time.time()
+                        self.eng.eval("dij = matRad_calcDoseInfluence(ct,cst,stf,pln);", nargout=0)
+                        calc_time = time.time() - start_time
+                        print(f"Saving dose-influence matrix as '{dij_name}'...")
+                        self.eng.eval(f"save('{dij_name}', 'dij', '-v7.3')", nargout=0)
+                else:
+                    # Not equidistant, compute and save as default
+                    print("Calculating dose influence matrix (non-uniform gantry/couch)...")
+                    start_time = time.time()
+                    self.eng.eval("dij = matRad_calcDoseInfluence(ct,cst,stf,pln);", nargout=0)
+                    calc_time = time.time() - start_time
+                    self.eng.eval("save('dij.mat', 'dij', '-v7.3')", nargout=0)
+            else:
+                # Not all couch angles zero, compute and save as default
+                print("Calculating dose influence matrix (may take some time)...")
+                start_time = time.time()
+                self.eng.eval("dij = matRad_calcDoseInfluence(ct,cst,stf,pln);", nargout=0)
+                calc_time = time.time() - start_time
+                self.eng.eval("save('dij.mat', 'dij', '-v7.3')", nargout=0)
             
             # Instead of trying to get the entire dij struct, just keep track that it exists
             # self.dij = self.eng.workspace["dij"]
@@ -516,13 +702,20 @@ class MatRadEngine:
                 
                 struct_objectives = []
                 
-                # Loop through each objective for this structure
+                # Loop through each objective/constraint for this structure
                 for j in range(1, num_objectives + 1):  # MATLAB 1-based indexing
                     try:
-                        # Get objective className
+                        # Get className
                         class_name = str(self.eng.eval(f"cst{{{i},6}}{{{j}}}.className", nargout=1))
                         
-                        # Get penalty
+                        # Check if this is an objective (has penalty) or constraint (no penalty)
+                        is_objective = self.eng.eval(f"isfield(cst{{{i},6}}{{{j}}}, 'penalty')", nargout=1)
+                        
+                        if not is_objective:
+                            # Skip constraints - they will be handled by get_current_constraints
+                            continue
+                            
+                        # Get penalty (only objectives have this field)
                         penalty = float(self.eng.eval(f"cst{{{i},6}}{{{j}}}.penalty", nargout=1))
                         
                         # Get dose value (parameters)
@@ -546,7 +739,9 @@ class MatRadEngine:
                             'DoseObjectives.matRad_SquaredOverdosing': 'max_dose',
                             'DoseObjectives.matRad_MeanDose': 'mean_dose',
                             'DoseObjectives.matRad_SquaredDeviation': 'square_deviation',
-                            'DoseObjectives.matRad_EUD': 'eud'
+                            'DoseObjectives.matRad_EUD': 'eud',
+                            'DoseObjectives.matRad_MinDVH': 'min_dvh',
+                            'DoseObjectives.matRad_MaxDVH': 'max_dvh'
                         }
                         objective_type = objective_type_map.get(class_name, 'unknown')
                         
@@ -608,7 +803,9 @@ class MatRadEngine:
                 'max_dose': 'DoseObjectives.matRad_SquaredOverdosing',
                 'mean_dose': 'DoseObjectives.matRad_MeanDose',
                 'square_deviation': 'DoseObjectives.matRad_SquaredDeviation',
-                'eud': 'DoseObjectives.matRad_EUD'
+                'eud': 'DoseObjectives.matRad_EUD',
+                'min_dvh': 'DoseObjectives.matRad_MinDVH',
+                'max_dvh': 'DoseObjectives.matRad_MaxDVH'
             }
             
             target_class = obj_class_map.get(objective_type) if objective_type else None
@@ -757,18 +954,375 @@ class MatRadEngine:
         except Exception as e:
             return {"success": False, "error": str(e)}
 
+    def add_constraint(self, structure_name: str, constraint_type: str,
+                      lower_bound: float = None, upper_bound: float = None,
+                      dose_reference: float = None, eud_exponent: float = 3.5,
+                      rationale: str = None) -> Dict[str, Any]:
+        """
+        Add an optimization constraint for a structure.
+        
+        Args:
+            structure_name: Name of the structure to add constraint for.
+            constraint_type: Type of constraint ('min_max_dose', 'min_max_mean_dose', 'min_max_eud', 'min_max_dvh')
+            lower_bound: Lower bound value (optional).
+            upper_bound: Upper bound value (optional).
+            dose_reference: Reference dose for DVH constraints in Gy.
+            eud_exponent: EUD exponent parameter (default 3.5).
+            rationale: Short explanation of why this constraint is being added.
+            
+        Returns:
+            Dict with constraint information or error status.
+        """
+        if not self.initialized:
+            return {"success": False, "error": "MATLAB Engine not initialized"}
+            
+        if not self.patient_loaded:
+            return {"success": False, "error": "No patient data loaded"}
+            
+        try:
+            # Map constraint types to matRad constraint classes
+            constraint_class_map = {
+                'min_max_dose': 'DoseConstraints.matRad_MinMaxDose',
+                'min_max_mean_dose': 'DoseConstraints.matRad_MinMaxMeanDose',
+                'min_max_eud': 'DoseConstraints.matRad_MinMaxEUD',
+                'min_max_dvh': 'DoseConstraints.matRad_MinMaxDVH'
+            }
+            
+            if constraint_type not in constraint_class_map:
+                return {"success": False, "error": f"Unsupported constraint type: {constraint_type}. Supported types: {list(constraint_class_map.keys())}"}
+                
+            constraint_class = constraint_class_map[constraint_type]
+            
+            # First, find structure index
+            self.eng.eval(f"""
+            struct_idx = 0;
+            for i = 1:size(cst,1)
+                if ~isempty(cst{{i,2}}) && strcmp(cst{{i,2}}, '{structure_name}')
+                    struct_idx = i;
+                    break;
+                end
+            end
+            """, nargout=0)
+            
+            struct_idx = int(self.eng.workspace["struct_idx"])
+            if struct_idx == 0:
+                return {"success": False, "error": f"Structure '{structure_name}' not found"}
+            
+            # Create the constraint struct in MATLAB with appropriate parameters
+            if constraint_type == 'min_max_dose':
+                # MinMaxDose: parameters = {min_dose, max_dose, method}
+                min_dose = lower_bound if lower_bound is not None else 0
+                max_dose = upper_bound if upper_bound is not None else float('inf')
+                self.eng.eval(f"""
+                % Create new MinMaxDose constraint
+                newConstraint = struct();
+                newConstraint.className = '{constraint_class}';
+                newConstraint.parameters = {{{min_dose}, {max_dose}, 1}};  % method = 1 (approx)
+                """, nargout=0)
+                
+            elif constraint_type == 'min_max_mean_dose':
+                # MinMaxMeanDose: parameters = {min_mean, max_mean}
+                min_mean = lower_bound if lower_bound is not None else 0
+                max_mean = upper_bound if upper_bound is not None else float('inf')
+                self.eng.eval(f"""
+                % Create new MinMaxMeanDose constraint
+                newConstraint = struct();
+                newConstraint.className = '{constraint_class}';
+                newConstraint.parameters = {{{min_mean}, {max_mean}}};
+                """, nargout=0)
+                
+            elif constraint_type == 'min_max_eud':
+                # MinMaxEUD: parameters = {exponent, min_eud, max_eud}
+                min_eud = lower_bound if lower_bound is not None else 0
+                max_eud = upper_bound if upper_bound is not None else float('inf')
+                self.eng.eval(f"""
+                % Create new MinMaxEUD constraint
+                newConstraint = struct();
+                newConstraint.className = '{constraint_class}';
+                newConstraint.parameters = {{{eud_exponent}, {min_eud}, {max_eud}}};
+                """, nargout=0)
+                
+            elif constraint_type == 'min_max_dvh':
+                # MinMaxDVH: parameters = {dose_ref, vol_min, vol_max}
+                if dose_reference is None:
+                    return {"success": False, "error": "dose_reference is required for min_max_dvh constraint"}
+                vol_min = lower_bound if lower_bound is not None else 0
+                vol_max = upper_bound if upper_bound is not None else 100
+                # Convert volume fractions to percentages for matRad
+                vol_min_pct = vol_min * 100 if vol_min <= 1.0 else vol_min
+                vol_max_pct = vol_max * 100 if vol_max <= 1.0 else vol_max
+                self.eng.eval(f"""
+                % Create new MinMaxDVH constraint
+                newConstraint = struct();
+                newConstraint.className = '{constraint_class}';
+                newConstraint.parameters = {{{dose_reference}, {vol_min_pct}, {vol_max_pct}}};
+                """, nargout=0)
+            
+            # Check if constraints field exists for this structure
+            has_constraints = self.eng.eval(f"~isempty(cst({int(struct_idx)},6))", nargout=1)
+            
+            if not has_constraints:
+                # Initialize empty cell array if no objectives/constraints exist
+                self.eng.eval(f"cst({int(struct_idx)},6) = {{}};", nargout=0)
+            
+            # Add the constraint to the structure
+            self.eng.eval(f"""
+            % Get current objectives/constraints
+            currentObjConstraints = cst{{{int(struct_idx)},6}};
+            % Add new constraint
+            currentObjConstraints{{end+1}} = newConstraint;
+            % Update CST
+            cst{{{int(struct_idx)},6}} = currentObjConstraints;
+            """, nargout=0)
+            
+            # Get the number of objectives/constraints
+            num_obj_constraints = self.eng.eval(f"numel(cst({int(struct_idx)},6))", nargout=1)
+            
+            return {
+                "success": True,
+                "structure": structure_name,
+                "constraint_type": constraint_type,
+                "lower_bound": lower_bound,
+                "upper_bound": upper_bound,
+                "dose_reference": dose_reference,
+                "eud_exponent": eud_exponent if constraint_type == 'min_max_eud' else None,
+                "rationale": rationale or "No rationale provided",
+                "total_obj_constraints": num_obj_constraints,
+                "message": f"Added {constraint_type} constraint to {structure_name}. Rationale: {rationale or 'No rationale provided'}"
+            }
+            
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    def remove_constraint(self, structure_name: str, constraint_index: int = None,
+                         constraint_type: str = None, rationale: str = None) -> Dict[str, Any]:
+        """
+        Remove a specific optimization constraint from a structure.
+        
+        Args:
+            structure_name: Name of the structure
+            constraint_index: Specific index of constraint to remove (1-based, optional)
+            constraint_type: Type of constraint to remove (optional, removes first match)
+            rationale: Short explanation of why this constraint is being removed.
+            
+        Returns:
+            Dict with removal status and information.
+        """
+        if not self.initialized:
+            return {"success": False, "error": "MATLAB Engine not initialized"}
+            
+        if not self.patient_loaded:
+            return {"success": False, "error": "No patient data loaded"}
+            
+        try:
+            # Map constraint types to matRad constraint classes
+            constraint_class_map = {
+                'min_max_dose': 'DoseConstraints.matRad_MinMaxDose',
+                'min_max_mean_dose': 'DoseConstraints.matRad_MinMaxMeanDose',
+                'min_max_eud': 'DoseConstraints.matRad_MinMaxEUD',
+                'min_max_dvh': 'DoseConstraints.matRad_MinMaxDVH'
+            }
+            
+            target_class = constraint_class_map.get(constraint_type) if constraint_type else None
+            
+            # First, find structure index
+            self.eng.eval(f"""
+            struct_idx = 0;
+            for i = 1:size(cst,1)
+                if ~isempty(cst{{i,2}}) && strcmp(cst{{i,2}}, '{structure_name}')
+                    struct_idx = i;
+                    break;
+                end
+            end
+            """, nargout=0)
+            
+            struct_idx = int(self.eng.workspace["struct_idx"])
+            if struct_idx == 0:
+                return {"success": False, "error": f"Structure '{structure_name}' not found"}
+            
+            # Remove constraint based on criteria
+            if constraint_index is not None:
+                # Remove by specific index
+                self.eng.eval(f"""
+                objConstraints = cst{{{struct_idx},6}};
+                if length(objConstraints) >= {constraint_index}
+                    removed_item = objConstraints{{{constraint_index}}};
+                    objConstraints({constraint_index}) = [];
+                    cst{{{struct_idx},6}} = objConstraints;
+                    removal_success = true;
+                    remaining_count = length(objConstraints);
+                else
+                    removal_success = false;
+                    remaining_count = length(objConstraints);
+                end
+                """, nargout=0)
+            else:
+                # Remove by type (first match)
+                class_condition = f"&& strcmp(item.className, '{target_class}')" if target_class else ""
+                
+                self.eng.eval(f"""
+                objConstraints = cst{{{struct_idx},6}};
+                removal_success = false;
+                removed_idx = 0;
+                
+                for j = 1:length(objConstraints)
+                    item = objConstraints{{j}};
+                    % Check if it's a constraint (has no penalty field) and matches type
+                    if ~isfield(item, 'penalty') {class_condition}
+                        removed_item = item;
+                        objConstraints(j) = [];
+                        removal_success = true;
+                        removed_idx = j;
+                        break;
+                    end
+                end
+                
+                cst{{{struct_idx},6}} = objConstraints;
+                remaining_count = length(objConstraints);
+                """, nargout=0)
+            
+            removal_success = bool(self.eng.workspace["removal_success"])
+            remaining_count = int(self.eng.workspace["remaining_count"])
+            
+            if removal_success:
+                return {
+                    "success": True,
+                    "structure": structure_name,
+                    "remaining_obj_constraints": remaining_count,
+                    "rationale": rationale or "No rationale provided",
+                    "message": f"Removed constraint from {structure_name}. {remaining_count} items remaining. Rationale: {rationale or 'No rationale provided'}"
+                }
+            else:
+                return {
+                    "success": False, 
+                    "error": f"No matching constraint found for removal in {structure_name}",
+                    "rationale": rationale or "No rationale provided"
+                }
+                
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    def get_current_constraints(self) -> Dict[str, Any]:
+        """
+        Get all current optimization constraints for all structures.
+        
+        Returns:
+            Dict with current constraints information organized by structure.
+        """
+        if not self.initialized:
+            return {"success": False, "error": "MATLAB Engine not initialized"}
+            
+        if not self.patient_loaded:
+            return {"success": False, "error": "No patient data loaded"}
+            
+        try:
+            # Get total number of structures
+            num_structures = int(self.eng.eval("size(cst,1)", nargout=1))
+            
+            constraints_dict = {}
+            total_count = 0
+            
+            # Loop through each structure
+            for i in range(1, num_structures + 1):  # MATLAB 1-based indexing
+                # Check if structure has a name
+                has_name = self.eng.eval(f"~isempty(cst{{{i},2}})", nargout=1)
+                if not has_name:
+                    continue
+                    
+                # Get structure name
+                struct_name = str(self.eng.eval(f"cst{{{i},2}}", nargout=1))
+                
+                # Check if structure has objectives/constraints
+                has_obj_constraints = self.eng.eval(f"~isempty(cst{{{i},6}})", nargout=1)
+                if not has_obj_constraints:
+                    continue
+                    
+                # Get number of objectives/constraints for this structure
+                num_obj_constraints = int(self.eng.eval(f"length(cst{{{i},6}})", nargout=1))
+                
+                struct_constraints = []
+                
+                # Loop through each objective/constraint for this structure
+                for j in range(1, num_obj_constraints + 1):  # MATLAB 1-based indexing
+                    try:
+                        # Get className
+                        class_name = str(self.eng.eval(f"cst{{{i},6}}{{{j}}}.className", nargout=1))
+                        
+                        # Check if it's a constraint (no penalty field)
+                        has_penalty = self.eng.eval(f"isfield(cst{{{i},6}}{{{j}}}, 'penalty')", nargout=1)
+                        if has_penalty:
+                            continue  # Skip objectives
+                        
+                        # Get parameters
+                        parameters = []
+                        try:
+                            has_params = self.eng.eval(f"isfield(cst{{{i},6}}{{{j}}}, 'parameters') && ~isempty(cst{{{i},6}}{{{j}}}.parameters)", nargout=1)
+                            if has_params:
+                                # Get number of parameters
+                                num_params = int(self.eng.eval(f"length(cst{{{i},6}}{{{j}}}.parameters)", nargout=1))
+                                for k in range(1, num_params + 1):
+                                    # Check if parameters is a cell array
+                                    is_cell = self.eng.eval(f"iscell(cst{{{i},6}}{{{j}}}.parameters)", nargout=1)
+                                    if is_cell:
+                                        param_val = float(self.eng.eval(f"cst{{{i},6}}{{{j}}}.parameters{{{k}}}", nargout=1))
+                                    else:
+                                        param_val = float(self.eng.eval(f"cst{{{i},6}}{{{j}}}.parameters({k})", nargout=1))
+                                    parameters.append(param_val)
+                        except:
+                            parameters = []
+                        
+                        # Map className to readable type
+                        constraint_type_map = {
+                            'DoseConstraints.matRad_MinMaxDose': 'min_max_dose',
+                            'DoseConstraints.matRad_MinMaxMeanDose': 'min_max_mean_dose',
+                            'DoseConstraints.matRad_MinMaxEUD': 'min_max_eud',
+                            'DoseConstraints.matRad_MinMaxDVH': 'min_max_dvh'
+                        }
+                        constraint_type = constraint_type_map.get(class_name, 'unknown')
+                        
+                        constraint_info = {
+                            "structure_index": i,
+                            "constraint_index": j,
+                            "constraint_type": constraint_type,
+                            "parameters": parameters,
+                            "className": class_name
+                        }
+                        
+                        struct_constraints.append(constraint_info)
+                        total_count += 1
+                        
+                    except Exception as e:
+                        print(f"Warning: Could not read constraint {j} for structure {struct_name}: {e}")
+                        continue
+                
+                if struct_constraints:
+                    constraints_dict[struct_name] = struct_constraints
+            
+            return {
+                "success": True,
+                "constraints_by_structure": constraints_dict,
+                "total_constraints": total_count,
+                "message": f"Found {total_count} constraints across {len(constraints_dict)} structures"
+            }
+            
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
     def add_optimization_objective(self, structure_name: str, obj_type: str, 
                                   dose_value: float, penalty: float = 1000.0, 
-                                  rationale: str = None) -> Dict[str, Any]:
+                                  rationale: str = None, volume_percent: float = None,
+                                  eud_exponent: float = None) -> Dict[str, Any]:
         """
         Add an optimization objective for a structure.
         
         Args:
             structure_name: Name of the structure to add objective for.
-            obj_type: Type of objective ('min_dose', 'max_dose', 'mean_dose', 'square_deviation', etc.)
-            dose_value: Dose value in Gy for the objective.
+            obj_type: Type of objective ('min_dose', 'max_dose', 'mean_dose', 'square_deviation', 'eud', 'min_dvh', 'max_dvh')
+            dose_value: Dose value in Gy for the objective (for EUD: target EUD value; for DVH: dose threshold).
             penalty: Penalty weight for the objective.
             rationale: Short explanation of why this objective is being added.
+            volume_percent: Volume percentage for DVH objectives (e.g., 95 for 95%). Only used for min_dvh and max_dvh.
+            eud_exponent: EUD exponent parameter (default 3.5). Only used for eud objective.
             
         Returns:
             Dict with objective information or error status.
@@ -782,11 +1336,13 @@ class MatRadEngine:
         try:
             # Map objective types to matRad objective classes
             obj_class_map = {
-                'min_dose': 'DoseObjectives.matRad_SquaredUnderdosing',
-                'max_dose': 'DoseObjectives.matRad_SquaredOverdosing',
+                'square_underdosing': 'DoseObjectives.matRad_SquaredUnderdosing',
+                'square_overdosing': 'DoseObjectives.matRad_SquaredOverdosing',
                 'mean_dose': 'DoseObjectives.matRad_MeanDose',
                 'square_deviation': 'DoseObjectives.matRad_SquaredDeviation',
-                'eud': 'DoseObjectives.matRad_EUD'
+                'eud': 'DoseObjectives.matRad_EUD',
+                'min_dvh': 'DoseObjectives.matRad_MinDVH',
+                'max_dvh': 'DoseObjectives.matRad_MaxDVH'
             }
             
             if obj_type not in obj_class_map:
@@ -831,14 +1387,36 @@ class MatRadEngine:
             # Find the corresponding index in CST
             struct_idx = cst_indices[struct_names_list.index(structure_name)]
             
-            # Create the objective struct in MATLAB
-            self.eng.eval(f"""
-            % Create new objective
-            newObj = struct();
-            newObj.className = '{obj_class}';
-            newObj.parameters = {{{dose_value}}};
-            newObj.penalty = {penalty};
-            """, nargout=0)
+            # Create the objective struct in MATLAB with appropriate parameters
+            if obj_type == 'eud':
+                # EUD objective: parameters = {dose_value, exponent}
+                eud_exp = eud_exponent if eud_exponent is not None else 3.5
+                self.eng.eval(f"""
+                % Create new EUD objective
+                newObj = struct();
+                newObj.className = '{obj_class}';
+                newObj.parameters = {{{dose_value}, {eud_exp}}};
+                newObj.penalty = {penalty};
+                """, nargout=0)
+            elif obj_type in ['min_dvh', 'max_dvh']:
+                # DVH objective: parameters = {dose_value, volume_percent}
+                vol_pct = volume_percent if volume_percent is not None else 95.0
+                self.eng.eval(f"""
+                % Create new DVH objective
+                newObj = struct();
+                newObj.className = '{obj_class}';
+                newObj.parameters = {{{dose_value}, {vol_pct}}};
+                newObj.penalty = {penalty};
+                """, nargout=0)
+            else:
+                # Standard objectives: parameters = {dose_value}
+                self.eng.eval(f"""
+                % Create new objective
+                newObj = struct();
+                newObj.className = '{obj_class}';
+                newObj.parameters = {{{dose_value}}};
+                newObj.penalty = {penalty};
+                """, nargout=0)
             
             # Check if objectives field exists for this structure
             has_objectives = self.eng.eval(f"~isempty(cst({int(struct_idx)},6))", nargout=1)
@@ -868,7 +1446,7 @@ class MatRadEngine:
                 "penalty": penalty,
                 "rationale": rationale or "No rationale provided",
                 "total_objectives": num_objectives,
-                "message": f"Added {obj_type} objective to {structure_name}. Rationale: {rationale or 'No rationale provided'}"
+                "message": f"Added {obj_type} objective to {structure_name}."
             }
             
         except Exception as e:
@@ -901,7 +1479,7 @@ class MatRadEngine:
             # Determine optimization command based on whether to use previous weights
             if use_previous_weights and self.weights_available and self.optimized_weights is not None:
                 print("Running fluence optimization with previous weights for warm-start...")
-                optimization_cmd = "resultGUI = matRad_fluenceOptimization(dij,cst,pln,wInit);"
+                optimization_cmd = "resultGUI = matRad_fluenceOptimization(dij,cst,pln);"
                 start_type = "warm-start"
             else:
                 print("Running fluence optimization from scratch...")
@@ -934,11 +1512,12 @@ class MatRadEngine:
                     fprintf('Optimzation initiating...\\n');
                     {optimization_cmd}
                     opt_success = true;
-                    opt_error = '';
-                    save('resultGUI.mat');
+                    opt_error = '';                    
+                    save(['resultGUIs/resultGUI_' datestr(now,'yyyymmdd_HHMM') '.mat'], 'resultGUI', 'ct', 'cst', 'pln', 'stf', '-v7.3');
+                    fprintf('Optimization successful: resultGUI saved to resultGUIs/resultGUI_%s.mat\\n', datestr(now,'yyyymmdd_HHMM'));
                 catch ME
                     opt_success = false;
-                    opt_error = ME.message;
+                    opt_error = getReport(ME, 'extended');
                     fprintf('Optimization failed: %s\\n', ME.message);
                 end
                 
@@ -1033,6 +1612,7 @@ class MatRadEngine:
     def _parse_optimization_output(self, diary_file: str) -> Dict[str, Any]:
         """
         Parse the optimization console output to extract key metrics and convergence information.
+        Supports both IPOPT and fmincon output formats.
         
         Args:
             diary_file: Path to the diary file containing optimization output
@@ -1045,82 +1625,32 @@ class MatRadEngine:
                 output = f.read()
             
             analysis = {
-                "raw_output": output,
                 "convergence_analysis": {},
                 "final_status": {},
                 "optimization_trajectory": [],
                 "warnings": [],
-                "summary": ""
+                "summary": "",
+                "optimizer_type": "unknown"
             }
             
-            # Parse IPOPT output if present
             lines = output.split('\n')
             iterations = []
             
-            for line in lines:
-                line = line.strip()
-                
-                # Look for iteration lines (IPOPT format)
-                if line.startswith('iter') and 'objective' in line:
-                    # Header line - skip
-                    continue
-                elif len(line.split()) >= 10 and line.split()[0].isdigit():
-                    # Iteration data line
-                    parts = line.split()
-                    try:
-                        iteration_data = {
-                            "iteration": int(parts[0]),
-                            "objective": float(parts[1]),
-                            "inf_pr": float(parts[2]),
-                            "inf_du": float(parts[3]),
-                            "lg_mu": float(parts[4]),
-                            "norm_d": float(parts[5]),
-                            "lg_rg": parts[6],
-                            "alpha_du": float(parts[7]),
-                            "alpha_pr": float(parts[8]),
-                            "ls": int(parts[9]) if parts[9].isdigit() else 0
-                        }
-                        iterations.append(iteration_data)
-                    except (ValueError, IndexError):
-                        continue
-                
-                # Look for final statistics
-                elif "Number of Iterations" in line:
-                    try:
-                        analysis["final_status"]["total_iterations"] = int(line.split(':')[1].strip())
-                    except:
-                        pass
-                elif "Objective" in line and "scaled" in line:
-                    try:
-                        # Extract final objective value
-                        parts = line.split()
-                        for i, part in enumerate(parts):
-                            if 'e' in part and ('+' in part or '-' in part):
-                                analysis["final_status"]["final_objective"] = float(part)
-                                break
-                    except:
-                        pass
-                elif "Number of objective function evaluations" in line:
-                    try:
-                        analysis["final_status"]["function_evaluations"] = int(line.split('=')[1].strip())
-                    except:
-                        pass
-                elif "Total CPU secs in IPOPT" in line:
-                    try:
-                        analysis["final_status"]["ipopt_time"] = float(line.split('=')[1].strip())
-                    except:
-                        pass
-                elif "Total CPU secs in NLP function evaluations" in line:
-                    try:
-                        analysis["final_status"]["function_eval_time"] = float(line.split('=')[1].strip())
-                    except:
-                        pass
+            # Detect optimizer type
+            if any("fmincon" in line.lower() or "interior-point" in line for line in lines):
+                analysis["optimizer_type"] = "fmincon"
+                analysis = self._parse_fmincon_output(lines, analysis)
+            elif any("ipopt" in line.lower() for line in lines):
+                analysis["optimizer_type"] = "ipopt"
+                analysis = self._parse_ipopt_output(lines, analysis)
+            else:
+                # Try to parse as generic format
+                analysis = self._parse_generic_output(lines, analysis)
             
-            analysis["optimization_trajectory"] = iterations
-            
-            # Analyze convergence
-            if iterations:
-                analysis["convergence_analysis"] = self._analyze_convergence(iterations)
+            # Analyze convergence if we have iterations
+            if analysis["optimization_trajectory"]:
+                analysis["convergence_analysis"] = self._analyze_convergence(analysis["optimization_trajectory"])
+                del analysis["optimization_trajectory"]
             
             # Generate summary
             analysis["summary"] = self._generate_optimization_summary(analysis)
@@ -1134,12 +1664,239 @@ class MatRadEngine:
                 "final_status": {},
                 "optimization_trajectory": [],
                 "warnings": [f"Failed to parse optimization output: {str(e)}"],
-                "summary": f"Failed to parse optimization output: {str(e)}"
+                "summary": f"Failed to parse optimization output: {str(e)}",
+                "optimizer_type": "unknown"
             }
+
+    def _parse_fmincon_output(self, lines: List[str], analysis: Dict[str, Any]) -> Dict[str, Any]:
+        """Parse fmincon-specific output format."""
+        iterations = []
+        in_iteration_table = False
+        
+        for i, line in enumerate(lines):
+            line_stripped = line.strip()
+            
+            # Look for optimization settings
+            if "Applied custom fmincon option:" in line:
+                option_parts = line.split("Applied custom fmincon option:")[1].strip()
+                if "=" in option_parts:
+                    key, value = option_parts.split("=", 1)
+                    key = key.strip()
+                    value = value.strip()
+                    if "final_status" not in analysis:
+                        analysis["final_status"] = {}
+                    if "settings" not in analysis["final_status"]:
+                        analysis["final_status"]["settings"] = {}
+                    analysis["final_status"]["settings"][key] = value
+            
+            # Look for diagnostic information
+            elif "Number of variables:" in line:
+                try:
+                    analysis["final_status"]["num_variables"] = int(line.split(":")[1].strip())
+                except:
+                    pass
+            elif "Number of nonlinear inequality constraints:" in line:
+                try:
+                    analysis["final_status"]["nonlinear_ineq_constraints"] = int(line.split(":")[1].strip())
+                except:
+                    pass
+            elif "Number of nonlinear equality constraints:" in line:
+                try:
+                    analysis["final_status"]["nonlinear_eq_constraints"] = int(line.split(":")[1].strip())
+                except:
+                    pass
+            elif "Algorithm selected" in line and i+1 < len(lines):
+                algorithm = lines[i+1].strip()
+                analysis["final_status"]["algorithm"] = algorithm
+            
+            # Look for iteration table headers (multiple formats)
+            elif ("Iter F-count" in line and "f(x)" in line and "Feasibility" in line) or \
+                 ("Iter F-count" in line and "f(x)" in line and "optimality" in line) or \
+                 (line_stripped.startswith("Iter") and "f(x)" in line):
+                in_iteration_table = True
+                continue
+        
+            # Parse iteration data
+            elif in_iteration_table and line_stripped:
+                # Check if this is still an iteration line
+                parts = line_stripped.split()
+                
+                # Handle different iteration line formats
+                if len(parts) >= 5 and parts[0].isdigit():
+                    try:
+                        iteration_data = {
+                            "iteration": int(parts[0]),
+                            "f_count": int(parts[1]),
+                            "objective": float(parts[2]),
+                            "feasibility": float(parts[3]),
+                            "optimality": float(parts[4]),
+                            "step_norm": float(parts[5]) if len(parts) > 5 else None
+                        }
+                        iterations.append(iteration_data)
+                    except (ValueError, IndexError):
+                        # If we can't parse as iteration data, we've probably left the table
+                        if "Converged" in line or "stopped" in line or line_stripped == "":
+                            in_iteration_table = False
+                        continue
+                elif len(parts) >= 3 and parts[0].isdigit():
+                    # Handle shorter iteration lines (just iter, f-count, objective, ...)
+                    try:
+                        iteration_data = {
+                            "iteration": int(parts[0]),
+                            "f_count": int(parts[1]) if len(parts) > 1 else None,
+                            "objective": float(parts[2]) if len(parts) > 2 else None,
+                            "feasibility": float(parts[3]) if len(parts) > 3 else None,
+                            "optimality": float(parts[4]) if len(parts) > 4 else None,
+                            "step_norm": float(parts[5]) if len(parts) > 5 else None
+                        }
+                        iterations.append(iteration_data)
+                    except (ValueError, IndexError):
+                        continue
+                else:
+                    # Check if we've reached the end of iteration table
+                    if "Converged" in line or "stopped" in line or line_stripped == "" or \
+                       line_stripped.startswith("_") or "diagnostic" in line.lower():
+                        in_iteration_table = False
+            
+            # Look for final convergence message
+            elif "Converged to an infeasible point" in line:
+                analysis["final_status"]["convergence_status"] = "infeasible"
+                analysis["warnings"].append("Optimization converged to an infeasible point")
+            elif "fmincon stopped because" in line:
+                # Get the full stopping message
+                stop_message = line.strip()
+                # Also get the next few lines for complete message
+                for j in range(i+1, min(i+4, len(lines))):
+                    if lines[j].strip() and not lines[j].startswith("Warning"):
+                        stop_message += " " + lines[j].strip()
+                    else:
+                        break
+                analysis["final_status"]["stop_reason"] = stop_message
+            
+            # Look for warnings
+            elif line.startswith("Warning:"):
+                analysis["warnings"].append(line.strip())
+            
+            # Look for duration and success status
+            elif "Duration:" in line:
+                try:
+                    duration_str = line.split("Duration:")[1].strip()
+                    duration_match = duration_str.split()[0]  # Get first number
+                    analysis["final_status"]["duration_seconds"] = float(duration_match)
+                except:
+                    pass
+            elif "Success:" in line:
+                try:
+                    success_str = line.split("Success:")[1].strip().lower()
+                    analysis["final_status"]["success"] = success_str == "true"
+                except:
+                    pass
+        
+        analysis["optimization_trajectory"] = iterations
+        
+        # Set final objective and iterations from trajectory
+        if iterations:
+            analysis["final_status"]["final_objective"] = iterations[-1]["objective"]
+            analysis["final_status"]["total_iterations"] = len(iterations)
+            analysis["final_status"]["final_feasibility"] = iterations[-1]["feasibility"]
+            analysis["final_status"]["final_optimality"] = iterations[-1]["optimality"]
+        
+        return analysis
+
+    def _parse_ipopt_output(self, lines: List[str], analysis: Dict[str, Any]) -> Dict[str, Any]:
+        """Parse IPOPT-specific output format."""
+        iterations = []
+        
+        for line in lines:
+            line = line.strip()
+            
+            # Look for iteration lines (IPOPT format)
+            if line.startswith('Iter') and 'Feasibility' in line:
+                # Header line - skip
+                continue
+            elif len(line.split()) >= 10 and line.split()[0].isdigit():
+                # Iteration data line
+                parts = line.split()
+                try:
+                    iteration_data = {
+                        "iteration": int(parts[0]),
+                        "objective": float(parts[1]),
+                        "inf_pr": float(parts[2]),
+                        "inf_du": float(parts[3]),
+                        "lg_mu": float(parts[4]),
+                        "norm_d": float(parts[5]),
+                        "lg_rg": parts[6],
+                        "alpha_du": float(parts[7]),
+                        "alpha_pr": float(parts[8]),
+                        "ls": int(parts[9]) if parts[9].isdigit() else 0
+                    }
+                    iterations.append(iteration_data)
+                except (ValueError, IndexError):
+                    continue
+            
+            # Look for final statistics
+            elif "Number of Iterations" in line:
+                try:
+                    analysis["final_status"]["total_iterations"] = int(line.split(':')[1].strip())
+                except:
+                    pass
+            elif "Objective" in line and "scaled" in line:
+                try:
+                    # Extract final objective value
+                    parts = line.split()
+                    for i, part in enumerate(parts):
+                        if 'e' in part and ('+' in part or '-' in part):
+                            analysis["final_status"]["final_objective"] = float(part)
+                            break
+                except:
+                    pass
+            elif "Number of objective function evaluations" in line:
+                try:
+                    analysis["final_status"]["function_evaluations"] = int(line.split('=')[1].strip())
+                except:
+                    pass
+            elif "Total CPU secs in IPOPT" in line:
+                try:
+                    analysis["final_status"]["ipopt_time"] = float(line.split('=')[1].strip())
+                except:
+                    pass
+            elif "Total CPU secs in NLP function evaluations" in line:
+                try:
+                    analysis["final_status"]["function_eval_time"] = float(line.split('=')[1].strip())
+                except:
+                    pass
+        
+        analysis["optimization_trajectory"] = iterations
+        return analysis
+
+    def _parse_generic_output(self, lines: List[str], analysis: Dict[str, Any]) -> Dict[str, Any]:
+        """Parse generic optimization output format."""
+        # Try to extract basic information that might be present in any format
+        iterations = []
+        
+        for line in lines:
+            line = line.strip()
+            
+            # Look for any warning messages
+            if line.startswith("Warning:"):
+                analysis["warnings"].append(line)
+            
+            # Look for duration
+            elif "Duration:" in line:
+                try:
+                    duration_str = line.split("Duration:")[1].strip()
+                    duration_match = duration_str.split()[0]
+                    analysis["final_status"]["duration_seconds"] = float(duration_match)
+                except:
+                    pass
+        
+        analysis["optimization_trajectory"] = iterations
+        return analysis
 
     def _analyze_convergence(self, iterations: List[Dict]) -> Dict[str, Any]:
         """
         Analyze the convergence behavior of the optimization.
+        Handles both IPOPT and fmincon iteration formats.
         
         Args:
             iterations: List of iteration data dictionaries
@@ -1152,23 +1909,52 @@ class MatRadEngine:
         
         analysis = {}
         
-        # Extract objective values
+        # Extract objective values (common to both formats)
         objectives = [it["objective"] for it in iterations]
-        step_sizes = [it["alpha_pr"] for it in iterations]
+        
+        # Extract step sizes based on format
+        step_sizes = []
+        feasibility_vals = []
+        optimality_vals = []
+        
+        # Determine format based on available keys
+        if iterations[0].get("alpha_pr") is not None:
+            # IPOPT format
+            step_sizes = [it.get("alpha_pr", 0) for it in iterations]
+            feasibility_vals = [it.get("inf_pr", 0) for it in iterations]
+        elif iterations[0].get("step_norm") is not None:
+            # fmincon format
+            step_sizes = [it.get("step_norm", 0) for it in iterations if it.get("step_norm") is not None]
+            feasibility_vals = [it.get("feasibility", 0) for it in iterations]
+            optimality_vals = [it.get("optimality", 0) for it in iterations]
         
         # Check for stagnation (objective not changing)
         if len(objectives) >= 3:
             recent_objectives = objectives[-5:]  # Last 5 iterations
-            obj_variance = np.var(recent_objectives) if len(recent_objectives) > 1 else 0
+            obj_variance = float(np.var(recent_objectives)) if len(recent_objectives) > 1 else 0.0
             analysis["objective_stagnation"] = obj_variance < 1e-6
-            analysis["objective_variance_recent"] = float(obj_variance)
+            analysis["objective_variance_recent"] = obj_variance
         
         # Check for diminishing step sizes
         if len(step_sizes) >= 3:
             recent_steps = step_sizes[-3:]
-            analysis["small_step_sizes"] = all(step < 1e-10 for step in recent_steps)
-            analysis["min_step_size"] = float(min(step_sizes))
-            analysis["max_step_size"] = float(max(step_sizes))
+            analysis["small_step_sizes"] = all(step < 1e-10 for step in recent_steps if step is not None)
+            valid_steps = [s for s in step_sizes if s is not None]
+            if valid_steps:
+                analysis["min_step_size"] = float(min(valid_steps))
+                analysis["max_step_size"] = float(max(valid_steps))
+        
+        # Analyze feasibility progression
+        if feasibility_vals:
+            analysis["initial_feasibility"] = float(feasibility_vals[0])
+            analysis["final_feasibility"] = float(feasibility_vals[-1])
+            analysis["feasibility_improvement"] = float(feasibility_vals[0] - feasibility_vals[-1])
+        
+        # Analyze optimality progression (fmincon specific)
+        if optimality_vals:
+            analysis["initial_optimality"] = float(optimality_vals[0])
+            analysis["final_optimality"] = float(optimality_vals[-1])
+            analysis["optimality_improvement"] = float(optimality_vals[0] - optimality_vals[-1])
         
         # Overall convergence assessment
         analysis["total_iterations"] = len(iterations)
@@ -2140,13 +2926,711 @@ class MatRadEngine:
         plan_metrics["plan_quality_score"] = round(quality_score, 1)
         
         return plan_metrics
+
+    def create_ring_structures(self, reference_structure: str, ring_margins_mm: List[float], 
+                             inner_margin_mm: float = 0, visualize: bool = False) -> Dict[str, Any]:
+        """
+        Create concentric ring VOIs around a reference structure.
+        
+        Args:
+            reference_structure: Name of the reference structure (e.g., "PTV")
+            ring_margins_mm: List of ring margins in mm (e.g., [5, 10, 15])
+            inner_margin_mm: Inner margin from reference structure in mm (default: 0)
+            visualize: Whether to create visualization (default: False)
+            
+        Returns:
+            Dict with success status and ring information
+        """
+        if not self.initialized:
+            return {"success": False, "error": "MATLAB engine not started"}
+        
+        if not self.patient_loaded:
+            return {"success": False, "error": "No patient data loaded"}
+            
+        try:
+            # Find reference structure index by querying MATLAB directly
+            struct_info = self.get_structure_names()
+            if not struct_info.get("success"):
+                return {"success": False, "error": "Could not get structure information"}
+                
+            # Handle both possible formats: 'structures' or separate 'targets'/'oars'/'other'
+            if "structures" in struct_info:
+                structure_names = [s["name"] for s in struct_info.get("structures", [])]
+            else:
+                # Combine targets, oars, and other into one list
+                structure_names = []
+                structure_names.extend(struct_info.get("targets", []))
+                structure_names.extend(struct_info.get("oars", []))
+                structure_names.extend(struct_info.get("other", []))
+                
+            if reference_structure not in structure_names:
+                return {"success": False, "error": f"Reference structure '{reference_structure}' not found. Available: {structure_names}"}
+            
+            # Find the actual CST index from MATLAB (1-based)
+            matlab_code_find_index = f"""
+            ref_index = 0;
+            for i = 1:size(cst, 1)
+                if strcmp(cst{{i, 2}}, '{reference_structure}')
+                    ref_index = i;
+                    break;
+                end
+            end
+            """
+            self.eng.eval(matlab_code_find_index, nargout=0)
+            ref_index = int(self.eng.eval("ref_index"))
+            
+            if ref_index == 0:
+                return {"success": False, "error": f"Reference structure '{reference_structure}' not found in CST. Available: {structure_names}"}
+            
+            # Convert parameters to MATLAB format
+            ring_margins_str = '[' + ', '.join(map(str, ring_margins_mm)) + ']'
+            
+            # Add the ring creation function to MATLAB path
+            self.eng.eval("addpath('userdata/scripts')", nargout=0)
+            
+            # Call the ring creation function
+            matlab_code = f"""
+            try
+                [cst, ringInfo] = matRad_VOICreateRings(ct, cst, {ring_margins_str}, {ref_index}, {inner_margin_mm}, {str(visualize).lower()});
+                
+                % Convert ringInfo to individual variables that can be returned
+                ring_names = cell(length(ringInfo), 1);
+                ring_margins = zeros(length(ringInfo), 1);
+                ring_voxels = zeros(length(ringInfo), 1);
+                
+                for i = 1:length(ringInfo)
+                    ring_names{{i}} = ringInfo(i).name;
+                    ring_margins(i) = ringInfo(i).margin_mm;
+                    ring_voxels(i) = ringInfo(i).voxelsAdded;
+                end
+                
+                ring_creation_success = true;
+                ring_creation_error = '';
+                
+            catch ME
+                ring_creation_success = false;
+                ring_creation_error = ME.message;
+                ring_names = {{}};
+                ring_margins = [];
+                ring_voxels = [];
+            end
+            """
+            
+            self.eng.eval(matlab_code, nargout=0)
+            
+            # Get results
+            success = bool(self.eng.eval("ring_creation_success"))
+            if not success:
+                error_msg = self.eng.eval("ring_creation_error")
+                return {"success": False, "error": f"Ring creation failed: {error_msg}"}
+            
+            # Get ring information from individual variables
+            try:
+                ring_names = self.eng.eval("ring_names")
+                ring_margins = self.eng.eval("ring_margins")
+                ring_voxels = self.eng.eval("ring_voxels")
+                
+                # Convert MATLAB data to Python list of dicts
+                ring_info = []
+                
+                # Handle MATLAB cell array for names
+                if hasattr(ring_names, '__iter__') and len(ring_names) > 0:
+                    # Extract data from MATLAB arrays
+                    names_list = list(ring_names) if hasattr(ring_names, '__iter__') else [ring_names]
+                    margins_list = list(ring_margins) if hasattr(ring_margins, '__iter__') else [ring_margins]
+                    voxels_list = list(ring_voxels) if hasattr(ring_voxels, '__iter__') else [ring_voxels]
+                    
+                    for i in range(len(names_list)):
+                        # Extract values from MATLAB data types
+                        name = str(names_list[i])
+                        
+                        # Handle matlab.double objects
+                        if hasattr(margins_list[i], '_data'):
+                            margin_val = float(margins_list[i]._data[i])
+                        elif hasattr(margins_list[i], '__iter__') and len(margins_list[i]) > 0:
+                            margin_val = float(margins_list[i][0])
+                        else:
+                            margin_val = float(margins_list[i])
+                            
+                        if hasattr(voxels_list[i], '_data'):
+                            voxels_val = int(voxels_list[i]._data[i])
+                        elif hasattr(voxels_list[i], '__iter__') and len(voxels_list[i]) > 0:
+                            voxels_val = int(voxels_list[i][0])
+                        else:
+                            voxels_val = int(voxels_list[i])
+                        
+                        ring_info.append({
+                            "name": name,
+                            "margin_mm": margin_val,
+                            "voxels_added": voxels_val
+                        })
+            except Exception as e:
+                # If data extraction fails, create basic info from input parameters
+                ring_info = []
+                for i, margin in enumerate(ring_margins_mm):
+                    ring_info.append({
+                        "name": f"{reference_structure}Ring{margin}mm",
+                        "margin_mm": float(margin),
+                        "voxels_added": 0  # Unknown
+                    })
+            
+            # Set priorities for newly created ring structures
+            for ring in ring_info:
+                # Set minimal priority for ring structure
+                self.eng.eval(f"""
+                for i = 1:size(cst, 1)
+                    if strcmp(cst{{i, 2}}, '{ring["name"]}')
+                        cst{{i, 5}}.Priority = 3;
+                        break;
+                    end
+                end
+                """, nargout=0)
+            
+            return {
+                "success": True,
+                "message": f"Created {len(ring_margins_mm)} ring structures around {reference_structure}",
+                "reference_structure": reference_structure,
+                "ring_margins_mm": ring_margins_mm,
+                "inner_margin_mm": inner_margin_mm,
+                "rings_created": ring_info,
+                "num_rings": len(ring_info)
+            }
+            
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    def perform_voi_operation(self, structure1: str, structure2: str, operation: str, 
+                            new_structure_name: str) -> Dict[str, Any]:
+        """
+        Perform VOI operations (union, intersection, difference) between two structures.
+        
+        Args:
+            structure1: Name of first structure
+            structure2: Name of second structure  
+            operation: Type of operation ('union', 'intersect', 'setdiff')
+            new_structure_name: Name for the new combined structure
+            
+        Returns:
+            Dict with success status and operation information
+        """
+        if not self.initialized:
+            return {"success": False, "error": "MATLAB engine not started"}
+        
+        if not self.patient_loaded:
+            return {"success": False, "error": "No patient data loaded"}
+            
+        valid_operations = ['union', 'intersect', 'setdiff']
+        if operation not in valid_operations:
+            return {"success": False, "error": f"Invalid operation '{operation}'. Valid operations: {valid_operations}"}
+            
+        try:
+            # Get structure information
+            struct_info = self.get_structure_names()
+            if not struct_info.get("success"):
+                return {"success": False, "error": "Could not get structure information"}
+                
+            # Handle both possible formats: 'structures' or separate 'targets'/'oars'/'other'
+            if "structures" in struct_info:
+                structure_names = [s["name"] for s in struct_info.get("structures", [])]
+            else:
+                # Combine targets, oars, and other into one list
+                structure_names = []
+                structure_names.extend(struct_info.get("targets", []))
+                structure_names.extend(struct_info.get("oars", []))
+                structure_names.extend(struct_info.get("other", []))
+                
+            if structure1 not in structure_names:
+                return {"success": False, "error": f"Structure '{structure1}' not found. Available: {structure_names}"}
+            if structure2 not in structure_names:
+                return {"success": False, "error": f"Structure '{structure2}' not found. Available: {structure_names}"}
+            
+            # Find the actual CST indices from MATLAB (1-based)
+            matlab_code_find_indices = f"""
+            ix1 = 0; ix2 = 0;
+            for i = 1:size(cst, 1)
+                if strcmp(cst{{i, 2}}, '{structure1}')
+                    ix1 = i;
+                end
+                if strcmp(cst{{i, 2}}, '{structure2}')
+                    ix2 = i;
+                end
+            end
+            """
+            self.eng.eval(matlab_code_find_indices, nargout=0)
+            ix1 = int(self.eng.eval("ix1"))
+            ix2 = int(self.eng.eval("ix2"))
+            
+            if ix1 == 0:
+                return {"success": False, "error": f"Structure '{structure1}' not found in CST"}
+            if ix2 == 0:
+                return {"success": False, "error": f"Structure '{structure2}' not found in CST"}
+            
+            # Add the VOI operations function to MATLAB path
+            self.eng.eval("addpath('userdata/scripts')", nargout=0)
+            
+            # Call the VOI operation function
+            matlab_code = f"""
+            try
+                [cst, newIx] = matRad_VOIOperations(cst, {ix1}, {ix2}, '{operation}', '{new_structure_name}');
+                
+                % Get information about the new structure
+                newStructInfo.name = cst{{newIx, 2}};
+                newStructInfo.type = cst{{newIx, 3}};
+                newStructInfo.num_voxels = length(cst{{newIx, 4}}{{1}});
+                newStructInfo.index = newIx;
+                
+                voi_operation_success = true;
+                voi_operation_error = '';
+                
+            catch ME
+                voi_operation_success = false;
+                voi_operation_error = ME.message;
+                newStructInfo = struct();
+            end
+            """
+            
+            self.eng.eval(matlab_code, nargout=0)
+            
+            # Get results
+            success = bool(self.eng.eval("voi_operation_success"))
+            if not success:
+                error_msg = self.eng.eval("voi_operation_error")
+                return {"success": False, "error": f"VOI operation failed: {error_msg}"}
+            
+            # Get new structure information
+            new_struct_info = self.eng.eval("newStructInfo")
+            
+            # Set priority for newly created structure
+            # Set minimal priority based on structure type
+            if str(new_struct_info["type"]) == "TARGET":
+                priority = 1
+            elif str(new_struct_info["type"]) == "OAR":
+                priority = 2
+            else:
+                priority = 3
+                
+            self.eng.eval(f"""
+            for i = 1:size(cst, 1)
+                if strcmp(cst{{i, 2}}, '{new_structure_name}')
+                    cst{{i, 5}}.Priority = {priority};
+                    break;
+                end
+            end
+            """, nargout=0)
+            
+            return {
+                "success": True,
+                "message": f"Successfully created '{new_structure_name}' from {operation} of '{structure1}' and '{structure2}'",
+                "operation": operation,
+                "structure1": structure1,
+                "structure2": structure2,
+                "new_structure": {
+                    "name": str(new_struct_info["name"]),
+                    "type": str(new_struct_info["type"]),
+                    "num_voxels": int(new_struct_info["num_voxels"]),
+                    "index": int(new_struct_info["index"])
+                }
+            }
+            
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    def convert_cc_to_percent(self, structure_name: str, volume_cc: float) -> Dict[str, Any]:
+        """
+        Convert absolute volume in cc to percentage for DVH objectives.
+        
+        Args:
+            structure_name: Name of the structure to analyze
+            volume_cc: Volume in cubic centimeters to convert (e.g., 0.03 for D0.03cc constraints)
+            
+        Returns:
+            Dict with volume_percent, volume_fraction, and structure info
+        """
+        if not self.initialized:
+            return {"success": False, "error": "MATLAB engine not started"}
+        
+        if not self.patient_loaded:
+            return {"success": False, "error": "No patient data loaded"}
+            
+        try:
+            # Get structure information to find the structure
+            struct_info = self.get_structure_names()
+            if not struct_info.get("success"):
+                return {"success": False, "error": "Could not get structure information"}
+                
+            # Handle both possible formats: 'structures' or separate 'targets'/'oars'/'other'
+            if "structures" in struct_info:
+                structure_names = [s["name"] for s in struct_info.get("structures", [])]
+            else:
+                # Combine targets, oars, and other into one list
+                structure_names = []
+                structure_names.extend(struct_info.get("targets", []))
+                structure_names.extend(struct_info.get("oars", []))
+                structure_names.extend(struct_info.get("other", []))
+                
+            if structure_name not in structure_names:
+                return {"success": False, "error": f"Structure '{structure_name}' not found. Available: {structure_names}"}
+            
+            # Find the actual CST index from MATLAB (1-based)
+            matlab_code_find_index = f"""
+            struct_index = 0;
+            for i = 1:size(cst, 1)
+                if strcmp(cst{{i, 2}}, '{structure_name}')
+                    struct_index = i;
+                    break;
+                end
+            end
+            """
+            self.eng.eval(matlab_code_find_index, nargout=0)
+            struct_index = int(self.eng.eval("struct_index"))
+            
+            if struct_index == 0:
+                return {"success": False, "error": f"Structure '{structure_name}' not found in CST"}
+            
+            # Calculate volume conversion
+            matlab_code = f"""
+            try
+                % Get structure voxel indices
+                struct_voxels = cst{{struct_index, 4}}{{1}};
+                num_voxels = length(struct_voxels);
+                
+                % Calculate voxel volume in cc
+                voxel_volume_mm3 = ct.resolution.x * ct.resolution.y * ct.resolution.z;
+                voxel_volume_cc = voxel_volume_mm3 / 1000; % Convert mm³ to cc
+                
+                % Calculate total structure volume in cc
+                total_volume_cc = num_voxels * voxel_volume_cc;
+                
+                % Calculate conversion
+                target_volume_cc = {volume_cc};
+                if total_volume_cc > 0
+                    volume_percent = 100 * (target_volume_cc / total_volume_cc);
+                    volume_fraction = target_volume_cc / total_volume_cc;
+                else
+                    volume_percent = 0;
+                    volume_fraction = 0;
+                end
+                
+                % Ensure within valid range [0, 100] for percent
+                volume_percent = max(0, min(100, volume_percent));
+                volume_fraction = max(0, min(1, volume_fraction));
+                
+                conversion_success = true;
+                conversion_error = '';
+                
+            catch ME
+                conversion_success = false;
+                conversion_error = ME.message;
+                volume_percent = 0;
+                volume_fraction = 0;
+                total_volume_cc = 0;
+                num_voxels = 0;
+                voxel_volume_cc = 0;
+            end
+            """
+            
+            self.eng.eval(matlab_code, nargout=0)
+            
+            # Get results
+            success = bool(self.eng.eval("conversion_success"))
+            if not success:
+                error_msg = self.eng.eval("conversion_error")
+                return {"success": False, "error": f"Volume conversion failed: {error_msg}"}
+            
+            # Extract conversion results
+            volume_percent = float(self.eng.eval("volume_percent"))
+            volume_fraction = float(self.eng.eval("volume_fraction"))
+            total_volume_cc = float(self.eng.eval("total_volume_cc"))
+            num_voxels = int(self.eng.eval("num_voxels"))
+            voxel_volume_cc = float(self.eng.eval("voxel_volume_cc"))
+            
+            return {
+                "success": True,
+                "structure_name": structure_name,
+                "target_volume_cc": volume_cc,
+                "volume_percent": volume_percent,
+                "volume_fraction": volume_fraction,
+                "structure_info": {
+                    "total_volume_cc": total_volume_cc,
+                    "num_voxels": num_voxels,
+                    "voxel_volume_cc": voxel_volume_cc
+                },
+                "message": f"Converted {volume_cc} cc to {volume_percent:.2f}% for {structure_name}"
+            }
+            
+        except Exception as e:
+            return {"success": False, "error": str(e)}
     
-    def save_plan(self, output_file: str) -> Dict[str, Any]:
+    def set_overlap_priorities(self, structure_priorities: Dict[str, int] = None) -> Dict[str, Any]:
+        """Set minimal overlap priorities: TARGET=1, OAR=2, other=3."""
+        if not self.initialized or not self.patient_loaded:
+            return {"success": False, "error": "Engine not initialized or no patient loaded"}
+            
+        try:
+            # Set minimal priorities: TARGET=1, OAR=2, other=3
+            self.eng.eval("""
+            for i = 1:size(cst,1)
+                if strcmp(cst{i,3}, 'TARGET')
+                    cst{i,5}.Priority = 1;
+                elseif strcmp(cst{i,3}, 'OAR')
+                    cst{i,5}.Priority = 2;
+                else
+                    cst{i,5}.Priority = 3;
+                end
+            end
+            cst = matRad_setOverlapPriorities(cst);
+            """, nargout=0)
+            
+            return {"success": True, "message": "Minimal overlap priorities applied (TARGET=1, OAR=2, other=3)"}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    def analyze_and_filter_structures(self, provided_prescription_dose: Optional[float] = None) -> Dict[str, Any]:
+        """
+        LLM-based structure analysis and filtering tool.
+        
+        Analyzes all structures in the plan, removes helper/evaluation structures,
+        keeps only main targets and critical OARs, infers prescription dose from
+        structure names, and provides QUANTEC-based OAR sparing guidelines.
+        
+        Args:
+            provided_prescription_dose: Optional prescription dose to validate against inferred dose
+            
+        Returns:
+            Dict with filtered structures, inferred prescription, and OAR guidelines
+        """
+        if not self.initialized:
+            return {"success": False, "error": "MATLAB engine not initialized"}
+        
+        if not self.patient_loaded:
+            return {"success": False, "error": "No patient data loaded"}
+        
+        try:
+            # Get all structure information
+            struct_info = self.get_structure_names()
+            if not struct_info.get("success"):
+                return {"success": False, "error": "Could not get structure information"}
+            
+            # Get all structure names and types
+            all_structures = []
+            targets = struct_info.get("targets", [])
+            oars = struct_info.get("oars", [])
+            others = struct_info.get("other", [])
+            
+            for target in targets:
+                all_structures.append({"name": target, "type": "TARGET"})
+            for oar in oars:
+                all_structures.append({"name": oar, "type": "OAR"})
+            for other in others:
+                all_structures.append({"name": other, "type": "OTHER"})
+            
+            # Use LLM to analyze structures
+            
+            client = OpenAI(base_url="https://eu.api.openai.com/v1")
+            
+            structure_list = "\n".join([f"- {s['name']} ({s['type']})" for s in all_structures])
+            
+            prompt = f"""
+            You are a clinical radiotherapy expert. Analyze these structures from a treatment plan and provide:
+
+            1. KEEP: Main target structures and critical/important OARs only and any structure that may resemble the outer boundary of the patient (e.g. SKIN, BODY, External, etc.).
+            2. REMOVE: Helper structures (eval, union, diff, ring, minus, plus, combined, etc.)
+            3. INFER: Prescription dose from target structure names (e.g., PTV6996 = 69.96 Gy, PTV70 = 70 Gy)
+            4. PROVIDE: QUANTEC-based OAR sparing guidelines
+
+            STRUCTURES:
+            {structure_list}
+
+            Respond in this exact JSON format:
+            {{
+                "keep_structures": [
+                    {{"name": "structure_name", "type": "TARGET|OAR", "rationale": "why keep"}}
+                ],
+                "remove_structures": [
+                    {{"name": "structure_name", "rationale": "why remove"}}
+                ],
+                "inferred_prescription": {{
+                    "primary_dose_gy": 70.0,
+                    "target_doses": {{"PTV70": 70.0}},
+                    "confidence": "high|medium|low",
+                    "rationale": "how dose was inferred"
+                }},
+                "quantec_guidelines": [
+                    {{"structure": "SPINAL_CORD", "constraint": "D_max ≤ 45 Gy"}},
+                    {{"structure": "BRAINSTEM", "constraint": "D_max ≤ 54 Gy"}}
+                ]
+            }}
+
+            Focus on:
+            - Keep only essential clinical structures
+            - Remove any helper/evaluation/combined structures  
+            - Infer dose from numeric patterns in target names
+            - Provide standard QUANTEC constraints for identified OARs
+            """
+
+            response_format = {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "structure_analysis",
+                    "schema": {
+                        "type": "object",
+                        "properties": {
+                            "keep_structures": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "name": {"type": "string"},
+                                        "type": {"type": "string"},
+                                        "rationale": {"type": "string"}
+                                    },
+                                    "required": ["name", "type", "rationale"]
+                                }
+                            },
+                            "remove_structures": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "name": {"type": "string"},
+                                        "rationale": {"type": "string"}
+                                    },
+                                    "required": ["name", "rationale"]
+                                }
+                            },
+                            "inferred_prescription": {
+                                "type": "object",
+                                "properties": {
+                                    "primary_dose_gy": {"type": "number"},
+                                    "target_doses": {"type": "object"},
+                                    "confidence": {"type": "string"},
+                                    "rationale": {"type": "string"}
+                                },
+                                "required": ["primary_dose_gy", "target_doses", "confidence", "rationale"]
+                            },
+                            "quantec_guidelines": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "structure": {"type": "string"},
+                                        "constraint": {"type": "string"}
+                                    },
+                                    "required": ["structure", "constraint"]
+                                }
+                            }
+                        },
+                        "required": ["keep_structures", "remove_structures", "inferred_prescription", "quantec_guidelines"]
+                    }
+                }
+            }
+
+            response = client.chat.completions.create(
+                model="gpt-4.1",
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.1,
+                response_format=response_format
+            )
+                    
+            analysis = json.loads(response.choices[0].message.content)
+
+            analysis_ = {                
+                "inferred_prescription": analysis.get("inferred_prescription", {}),
+                "quantec_guidelines": analysis.get("quantec_guidelines", [])
+            }            
+            
+            # Validate inferred prescription against provided dose
+            inferred_dose = analysis["inferred_prescription"]["primary_dose_gy"]            
+            
+            if provided_prescription_dose is not None:
+                dose_difference = abs(inferred_dose - provided_prescription_dose)
+                if dose_difference > 1.0:  # Allow 5 Gy tolerance
+                    return {
+                        "success": False, 
+                        "error": f"Inferred prescription dose ({inferred_dose} Gy) differs significantly from provided dose ({provided_prescription_dose} Gy). Difference: {dose_difference:.1f} Gy"
+                    }
+            
+            # Remove structures marked for removal
+            structures_to_remove = [s["name"] for s in analysis["remove_structures"]]
+            
+            # Check keep structures for empty voxel indices and add to removal list
+            for struct_info in analysis["keep_structures"]:
+                struct_name = struct_info["name"]
+                try:
+                    # Find structure index in CST
+                    matlab_code = f"""
+                    check_idx = 0;
+                    for i = 1:size(cst, 1)
+                        if strcmp(cst{{i, 2}}, '{struct_name}')
+                            check_idx = i;
+                            break;
+                        end
+                    end
+                    """
+                    self.eng.eval(matlab_code, nargout=0)
+                    check_idx = int(self.eng.eval("check_idx"))
+                    
+                    if check_idx > 0:
+                        # Check if voxel indices (cst{i, 4}{1}) are empty
+                        has_voxels = self.eng.eval(f"~isempty(cst{{{check_idx}, 4}}) && ~isempty(cst{{{check_idx}, 4}}{{1}})", nargout=1)
+                        if not has_voxels:
+                            # Structure has no voxel data, add to removal list
+                            if struct_name not in structures_to_remove:
+                                structures_to_remove.append(struct_name)
+                                
+                except Exception as e:
+                    # If we can't check the structure, continue
+                    continue
+            
+            removal_results = []
+            
+            for struct_name in structures_to_remove:
+                try:
+                    # Find structure index in CST
+                    matlab_code = f"""
+                    remove_idx = 0;
+                    for i = 1:size(cst, 1)
+                        if strcmp(cst{{i, 2}}, '{struct_name}')
+                            remove_idx = i;
+                            break;
+                        end
+                    end
+                    """
+                    self.eng.eval(matlab_code, nargout=0)
+                    remove_idx = int(self.eng.eval("remove_idx"))
+                    
+                    if remove_idx > 0:
+                        # Remove the structure from CST
+                        self.eng.eval(f"cst({remove_idx}, :) = [];", nargout=0)
+                        removal_results.append({"name": struct_name, "removed": True})
+                    else:
+                        removal_results.append({"name": struct_name, "removed": False, "reason": "not found"})
+                        
+                except Exception as e:
+                    removal_results.append({"name": struct_name, "removed": False, "reason": str(e)})
+            
+
+
+            print(f"Removal results: {removal_results}")
+
+            return {
+                "success": True,
+                "analysis": analysis_,             
+                "structures_removed": len([r for r in removal_results if r["removed"]]),
+                "structures_kept": len(analysis["keep_structures"])
+            }
+            
+        except Exception as e:
+            return {"success": False, "error": str(e)}    
+
+    def save_plan(self, output_file: str, save_results: bool = True) -> Dict[str, Any]:
         """
         Save the current plan, results, and data to a .mat file.
         
         Args:
             output_file: Path to save the .mat file.
+            save_results: If True, save optimization results (requires resultGUI). 
+                         If False, save only basic data (ct, cst, pln, stf, dij if available).
             
         Returns:
             Dict with save status information.
@@ -2157,18 +3641,57 @@ class MatRadEngine:
         if not self.patient_loaded:
             return {"success": False, "error": "No patient data loaded"}
             
-        if self.resultGUI is None:
-            return {"success": False, "error": "No results to save. Run optimization first."}
-            
         try:
-            # Save the plan and results
-            print(f"Saving plan to {output_file}...")
-            self.eng.eval(f"save('{output_file}', 'resultGUI', 'ct', 'cst', 'pln', 'stf', 'dij')", nargout=0)
+            # Determine what to save based on availability and requirements
+            variables_to_save = []
+            
+            # Always save basic patient data
+            variables_to_save.extend(['ct', 'cst'])
+            
+            # Add plan if it exists
+            if self.pln is not None:
+                has_pln = self.eng.eval("exist('pln', 'var')", nargout=1)
+                if has_pln == 1:
+                    variables_to_save.append('pln')
+            
+            # Add stf if it exists
+            if self.stf is not None:
+                has_stf = self.eng.eval("exist('stf', 'var')", nargout=1)
+                if has_stf == 1:
+                    variables_to_save.append('stf')
+            
+            # Add dij if it exists
+            if self.dij is not None:
+                has_dij = self.eng.eval("exist('dij', 'var')", nargout=1)                
+            
+            # Add results if requested and available
+            if save_results:
+                if self.resultGUI is None:
+                    return {"success": False, "error": "No results to save. Run optimization first or set save_results=False."}
+                has_results = self.eng.eval("exist('resultGUI', 'var')", nargout=1)
+                if has_results == 1:
+                    variables_to_save.append('resultGUI')
+            
+            if not variables_to_save:
+                return {"success": False, "error": "No data available to save"}
+            
+            # Create save command
+            variables_str = "', '".join(variables_to_save)
+            save_command = f"save('{output_file}', '{variables_str}')"
+            
+            # Save the data
+            print(f"Saving to {output_file}...")
+            print(f"Variables: {variables_to_save}")
+            self.eng.eval(save_command, nargout=0)
+
+            if has_dij:
+                self.eng.eval("save('dij.mat', 'dij', '-v7.3')", nargout=0)
             
             return {
                 "success": True,
                 "output_file": output_file,
-                "message": f"Plan saved successfully to {output_file}"
+                "variables_saved": variables_to_save,
+                "message": f"Data saved successfully to {output_file} (variables: {', '.join(variables_to_save)})"
             }
             
         except Exception as e:

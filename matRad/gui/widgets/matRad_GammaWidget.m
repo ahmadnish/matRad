@@ -67,10 +67,17 @@ classdef matRad_GammaWidget < matRad_Widget
         function this = initialize(this)
             if evalin( 'base', 'exist(''resultGUI'')' )
                 resultGUI = evalin('base','resultGUI');
+                
+                % Check if resultGUI is a struct before using dot indexing
+                if ~isstruct(resultGUI) || isempty(resultGUI)
+                    return;
+                end
+                
                 resultnames = fieldnames(resultGUI) ;
                 j = 1;
                 for i = 1:numel(resultnames)
-                    if ndims(resultGUI.(resultnames{i}))==3
+                    % Use safer field access to avoid dot indexing errors
+                    if isfield(resultGUI, resultnames{i}) && ndims(resultGUI.(resultnames{i}))==3
                         this.SelectedDisplayAllOptions{j} = resultnames{i};
                         j=j+1;
                     end
@@ -79,8 +86,12 @@ classdef matRad_GammaWidget < matRad_Widget
                 %this.SelectedDisplayAllOptions = pad(this.SelectedDisplayAllOptions);
                 set(this.handles.popupSelectedDisplayOption1,'String',this.SelectedDisplayAllOptions);
                 set(this.handles.popupSelectedDisplayOption2,'String',this.SelectedDisplayAllOptions);
-                this.maxSlice = size(resultGUI.physicalDose,3);
-                this.slice = round(this.maxSlice/2);
+                
+                % Check if physicalDose field exists before accessing it
+                if isfield(resultGUI, 'physicalDose')
+                    this.maxSlice = size(resultGUI.physicalDose,3);
+                    this.slice = round(this.maxSlice/2);
+                end
             end
             if evalin( 'base', 'exist(''ct'')' )
                 ct = evalin('base','ct');
@@ -393,6 +404,12 @@ classdef matRad_GammaWidget < matRad_Widget
             
             if evalin( 'base', 'exist(''resultGUI'')' ) && this.lockUpdate
                 resultGUI = evalin('base','resultGUI');
+                
+                % Check if resultGUI is a struct before using dot indexing
+                if ~isstruct(resultGUI) || isempty(resultGUI)
+                    return;
+                end
+                
                 resultnames = fieldnames(resultGUI) ;
                 j = 1;
                 this.SelectedDisplayAllOptions = {};
@@ -408,16 +425,18 @@ classdef matRad_GammaWidget < matRad_Widget
 
                 %slider options %CAN ALSO SET MIN AND MAX TO NONZERO SLICES
 
-                if size(resultGUI.(this.SelectedDisplayOption1),3) == size(resultGUI.(this.SelectedDisplayOption2),3)
-                    this.maxSlice = size(resultGUI.(this.SelectedDisplayOption1),3);
-                    this.slice = round(this.maxSlice/2);
-                    set(this.handles.sliderSlice,'Min',1,'Max',this.maxSlice,...
-                        'Value', this.slice, ...
-                        'SliderStep',[1 1]);
-                else
-                    this.showWarning('Mismatch in dimensions of selected cubes')
+                % Check if the selected display options exist as fields before accessing them
+                if isfield(resultGUI, this.SelectedDisplayOption1) && isfield(resultGUI, this.SelectedDisplayOption2)
+                    if size(resultGUI.(this.SelectedDisplayOption1),3) == size(resultGUI.(this.SelectedDisplayOption2),3)
+                        this.maxSlice = size(resultGUI.(this.SelectedDisplayOption1),3);
+                        this.slice = round(this.maxSlice/2);
+                        set(this.handles.sliderSlice,'Min',1,'Max',this.maxSlice,...
+                            'Value', this.slice, ...
+                            'SliderStep',[1 1]);
+                    else
+                        this.showWarning('Mismatch in dimensions of selected cubes')
+                    end
                 end
-
 
                 this.calcGamma();
                 this.plotGamma();
@@ -496,11 +515,21 @@ classdef matRad_GammaWidget < matRad_Widget
                 resultGUI = evalin('base','resultGUI');
             else
                 % no result cube
+                return;
             end
+            
+            % Check if resultGUI is a struct and has the required fields
+            if ~isstruct(resultGUI) || isempty(resultGUI) || ...
+               ~isfield(resultGUI, this.SelectedDisplayOption1) || ...
+               ~isfield(resultGUI, this.SelectedDisplayOption2)
+                return;
+            end
+            
             if evalin( 'base', 'exist(''cst'')' )
                 cst = evalin('base','cst');
             else
                 %no cst
+                cst = [];
             end
 
             [this.gammaCube,this.gammaPassRateCell] = matRad_gammaIndex(resultGUI.(this.SelectedDisplayOption1) ,resultGUI.(this.SelectedDisplayOption2),...

@@ -1,3 +1,4 @@
 {
-  "python.pythonPath": "${workspaceFolder}/../matlab_env/bin/python"
+  "python.pythonPath": "${workspaceFolder}/../matlab_env/bin/python",
+  "python.languageServer": "None"
 }

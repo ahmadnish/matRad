@@ -1,17 +1,246 @@
 {
-    // Use IntelliSense to learn about possible attributes.
-    // Hover to view descriptions of existing attributes.
-    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
-    "version": "0.2.0",
-    "configurations": [
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Head & Neck (70 Gy / 35 fx) - GPT-5.1",
+      "type": "python",
+      "request": "launch",
+      "program": "${workspaceFolder}/LLM_Agent_Planner/run_site_specific_planning.py",
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "justMyCode": false,
+      "env": {
+        "PYTHONUNBUFFERED": "1",
+        "PYTHONPATH": "${workspaceFolder}"
+      },
+      "args": [
+        "--site", "generic",        
+        "--patient", "~/matRad/matRad/phantoms/HNC_010.mat",
+        "--technique", "IMRT",
+        "--model", "gpt-5.1",
+        "--max-iterations", "200"
+      ]
+    },
+    {
+      "name": "Site-specific (prompted)",
+      "type": "python",
+      "request": "launch",
+      "program": "${workspaceFolder}/LLM_Agent_Planner/run_site_specific_planning.py",
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "justMyCode": false,
+      "env": {
+        "PYTHONUNBUFFERED": "1",
+        "PYTHONPATH": "${workspaceFolder}"
+      },
+      "args": [
+        "--site", "${input:site}",
+        "--dose", "${input:dose}",
+        "--fractions", "${input:fractions}",
+        "--patient", "${input:patient}",
+        "--technique", "${input:technique}",
+        "--model", "${input:model}",
+        "--max-iterations", "${input:maxIterations}"
+      ]
+    },
+    {
+      "name": "Head & Neck SIB (Head_and_Neck_1.mat) - GPT-5.1",
+      "type": "python",
+      "request": "launch",
+      "program": "${workspaceFolder}/LLM_Agent_Planner/run_site_specific_planning.py",
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "justMyCode": false,
+      "env": {
+        "PYTHONUNBUFFERED": "1",
+        "PYTHONPATH": "${workspaceFolder}"
+      },
+      "args": [
+        "--site", "head_and_neck",
+        "--fractions", "33",
+        "--patient", "HNC_010.mat",
+        "--technique", "IMRT",
+        "--model", "gpt-5.1",
+        "--max-iterations", "200"
+      ]
+    },
 
-        {
-            "name": "Python Debugger: Current File",
-            "type": "debugpy",
-            "request": "launch",
-            "program": "${file}",
-            "console": "integratedTerminal",
-            "python": "/Users/ahmadneishabouri/matlab_env/bin/python",
-        }
-    ]
+    {
+      "name": "Head & Neck SIB (Head_and_Neck_1.mat) - Claude Sonnet 4.5",
+      "type": "python",
+      "request": "launch",
+      "program": "${workspaceFolder}/LLM_Agent_Planner/run_site_specific_planning.py",
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "justMyCode": false,
+      "env": {
+        "PYTHONUNBUFFERED": "1",
+        "PYTHONPATH": "${workspaceFolder}"
+      },
+      "args": [
+        "--site", "head_and_neck",
+        "--fractions", "33",
+        "--patient", "HNC_010.mat",
+        "--technique", "IMRT",
+        "--model", "claude-sonnet-4-5-20250929",
+        "--max-iterations", "200"
+      ]
+    },
+
+    {
+      "name": "Head & Neck (70 Gy / 35 fx) - Claude Sonnet 4.5",
+      "type": "python",
+      "request": "launch",
+      "program": "${workspaceFolder}/LLM_Agent_Planner/run_site_specific_planning.py",
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "justMyCode": false,
+      "env": {
+        "PYTHONUNBUFFERED": "1",
+        "PYTHONPATH": "${workspaceFolder}"
+      },
+      "args": [
+        "--site", "head_and_neck",
+        "--dose", "70",
+        "--fractions", "35",
+        "--patient", "HandN.mat",
+        "--technique", "IMRT",
+        "--model", "claude-sonnet-4-5-20250929",
+        "--max-iterations", "200"
+      ]
+    },
+    {
+      "name": "Prostate (78 Gy / 39 fx) - GPT-5.1",
+      "type": "python",
+      "request": "launch",
+      "program": "${workspaceFolder}/LLM_Agent_Planner/run_site_specific_planning.py",
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "justMyCode": false,
+      "env": {
+        "PYTHONUNBUFFERED": "1",
+        "PYTHONPATH": "${workspaceFolder}"
+      },
+      "args": [
+        "--site", "prostate",
+        "--dose", "78",
+        "--fractions", "39",
+        "--patient", "prostate_patient.mat",
+        "--technique", "IMRT",
+        "--model", "gpt-5.1",
+        "--max-iterations", "200"
+      ]
+    },
+
+    {
+      "name": "Run Current File (Prompted)",
+      "type": "python",
+      "request": "launch",
+      "program": "${file}",
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "justMyCode": false,
+      "env": {
+        "PYTHONUNBUFFERED": "1",
+        "PYTHONPATH": "${workspaceFolder}"
+      },
+      "args": ["${input:argsPrompt}"]
+    },
+    {
+      "name": "Run Current File (No Args)",
+      "type": "python",
+      "request": "launch",
+      "program": "${file}",
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "justMyCode": false,
+      "env": {
+        "PYTHONUNBUFFERED": "1",
+        "PYTHONPATH": "${workspaceFolder}"
+      }
+    },
+    {
+      "name": "Run Current File (Dummy Args)",
+      "type": "python",
+      "request": "launch",
+      "program": "${file}",
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "justMyCode": false,
+      "env": {
+        "PYTHONUNBUFFERED": "1",
+        "PYTHONPATH": "${workspaceFolder}"
+      },
+      "args": ["--foo", "bar", "--test", "1"]
+    }
+  ],
+  "inputs": [
+    {
+      "id": "site",
+      "type": "pickString",
+      "description": "Cancer site",
+      "options": ["lung", "head_and_neck", "prostate", "breast"],
+      "default": "lung"
+    },
+    {
+      "id": "dose",
+      "type": "promptString",
+      "description": "Total dose (Gy) or SIB format (e.g., PTV6996:70.0,PTV5610:56.0)",
+      "default": "60"
+    },
+    {
+      "id": "fractions",
+      "type": "promptString",
+      "description": "Number of fractions",
+      "default": "30"
+    },
+    {
+      "id": "patient",
+      "type": "pickString",
+      "description": "Patient file (.mat)",
+      "options": [
+        "HandN.mat",
+        "Head_and_Neck_1.mat",
+        "lung_patient.mat",
+        "prostate_patient.mat",
+        "breast_patient.mat"
+      ],
+      "default": "HandN.mat"
+    },
+    {
+      "id": "technique",
+      "type": "pickString",
+      "description": "Technique",
+      "options": ["IMRT", "VMAT", "3DCRT", "SBRT"],
+      "default": "IMRT"
+    },
+    {
+      "id": "maxIterations",
+      "type": "promptString",
+      "description": "Max optimization iterations",
+      "default": "200"
+    },
+    {
+      "id": "model",
+      "type": "pickString",
+      "description": "LLM Model",
+      "options": [
+        "gpt-5.1",
+        "gpt-5",
+        "gpt-4o",
+        "gpt-4o-mini",
+        "claude-sonnet-4-5-20250929",
+        "claude-opus-4-1-20250805",
+        "claude-haiku-4-5-20251001",
+        "claude-3-5-sonnet-latest"
+      ],
+      "default": "gpt-5.1"
+    },
+    {
+      "id": "argsPrompt",
+      "type": "promptString",
+      "description": "Arguments for current file",
+      "default": ""
+    }
+  ]
 }

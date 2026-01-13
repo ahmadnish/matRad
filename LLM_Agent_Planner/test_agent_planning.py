@@ -1,22 +1,88 @@
 """
-Test script for LLM Agent-based IMRT Planning using OpenAI Agents SDK
+Test script for LLM Agent-based IMRT Planning using OpenAI or Anthropic Models
 
 This script demonstrates how an LLM agent can make autonomous decisions
 to create and iteratively improve an IMRT treatment plan using matRad tools.
+
+SUPPORTED MODELS (Top Models for Agentic Work - Updated Nov 2025):
+    OpenAI (GPT-5 Series - Latest):
+        - gpt-5.1: Latest model with improved reasoning and warmer personality (Nov 2025)
+        - gpt-5: Multimodal with advanced reasoning capabilities (Aug 2025)
+        - gpt-4o (default): Reliable balance of speed and capability
+        - gpt-4o-mini: Faster, cost-effective option
+        - gpt-4-turbo: Strong reasoning and function calling
+    
+    Anthropic (Claude 4.5/4.1 Series - Latest):
+        - claude-sonnet-4-5-20250929: Excellent for coding and agentic tasks (Sep 2025)
+        - claude-opus-4-1-20250805: Most capable for complex reasoning (Aug 2025)
+        - claude-haiku-4-5-20251001: Fast and efficient for simpler tasks (Oct 2025)
+        - claude-3-5-sonnet-latest: Previous generation, proven performance
+        - claude-3-5-sonnet-20241022: Stable version with excellent capabilities
+
+USAGE:
+    # With default model (gpt-4o - stable and reliable)
+    python test_agent_planning.py
+    
+    # With latest OpenAI models
+    from test_agent_planning import main, print_supported_models
+    main(model="gpt-5.1")      # Latest GPT-5.1 (Nov 2025)
+    main(model="gpt-5")        # GPT-5 (Aug 2025)
+    main(model="gpt-4o-mini")  # Cost-effective option
+    
+    # With latest Anthropic models (requires: pip install anthropic)
+    main(model="claude-sonnet-4-5-20250929")  # Latest Sonnet (Sep 2025)
+    main(model="claude-opus-4-1-20250805")    # Latest Opus (Aug 2025)
+    main(model="claude-haiku-4-5-20251001")   # Latest Haiku (Oct 2025)
+    
+    # Print all supported models
+    print_supported_models()
+
+IMPORTANT: Before running this script, source the project environment:
+    source /Users/ahmadneishabouri/matlab_env/bin/activate
 """
 
 import os
 import json
 import time
 import numpy as np
+from datetime import datetime
+
+from dotenv import load_dotenv
+# Load environment variables
+load_dotenv()
+
 from typing import Dict, Any, List, Optional, Union
 from pydantic import BaseModel, Field
 from openai import OpenAI
+try:
+    from anthropic import Anthropic
+    ANTHROPIC_AVAILABLE = True
+except ImportError:
+    ANTHROPIC_AVAILABLE = False
 from matrad_tools import MatRadEngine
 from logger import PlanningLogger
+from guidelines_loader import GuidelinesLoader
 
-# Initialize OpenAI client
-client = OpenAI()
+# Supported models for agentic work (Top 5+ from OpenAI and Anthropic - Updated Nov 2025)
+SUPPORTED_MODELS = {
+    # OpenAI models - Latest GPT-5 series (Released Aug-Nov 2025)
+    "gpt-5.1": {"provider": "openai", "description": "GPT-5.1 - Latest with improved reasoning (Nov 2025)"},
+    "gpt-5": {"provider": "openai", "description": "GPT-5 - Multimodal with advanced reasoning (Aug 2025)"},
+    "gpt-4o": {"provider": "openai", "description": "GPT-4 Omni - Reliable balance of speed and capability"},
+    "gpt-4o-mini": {"provider": "openai", "description": "GPT-4 Omni Mini - Faster, cost-effective"},
+    "gpt-4-turbo": {"provider": "openai", "description": "GPT-4 Turbo - Strong reasoning and function calling"},
+    
+    # Anthropic models - Latest Claude 4.5 and 4.1 series (Released 2025)
+    "claude-sonnet-4-5-20250929": {"provider": "anthropic", "description": "Claude Sonnet 4.5 - Excellent for coding and agentic tasks (Sep 2025)"},
+    "claude-opus-4-1-20250805": {"provider": "anthropic", "description": "Claude Opus 4.1 - Most capable for complex reasoning (Aug 2025)"},
+    "claude-haiku-4-5-20251001": {"provider": "anthropic", "description": "Claude Haiku 4.5 - Fast and efficient for simpler tasks (Oct 2025)"},
+    "claude-3-5-sonnet-20241022": {"provider": "anthropic", "description": "Claude 3.5 Sonnet - Proven stable version"},
+    "claude-3-5-sonnet-latest": {"provider": "anthropic", "description": "Claude 3.5 Sonnet Latest - Most recent 3.5 version"},
+}
+
+# Initialize clients (will be used based on selected model)
+openai_client = OpenAI(base_url="https://eu.api.openai.com/v1")
+anthropic_client = Anthropic(base_url="https://eu.api.openai.com/v1") if ANTHROPIC_AVAILABLE else None
 
 def convert_matlab_types(obj):
     """
@@ -44,14 +110,72 @@ def convert_matlab_types(obj):
         return obj
 
 
+class TreatmentConfiguration:
+    """Configuration class for treatment parameters."""
+    def __init__(self, 
+                 cancer_site: str,
+                 prescription_dose: Optional[Union[float, Dict[str, float]]] = None,
+                 num_fractions: Optional[int] = None,
+                 treatment_technique: str = "IMRT",
+                 patient_file: str = "HandN.mat"):
+        self.cancer_site = cancer_site
+        self.num_fractions = num_fractions
+        self.treatment_technique = treatment_technique
+        self.patient_file = patient_file
+        
+        # Handle prescription - can be None (to be inferred), single dose, or SIB dict
+        if prescription_dose is None:
+            self.prescription_dose = None
+            self.prescription_doses = None
+            self.dose_per_fraction = None
+            self.is_sib = False
+        elif isinstance(prescription_dose, dict):
+            self.prescription_doses = prescription_dose
+            self.prescription_dose = max(prescription_dose.values())
+            self.is_sib = True
+            self.dose_per_fraction = self.prescription_dose / num_fractions if num_fractions else None
+        else:
+            self.prescription_dose = prescription_dose
+            self.prescription_doses = {"primary": prescription_dose}
+            self.is_sib = False
+            self.dose_per_fraction = prescription_dose / num_fractions if num_fractions else None
+
 class IMRTPlanningAgent:
-    """LLM Agent for IMRT Planning using OpenAI function calling with structured outputs."""
+    """LLM Agent for IMRT Planning using OpenAI/Anthropic function calling with structured outputs."""
     
-    def __init__(self, matrad_path: str = None):
-        """Initialize the planning agent with matRad engine."""
+    def __init__(self, matrad_path: str = None, treatment_config: TreatmentConfiguration = None, model: str = "gpt-5.1"):
+        """
+        Initialize the planning agent with matRad engine and treatment configuration.
+        
+        Args:
+            matrad_path: Path to matRad installation
+            treatment_config: Treatment configuration object
+            model: Model to use (e.g., "gpt-4o", "claude-3-5-sonnet-latest")
+        """
+        # Validate model
+        if model not in SUPPORTED_MODELS:
+            print(f"⚠️  Warning: Model '{model}' not in supported list. Attempting to use anyway.")
+            print(f"   Supported models: {list(SUPPORTED_MODELS.keys())}")
+            # Infer provider from model name
+            if "claude" in model.lower():
+                self.model_provider = "anthropic"
+            else:
+                self.model_provider = "openai"
+        else:
+            self.model_provider = SUPPORTED_MODELS[model]["provider"]
+        
+        # Check if Anthropic is available if needed
+        if self.model_provider == "anthropic" and not ANTHROPIC_AVAILABLE:
+            raise ImportError("Anthropic client not available. Install with: pip install anthropic")
+        
+        self.model = model
         self.engine = MatRadEngine(matrad_path)
         self.logger = PlanningLogger()
         self.conversation_history = []
+        self.treatment_config = treatment_config
+        self.guidelines_loader = GuidelinesLoader()
+        self.guidelines_loader.load_all_guidelines()
+        
         self.plan_state = {
             "engine_started": False,
             "patient_loaded": False,
@@ -61,12 +185,482 @@ class IMRTPlanningAgent:
             "objectives_added": [],
             "optimization_completed": False,
             "plan_evaluated": False,
-            "iteration_count": 0
+            "iteration_count": 0,
+            "treatment_config": treatment_config.__dict__ if treatment_config else None
         }
         
         # Log initialization
         self.logger.log_action("initialization", "Agent initialized", 
-                              {"matrad_path": matrad_path})
+                              {"matrad_path": matrad_path, 
+                               "treatment_config": self.plan_state["treatment_config"],
+                               "model": self.model,
+                               "model_provider": self.model_provider})
+    
+    def _generate_site_specific_prompt(self) -> str:
+        """Generate a site-specific system prompt based on treatment configuration."""
+        if not self.treatment_config:
+            # Default to head and neck if no config provided
+            return self._get_generic_prompt()
+        
+        site = self.treatment_config.cancer_site.lower()
+        
+        if site in ['lung', 'nsclc', 'lung_cancer']:
+            return self._get_lung_prompt()
+        elif site in ['head_and_neck', 'head_neck', 'hnc', 'oropharynx', 'larynx']:
+            print("Getting head and neck prompt")            
+            return self._get_head_and_neck_prompt()
+        elif site in ['prostate']:
+            return self._get_prostate_prompt()
+        elif site in ['breast']:
+            return self._get_breast_prompt()
+        else:
+            # Generic prompt for other sites
+            return self._get_generic_prompt()
+    
+    def _get_lung_prompt(self) -> str:
+        """Generate lung-specific planning prompt."""
+        config = self.treatment_config
+        beam_config = self.guidelines_loader.get_beam_arrangements('lung')
+        
+        if config and config.prescription_dose is not None:
+            config_info = f"""
+            ## TREATMENT CONFIGURATION:
+            - Cancer Site: {config.cancer_site}
+            - Patient File: {config.patient_file}
+            - Prescription Dose: {config.prescription_dose} Gy
+            - Number of Fractions: {config.num_fractions}
+            - Dose per Fraction: {config.dose_per_fraction:.1f} Gy
+            - Treatment Technique: {config.treatment_technique}"""
+        else:
+            config_info = f"""
+            ## TREATMENT CONFIGURATION:
+            - Cancer Site: {config.cancer_site if config else 'Lung'}
+            - Patient File: {config.patient_file if config else 'Unknown'}
+            - Prescription Dose: **TO BE INFERRED** from structure names using analyze_and_filter_structures()
+            - Number of Fractions: **TO BE INFERRED**
+            - Treatment Technique: {config.treatment_technique if config else 'IMRT'}"""
+        
+        return f"""
+            You are a clinically experienced radiotherapy planning agent, specializing in IMRT optimization for LUNG CANCER using matRad with advanced objective management and optimization monitoring capabilities.
+{config_info}
+
+            Your goal is to create an optimal treatment plan that achieves target coverage while minimizing dose to organs at risk (OARs), following clinical best practices for lung cancer radiotherapy.
+
+            ## LUNG CANCER PLANNING PLAYBOOK (Staged Strategy)
+
+            **High-level approach**
+            - Initialize from lung template → set beams, target eval VOIs, and baseline objectives.
+            - Stage 1 (Critical OARs + Coverage) → optimize → check feasibility.
+            - Stage 2 (Lung sparing + Gradient shaping) → optimize → check.
+            - Stage 3 (Secondary OARs + refinement) → optimize → check.
+            - Convergence test → if any priority fails, apply targeted refinements.
+
+            **Priority rules (lexicographic for lung cancer)**
+            1) Critical OAR maxima (Spinal cord D_max ≤ 45 Gy)
+            2) Lung sparing (V20 ≤ 35%, Mean dose ≤ 20 Gy)
+            3) Target coverage (V95% ≥ 95%, D98% ≥ 98% prescription)
+            4) Target hotspots (D2% ≤ 107% prescription)
+            5) Heart constraints (Mean ≤ 26 Gy, V60 ≤ 33%)
+            6) Esophagus constraints (Mean ≤ 34 Gy, D_max ≤ 74 Gy)
+            7) Secondary structures (brachial plexus, great vessels)
+
+            **Required VOI operations for lung planning:**
+            - `LUNG_MINUS_GTV`: `perform_voi_operation("LUNG_TOTAL","GTV","setdiff","LUNG_MINUS_GTV")` for lung dose calculations
+            - `LUNG_TOTAL`: `perform_voi_operation("LUNG_LT","LUNG_RT","union","LUNG_TOTAL")` if bilateral lungs exist
+            - `BODY_MINUS_PTV`: `perform_voi_operation("BODY","PTV","setdiff","BODY_MINUS_PTV")` for gradient control
+            - Rings: shells around `PTV` via `create_ring_structures("PTV", [5,15,30], inner_margin_mm=0)`
+
+            **Lung-specific beam arrangement:**
+            - Default: {beam_config.get('gantry_angles', [0, 45, 135, 180, 225, 315])} degrees (6-field IMRT)
+            - Avoid direct AP/PA beams through contralateral lung when possible
+
+            **CRITICAL MATRAD OPTIMIZATION FINDINGS:**
+            - **Overlap Priorities**: `matRad` strictly enforces overlap priorities. If Target=1 and OAR=2, the OAR voxels in the overlap region are REMOVED from the OAR optimization.
+            - **Penalty Scaling**: Objectives are normalized by `1/N_voxels` (Mean Squared Error). **Large structures (Lungs, Body) DILUTE errors, so they need HIGHER penalties (5000+) to be effective.** Small structures naturally generate strong signals.
+            - **Soft vs Hard**: Use constraints (add_constraint) for critical OAR limits (e.g. Cord Max) if soft objectives fail.
+
+            **Stepwise procedure for lung cancer (using inferred prescription from structure analysis)**
+            - Step 1 — Critical Safety (Spinal Cord + Basic Coverage)
+              - **Use `get_structure_volumes()`**: Check volumes.
+              - Spinal cord: Use QUANTEC guidelines from analyze_and_filter_structures() results
+              - PTV: MinDVH(inferred_prescription_dose, 95%) with penalty 1000
+              - Optimize. Pass if: All QUANTEC constraints met; PTV V95% ≥ 95%
+              - Use evaluate_plan_quality() then record_thoughts() to assess progress
+
+            - Step 2 — Lung Sparing (Primary Concern)
+              - LUNG_MINUS_GTV: MeanDose(20 Gy) with penalty 200
+              - LUNG_MINUS_GTV: MaxDVH(20 Gy, 35%) with penalty 150
+              - PTV: MaxDVH(107% of inferred_prescription_dose, 2%) for hotspot control
+              - Optimize. Pass if: Lung V20 ≤ 35%; Lung mean ≤ 20 Gy; PTV coverage maintained
+              - Use evaluate_plan_quality() then record_thoughts() to assess progress
+
+            - Step 3 — Secondary OARs and Refinement
+              - Apply additional QUANTEC guidelines from structure analysis for heart, esophagus, etc.
+              - PTV: MinDVH(98% of inferred_prescription_dose, 98%) for cold spot control
+              - Rings for gradient optimization based on inferred prescription
+              - Optimize. Ensure all previous constraints maintained
+              - Use evaluate_plan_quality() then record_thoughts() to assess final plan
+
+            **Lung-specific tuning guidelines:**
+            - If lung V20 fails: Increase lung objective penalties by +100, consider beam angle optimization
+            - If target coverage fails: Increase PTV MinDVH penalty, but maintain lung constraints
+            - If cord constraint fails: Increase cord penalty to 2000-5000, consider beam avoidance
+            - For SBRT cases (if dose/fraction > 5 Gy): Use stricter gradient control and higher penalties
+
+            **Critical lung constraints (QUANTEC-based):**
+            - Lung V20 ≤ 35% (pneumonitis risk)
+            - Lung mean dose ≤ 20 Gy (pneumonitis risk)
+            - Spinal cord D_max ≤ 45 Gy (myelopathy prevention)
+            - Heart mean ≤ 26 Gy (pericarditis prevention)
+            - Esophagus mean ≤ 34 Gy, D_max ≤ 74 Gy (esophagitis prevention)
+
+            ## Enhanced Planning Process with Smart Objective Management:
+
+            ### Initial Setup (Steps 1-5):
+            1. Start the MATLAB engine and load patient data.
+            2. **MANDATORY: Structure Analysis & Prescription Inference**: ALWAYS call analyze_and_filter_structures() immediately after loading patient data.
+               - This will remove helper structures, infer prescription dose from target names, and provide QUANTEC guidelines.
+               - Use the inferred prescription and guidelines for all subsequent planning steps.
+            3. **Structure Survey**: Use `get_structure_volumes()` to check sizes and priorities.
+               - **Penalty Scaling**: Objectives are Mean Squared Error. Large structures (Lungs, Body) dilute errors and need **HIGHER** penalties (e.g. 5000+) to be effective.
+            4. Create an initial treatment plan with lung-appropriate beam angles.
+            5. Generate the beam geometry and calculate the dose influence matrix.
+
+            ### Intelligent Objective and Constraint Management Workflow (Steps 5+):
+            
+            **BEFORE adding any objectives or constraints:**
+            - ALWAYS use get_current_objectives() AND get_current_constraints() to check what already exists
+            - Analyze existing objectives for redundancy, conflicts, or excessive constraints
+            - Check constraint feasibility and compatibility with objectives
+            - Focus on lung-specific priorities and constraints
+
+            **Optimization Strategy with Convergence Monitoring:**
+            - First optimization: Use optimize_fluence() (cold-start)
+            - Subsequent optimizations: Use optimize_fluence(use_previous_weights=true) for warm-start
+            - **ANALYZE optimization_analysis output every time:**
+              - convergence_quality: "good" = continue, "moderate" = cautious, "poor" = simplify objectives
+              - objective_stagnation: true = too many constraints, reduce objectives
+              - small_step_sizes: true = optimization struggling, simplify problem
+              - relative_improvement: <1% = likely over-constrained
+
+            **Plan Evaluation and Completion:**
+            - Use evaluate_plan_quality() for comprehensive assessment
+            - ALWAYS follow evaluate_plan_quality() with record_thoughts() to document your clinical assessment and next steps
+            - Plan is complete when:
+              1. Lung V20 ≤ 35% AND mean dose ≤ 20 Gy
+              2. Spinal cord D_max ≤ 45 Gy
+              3. PTV V95% ≥ 95%
+              4. All other OAR constraints met per QUANTEC guidelines
+
+            **CRITICAL: How to Signal Plan Completion:**
+            When and ONLY when all clinical criteria are satisfied, respond with:
+            "PLANNING_COMPLETE: Lung cancer plan meets all clinical requirements and is ready for clinical use."
+
+            ## Treatment Plan Evaluation Tools
+            **For comprehensive plan evaluation, use `evaluate_plan_quality()`:**
+            - Primary tool for overall plan assessment with lung-specific metrics
+            - Includes lung V20, V30, mean dose calculations
+
+            ## CRITICAL: Action-Oriented Behavior:
+            - When you have a plan or next step, immediately execute it using the appropriate tool
+            - Reasoning should be brief and focused on lung cancer clinical priorities
+            - Always provide clear clinical rationales for lung-specific objectives
+            - Prioritize lung sparing while maintaining target coverage
+            
+            Start by getting the current plan state and then proceed step by step with lung cancer planning priorities.
+            Always ensure your function calls use valid JSON-serializable parameters.
+        """
+    
+    def _get_head_and_neck_prompt(self) -> str:
+        """Generate head and neck specific planning prompt (existing implementation)."""
+        config = self.treatment_config
+        if config and config.prescription_dose is not None:
+            # Handle multi-level prescriptions
+            if config.is_sib:
+                dose_info = "\n".join([f"    * {target}: {dose} Gy" for target, dose in config.prescription_doses.items()])
+                prescription_info = f"""
+            ## TREATMENT CONFIGURATION:
+            - Cancer Site: {config.cancer_site}
+            - Patient File: {config.patient_file}
+            - Prescription Doses (SIB):{dose_info}
+            - Number of Fractions: {config.num_fractions}
+            - Primary Dose per Fraction: {config.dose_per_fraction:.1f} Gy
+            - Treatment Technique: {config.treatment_technique}
+            """
+            else:
+                prescription_info = f"""
+            ## TREATMENT CONFIGURATION:
+            - Cancer Site: {config.cancer_site}
+            - Patient File: {config.patient_file}
+            - Prescription Dose: {config.prescription_dose} Gy
+            - Number of Fractions: {config.num_fractions}
+            - Dose per Fraction: {config.dose_per_fraction:.1f} Gy
+            - Treatment Technique: {config.treatment_technique}
+            """
+        else:
+            prescription_info = f"""
+            ## TREATMENT CONFIGURATION:
+            - Cancer Site: {config.cancer_site if config else 'Head and Neck'}
+            - Patient File: {config.patient_file if config else 'Unknown'}
+            - Prescription Dose: **TO BE INFERRED** from structure names using analyze_and_filter_structures()
+            - Number of Fractions: **TO BE INFERRED**
+            - Treatment Technique: {config.treatment_technique if config else 'IMRT'}
+            """
+        
+        return f"""
+            You are a clinically experienced radiotherapy planning agent, specializing in IMRT optimization using matRad with advanced objective management and optimization monitoring capabilities, following a strictly lexicographic optimization strategy.
+
+            {prescription_info}
+
+            Your goal is to create an optimal treatment plan that achieves target coverage while minimizing dose to organs at risk (OARs), following clinical best practices. You have access to tools for beam setup, dose calculation, optimization, plan evaluation, AND IMPORTANTLY, intelligent objective management with optimization convergence monitoring.
+
+            ## Complete Planning Workflow (Follow Sequentially):
+
+            ### Phase A: Initial Setup & Data Preparation
+            1. **Initialize**: Start MATLAB engine and load patient data
+            2. **MANDATORY: Structure Analysis & Prescription Inference**: ALWAYS call analyze_and_filter_structures() immediately after loading patient data
+               - This tool will automatically:
+                 * Remove helper/evaluation structures (eval, union, diff, ring, minus, plus, combined, etc.)
+                 * Keep only main target structures and critical OARs
+                 * Infer prescription dose from target structure names (e.g., PTV6996 = 69.96 Gy, PTV70 = 70 Gy)
+                 * Provide QUANTEC-based OAR sparing guidelines for planning protocol
+               - Use the inferred prescription dose and guidelines for all subsequent planning steps
+               - If prescription inference fails or has low confidence, request clarification before proceeding
+            3. **Structure Survey**: Use `get_structure_volumes()` to get voxel counts and priorities.
+               - **CRITICAL PENALTY SCALING**: matRad objectives use **Mean** Squared Error (normalized by `1/N_voxels`).
+               - **LARGE structures (Body, Skin, Lung)**: Errors are "diluted" by the huge voxel count (N is large, so 1/N is tiny). **You MUST use HIGHER penalties (e.g., 5000-10000) for large structures** to make the optimizer "feel" localized hot spots.
+               - **SMALL structures**: Errors result in large MSE values (N is small). Standard penalties (e.g., 500-1000) are usually sufficient.
+            4. **Setup beams**: Create treatment plan with appropriate beam angles (at least 9 coplanar beams)
+            5. **Calculate dose matrix**: Generate beam geometry and calculate dose influence matrix (dij)
+               - Verify calculation completes successfully before proceeding
+
+            ### Phase B: VOI Creation & Preparation (Based on Filtered Structures)
+            6. **Create evaluation structures**:
+        
+               - Base all structure operations on the inferred prescription and kept structures
+               -  If needed, create evaluation volumes based on the identified targets:
+               - `PTV_all`: Union of all remaining PTVs (if multiple targets exist)
+               - `PTV_eval`: For SIB cases, subtract higher dose from lower dose PTVs as needed
+               - `BODY_minus_PTVs`: Spillage control volume using external boundary structure
+               - `Rings`: Gradient control shells around primary PTV`
+               - And whatever else is needed to create the evaluation structures.
+            
+            7. **Check existing objectives**: ALWAYS use get_current_objectives() AND get_current_constraints()
+               - Analyze for redundancy, conflicts, or excessive constraints
+               - Clear or modify conflicting objectives before proceeding
+
+            ### Phase C: Staged Optimization (Lexicographic Priority)
+
+            **PRIORITY HIERARCHY (Never compromise higher for lower):**
+            A. Target coverage (V100%, D98) and hotspots (D2%) - HIGHEST PRIORITY
+            B. Early `squared_overdosing` (NOT square_deviation) BODY_minus_PTVs (or NT) control with high penalties (e.g. 10000+) - HIGH PRIORITY.
+            C. Hard OAR maxima (D0.03cc or equivalent)
+            D. Dose spillage/gradient (rings and BODY_minus_PTVs)
+            E. OAR mean doses and cosmetic shaping - LOWEST PRIORITY
+
+            **CRITICAL MATRAD OPTIMIZATION FINDINGS:**
+            - **Overlap Priorities**: `matRad` strictly enforces overlap priorities. If Target=1 and OAR=2, the OAR voxels in the overlap region are REMOVED from the OAR optimization. You CANNOT spare an OAR in the overlap region if it has a higher priority number (lower priority) than the target.
+            - **Penalty Scaling**: Objectives are normalized by `1/N_voxels`. **Large structures (Body, Skin) require HIGHER penalties (10x comparing to PTV penalty) because their error signal is diluted by thousands of empty voxels.** Small structures generate strong signals naturally.
+            - **Soft vs Hard**: Objectives (e.g., `square_overdosing`) are "soft" and can be violated if the penalty is paid. Constraints (e.g., `min_max_dose`) are "hard" and strict. Use constraints if you absolutely must cap a dose (e.g. Cord Max), but be aware this can cause infeasibility.
+
+            **STAGE 1 — Target Coverage, Hotspots & Basic BODY_minus_PTVs Guardrail**
+            
+            8. **Add Stage 1 objectives (TARGETS + BASIC BODY_minus_PTVs GUARDRAIL)**:
+               - **Use inferred prescription doses from analyze_and_filter_structures() results**
+                                       
+               - **Target hotspot control** (limit D2%)
+                         
+               - ** IMPORTANT: BODY_minus_PTVs hotspot guardrail with high penalties (e.g. 10000+)** (to avoid extreme non-PTV hot spots while keeping targets dominant):
+                 * BODY_minus_PTVs: square_overdosing with high penalties (e.g. 10000+)
+                 * BODY_minus_PTVs: MaxDVH(primary_prescription_dose, ~0.1-1%) to keep the maximum dose outside PTVs at or below the primary inferred prescription dose
+                 * If very high dose still exist, try to localize where it is by looking at the DVH analysis of each structure or help structures (e.g. if it's in the ring, or in the BODY_minus_PTVs, or in the target, or in the OAR, etc.)
+                 * IMPORTANT: If you see very high dose in the BODY_minus_PTVs, you need to adjust the penalties and re-optimize. Scale penalties based on volume from get_structure_volumes(). Body needs higher penalties than other structures in order to be effective.
+
+            9. **Optimize Stage 1**: Run optimize_fluence() and analyze optimization_analysis results
+            
+            10. **Evaluate Stage 1**: Use evaluate_plan_quality() then record_thoughts() to document assessment and check:
+               - ✓ PASS CRITERIA: Each target V100% ≥ 95% AND D98 ≥ 95% of its inferred prescription dose
+               - ✓ PASS CRITERIA: Each target D2% ≤ 107% of its inferred prescription dose               
+               - If ANY criterion fails → adjust penalties/parameters, re-optimize
+               - If infeasible after 3 attempts → report conflict and move to Stage 2
+           
+           **STAGE 2 — Critical OAR Hard Limits (Safety)**
+           
+           11. **Add Stage 2 objectives** (only after Stage 1 passes and target coverage is acceptable):
+               - **Critical OAR hard limits** (use QUANTEC guidelines from analyze_and_filter_structures() results):
+                 * Apply the specific constraints provided by the structure analysis tool
+                 * Use cc→% conversion for D0.03cc constraints as needed
+                 * **Scale penalties based on volume**: Large structures (e.g. Lungs, Brain, Body) need HIGH penalties (500-2000+) to overcome dilution.
+                 * Ensure there are **no hot spots** in BODY_minus_PTVs.
+
+            12. **Optimize Stage 2**: Run optimize_fluence() and analyze results
+           
+           13. **Evaluate Stage 2**: Use evaluate_plan_quality() then record_thoughts() to document assessment. Check Stage 1 criteria still met PLUS:
+               - ✓ PASS CRITERIA: Stage 1 (target coverage + hotspots) maintained (no degradation)
+               - ✓ PASS CRITERIA: All QUANTEC guidelines from analyze_and_filter_structures() are met
+               - ✓ PASS CRITERIA: BODY_minus_PTVs MaxDVH < 50% of primary inferred prescription dose
+               - If ANY Stage 2 criterion fails → adjust OAR penalties/parameters and re-optimize, DO NOT proceed to Stage 3
+               - If infeasible after 3 attempts → report conflict and continue to Stage 3
+           
+           **STAGE 3 — Gradient, Spillage & OAR Mean Doses (Refinement)**
+           
+            14. **Add Stage 3 objectives** (only after Stage 2 passes):
+               - **Dose spillage control (BODY_minus_PTVs)**:                 
+                 
+                 * Generally **push the DVH for BODY_minus_PTVs toward ≤ 50% of inferred prescription dose across as much of the volume as possible** (e.g. combine small-volume and larger-volume MaxDVH objectives with moderate penalties).
+               
+               - **Gradient shaping with rings**:
+                 * Ring_0_5mm: MaxDVH(~105-110% of inferred Rx, moderate penalty)
+                 * Ring_5_15mm: MaxDVH(~50-80% of inferred Rx, lower penalty)
+               
+               - **Target cold spot tightening** (only if Stage 1 coverage is comfortably met):
+                 * Use 95% of each target's inferred prescription dose for D95 constraints
+                 * Apply MinDVH(95% of inferred dose, 98%) for each target as appropriate
+               
+               - **Secondary OAR constraints** (mean dose reduction, lowest priority within Stage 3):
+                 * Apply additional OAR mean dose objectives based on QUANTEC guidelines from analyze_and_filter_structures()
+               
+               - **Fine-tuning** (optional, use low penalties and never at expense of higher stages):
+                 * Additional ring constraints for cosmetic shaping
+                 * Minor adjustments to homogeneity if needed
+
+            15. **Final optimization**: Run optimize_fluence()
+           
+           16. **Final evaluation**: Use evaluate_plan_quality() then record_thoughts() with comprehensive summary to verify ALL stages pass:
+               - Stage 1 criteria (target coverage + hotspots based on inferred doses)
+               - Stage 2 criteria (QUANTEC guidelines from structure analysis)
+               - Stage 3 criteria (spillage + gradient based on inferred doses)
+               - Stage 3 mean dose goals - DESIRABLE (acceptable if not fully met)
+               - Save_treatment_plan() if plan meets or approaches clinical standards
+
+            ### Phase D: Iteration & Refinement
+            
+            17. **If plan not acceptable**:
+               - Identify which stage/priority is failing (Stage 1 > Stage 2 > Stage 3)
+               - For higher priority failures (Stage 1 targets): adjust beam angles, increase target penalties, check feasibility against inferred prescription
+               - For mid-priority failures (Stage 2 OAR hard limits): adjust OAR penalties based on QUANTEC guidelines from structure analysis. Consider using hard constraints (add_constraint) if soft objectives fail, but watch for infeasibility.
+               - For lower priority issues (Stage 3 gradient, spillage, mean doses): reduce lower-priority penalties to protect higher priorities
+               - Document reasoning with record_thoughts()
+               - Re-optimize (cold-start) and re-evaluate               
+
+            18. **Convergence monitoring**:
+                - Review optimization_analysis for each run
+                - Check for stagnation (cost function not improving)
+                - Check for oscillation (metrics bouncing)
+                - Adjust optimizer tolerance or penalties if needed
+
+            ## cc→% Conversion Protocol:
+            - **Purpose**: Convert absolute volume constraints (cc) to percentage for DVH objectives
+            - **Usage**: `result = convert_cc_to_percent(structure_name, volume_cc)`
+            - **Example**: `vol_pct = convert_cc_to_percent("SPINAL_CORD", 0.03)["volume_percent"]`
+            - **Fallback**: If tool unavailable, use 0.1-1% for small structures, 1-5% for medium structures
+            
+            ## CRITICAL: Evaluation & Documentation Rule
+            - Every time you call `evaluate_plan_quality()`, you MUST immediately call `record_thoughts()` to document the current plan quality, your clinical interpretation, and your next actions.
+            
+            ## Structure Overlap Management
+
+            **When to use set_overlap_priorities?**
+            - IMMEDIATELY after loading patient data and BEFORE dose calculation
+            - When structures overlap (common: PTV overlaps with critical OARs like spinal cord, brainstem)
+            **CRITICAL:** Always call this BEFORE `calculate_dose_influence_matrix()` to ensure proper voxel assignment in overlapping regions.
+            **IMPORTANT FINDING**: Lower priority number = Higher Priority. If Target=1 and OAR=2, Target wins overlap. To spare OAR in overlap, OAR must be 1 and Target 2 (but this sacrifices coverage).
+
+            ## Plan Completion Signal:
+            When and ONLY when ALL of the following are met:
+               - Stage 1 criteria: Target coverage + hotspots within specification
+               - Stage 2 criteria: Critical OAR hard limits respected
+               - Stage 3 criteria: Gradient and BODY_minus_PTVs acceptable (spillage controlled, no excessive hotspots)
+               - Plan clinically deliverable and safe
+            
+            Respond with: **"PLANNING_COMPLETE: Plan meets all clinical requirements and is ready for clinical use."**
+
+            ## Action-Oriented Behavior:
+            - Keep in mind load_the_patient() leads to losing all previous objectives and constraints set and sets it to default
+            - **CRITICAL WORKFLOW**: After loading patient data, IMMEDIATELY call analyze_and_filter_structures() before any other planning steps
+            - Be concise: Brief clinical reasoning, then immediate tool execution
+            - Document decisions: Use record_thoughts() at stage transitions and after evaluations
+            - Save progress: Use save_treatment_plan() after each successful stage        
+
+            Start by getting the current plan state and proceeding through Phase A systematically.
+            Always ensure your function calls use valid JSON-serializable parameters.
+        """
+    
+    def _get_generic_prompt(self) -> str:
+        """Generate generic site-agnostic planning prompt."""
+        config = self.treatment_config
+        
+        if config and config.prescription_dose is not None:
+            config_info = f"""
+            ## TREATMENT CONFIGURATION:
+            - Cancer Site: {config.cancer_site}
+            - Patient File: {config.patient_file}
+            - Prescription Dose: {config.prescription_dose} Gy
+            - Number of Fractions: {config.num_fractions}
+            - Dose per Fraction: {config.dose_per_fraction:.1f} Gy
+            - Treatment Technique: {config.treatment_technique}"""
+        else:
+            config_info = f"""
+            ## TREATMENT CONFIGURATION:
+            - Cancer Site: {config.cancer_site if config else 'Generic'}
+            - Patient File: {config.patient_file if config else 'Unknown'}
+            - Prescription Dose: **TO BE INFERRED** from structure names using analyze_and_filter_structures()
+            - Number of Fractions: **TO BE INFERRED**
+            - Treatment Technique: {config.treatment_technique if config else 'IMRT'}"""
+        
+        return f"""
+            You are a clinically experienced radiotherapy planning agent, specializing in IMRT optimization using matRad.
+{config_info}
+
+            Your goal is to create an optimal treatment plan following clinical best practices for the specified cancer site.
+
+            ## General Planning Process:
+            1. Start MATLAB engine and load patient data
+            2. **MANDATORY: Structure Analysis & Prescription Inference**: ALWAYS call analyze_and_filter_structures() immediately after loading patient data
+               - This will remove helper structures, infer prescription dose from target names, and provide QUANTEC guidelines
+               - Use the inferred prescription and guidelines for all subsequent planning steps
+            3. **Structure Survey**: Use `get_structure_volumes()` to get voxel counts and priorities.
+               - **CRITICAL**: Use voxel counts to scale your penalties. matRad objectives are volume-normalized.
+               - **LARGE structures (Body, Skin) need HIGHER penalties (e.g., 5000+) because their error signal is diluted by the huge number of voxels.**
+            4. Create treatment plan with appropriate beam configuration (at least 9 beams)
+            5. Generate beam geometry and calculate dose influence matrix
+            6. Add site-appropriate objectives and/or constraints based on inferred prescription and QUANTEC guidelines.
+               - **Constraint Strategy**: Use soft objectives (e.g., square_overdosing) first. If critical OAR sparing fails, switch to hard constraints (e.g., min_max_dose) but be aware of feasibility.
+               - **Penalty Scaling**: Scale penalties PROPORTIONAL to volume size (Large Volume = High Penalty).
+               - **CRITICAL**: implement a high penalty (10x comparing to PTV penalty) for BODY_minus_PTVs with **square_overdosing** and NOT **square_deviation** objective. I repeat: **square_overdosing** and NOT **square_deviation** objective for BODY_minus_PTVs.
+            7. Optimize fluence            
+            8. Evaluate plan quality using evaluate_plan_quality(), then ALWAYS use record_thoughts() tool to review and summarize objectives/constraints (and confirm their implementation), then concisely provide a plan summary and clear next steps
+            9. Iterate until clinical criteria based on inferred prescription are met
+
+            ## Important Considerations:        
+            - Skin, Body, or External structure is the patient boundary. Use it to create new structures and help structures you may need.
+            - Structures may overlap, use tools (e.g. perform_voi_operation) to create new structures and help structures you may need.
+            - Create Body_minus_PTVs structure (Body setdiff all_structures) and maintain a D_max < 0.5 x prescription dose via square_overdosing objective with high penalty (10x comparing to PTV penalty).
+            - Keep in mind load_the_patient() leads to losing all previous objectives and constraints set and sets it to default. 
+            - **Structure Overlap Management**:
+                - Use set_overlap_priorities() to manage structure overlap ALWAYS BEFORE calculate_dose_influence_matrix() and optimize_fluence().                
+            
+            **CRITICAL: How to Signal Plan Completion:**
+            When and ONLY when ALL of the following are met:
+               - Stage 1 criteria: Target coverage + hotspots within specification
+               - Stage 2 criteria: Critical OAR hard limits respected
+               - Stage 3 criteria: Gradient and BODY_minus_PTVs acceptable (spillage controlled, no excessive hotspots)
+               - Plan clinically deliverable and safe
+            
+            Respond with: **"PLANNING_COMPLETE: Plan meets all clinical requirements and is ready for clinical use."**
+
+            Start by getting the current plan state and proceed step by step.
+        """
+    
+    def _get_prostate_prompt(self) -> str:
+        """Generate prostate-specific planning prompt."""
+        # Placeholder for future prostate implementation
+        return self._get_generic_prompt()
+    
+    def _get_breast_prompt(self) -> str:
+        """Generate breast-specific planning prompt."""
+        # Placeholder for future breast implementation
+        return self._get_generic_prompt()
         
     def get_available_tools(self) -> List[Dict]:
         """Define the tools available to the LLM agent with structured outputs."""
@@ -106,6 +700,18 @@ class IMRTPlanningAgent:
                 "function": {
                     "name": "get_structure_information",
                     "description": "Get information about structures (targets, OARs) in the loaded patient.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {},
+                        "additionalProperties": False
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "get_structure_volumes",
+                    "description": "Get detailed structure information including voxel counts (volume), types, and overlap priorities. CRITICAL for determining penalty scaling (smaller structures often need higher penalties) and checking overlap behavior (lower priority number = higher priority).",
                     "parameters": {
                         "type": "object",
                         "properties": {},
@@ -199,12 +805,20 @@ class IMRTPlanningAgent:
                             },
                             "objective_type": {
                                 "type": "string",
-                                "enum": ["min_dose", "max_dose", "mean_dose", "square_deviation"],
+                                "enum": ["square_underdosing", "square_overdosing", "mean_dose", "square_deviation", "eud", "min_dvh", "max_dvh"],
                                 "description": "Type of objective"
                             },
                             "dose_value": {
                                 "type": "number",
-                                "description": "Dose value in Gy"
+                                "description": "Dose value in Gy (for EUD: target EUD value; for DVH: dose threshold)"
+                            },
+                            "volume_percent": {
+                                "type": "number",
+                                "description": "Volume percentage for DVH objectives (e.g., 95 for 95%). Only used for min_dvh and max_dvh."
+                            },
+                            "eud_exponent": {
+                                "type": "number",
+                                "description": "EUD exponent parameter (default 3.5). Only used for eud objective. Higher values emphasize hot spots, lower values emphasize cold spots."
                             },
                             "penalty": {
                                 "type": "number",
@@ -238,7 +852,7 @@ class IMRTPlanningAgent:
                             },
                             "objective_type": {
                                 "type": "string",
-                                "enum": ["min_dose", "max_dose", "mean_dose", "square_deviation"],
+                                "enum": ["min_dose", "max_dose", "mean_dose", "square_deviation", "eud", "min_dvh", "max_dvh"],
                                 "description": "Type of objective to remove (optional, removes first match)"
                             },
                             "dose_value": {
@@ -268,6 +882,92 @@ class IMRTPlanningAgent:
                                 "description": "Name of specific structure to clear (optional, clears all structures if omitted)"
                             }
                         },
+                        "additionalProperties": False
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "add_constraint",
+                    "description": "Add an optimization constraint for a structure. Constraints define hard limits (upper/lower bounds) rather than penalties. ALWAYS provide a clear rationale explaining why this constraint is necessary.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "structure_name": {
+                                "type": "string",
+                                "description": "Name of the structure"
+                            },
+                            "constraint_type": {
+                                "type": "string",
+                                "enum": ["min_max_dose", "min_max_mean_dose", "min_max_eud", "min_max_dvh"],
+                                "description": "Type of constraint"
+                            },
+                            "lower_bound": {
+                                "type": "number",
+                                "description": "Lower bound value (optional). For dose constraints: minimum dose in Gy. For DVH: minimum volume fraction (0-1)."
+                            },
+                            "upper_bound": {
+                                "type": "number", 
+                                "description": "Upper bound value (optional). For dose constraints: maximum dose in Gy. For DVH: maximum volume fraction (0-1)."
+                            },
+                            "dose_reference": {
+                                "type": "number",
+                                "description": "Reference dose for DVH constraints in Gy. Required for min_max_dvh."
+                            },
+                            "eud_exponent": {
+                                "type": "number",
+                                "description": "EUD exponent parameter (default 3.5). Only used for min_max_eud constraint."
+                            },
+                            "rationale": {
+                                "type": "string",
+                                "description": "Clear clinical rationale for why this constraint is being added (e.g., 'Hard dose limit per protocol', 'Regulatory constraint for critical structure')"
+                            }
+                        },
+                        "required": ["structure_name", "constraint_type", "rationale"],
+                        "additionalProperties": False
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "remove_constraint",
+                    "description": "Remove a specific optimization constraint from a structure. Use this to eliminate unnecessary or conflicting constraints. ALWAYS provide a clear rationale explaining why this constraint is being removed.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "structure_name": {
+                                "type": "string",
+                                "description": "Name of the structure"
+                            },
+                            "constraint_index": {
+                                "type": "integer",
+                                "description": "Specific index of constraint to remove (1-based, optional)"
+                            },
+                            "constraint_type": {
+                                "type": "string",
+                                "enum": ["min_max_dose", "min_max_mean_dose", "min_max_eud", "min_max_dvh"],
+                                "description": "Type of constraint to remove (optional, removes first match)"
+                            },
+                            "rationale": {
+                                "type": "string",
+                                "description": "Clear rationale for why this constraint is being removed (e.g., 'Constraint preventing convergence', 'No longer needed after plan improvements')"
+                            }
+                        },
+                        "required": ["structure_name", "rationale"],
+                        "additionalProperties": False
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "get_current_constraints",
+                    "description": "Get all current optimization constraints for all structures. Essential for understanding what constraints are already set before adding new ones or making modifications.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {},
                         "additionalProperties": False
                     }
                 }
@@ -347,6 +1047,145 @@ class IMRTPlanningAgent:
                         "additionalProperties": False
                     }
                 }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "create_ring_structures",
+                    "description": "Create concentric ring VOIs around a reference structure for dose sparing analysis and gradient optimization. Useful for creating avoidance zones around critical structures.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "reference_structure": {
+                                "type": "string",
+                                "description": "Name of the reference structure around which rings will be created (e.g., 'PTV', 'Brainstem')"
+                            },
+                            "ring_margins_mm": {
+                                "type": "array",
+                                "items": {"type": "number"},
+                                "description": "List of ring margins in mm (e.g., [5, 10, 15] creates rings at 5mm, 10mm, and 15mm from the reference structure)"
+                            },
+                            "inner_margin_mm": {
+                                "type": "number",
+                                "description": "Inner margin from reference structure in mm (default: 0). Creates gap between reference structure and first ring."
+                            },
+                            "visualize": {
+                                "type": "boolean",
+                                "description": "Whether to create visualization of the rings (default: false)"
+                            }
+                        },
+                        "required": ["reference_structure", "ring_margins_mm"],
+                        "additionalProperties": False
+                    }
+                }
+            },
+            {
+                "type": "function", 
+                "function": {
+                    "name": "perform_voi_operation",
+                    "description": "Perform VOI operations (union, intersection, difference) between two structures to create new combined structures. Useful for creating evaluation structures or refined target volumes.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "structure1": {
+                                "type": "string",
+                                "description": "Name of the first structure"
+                            },
+                            "structure2": {
+                                "type": "string", 
+                                "description": "Name of the second structure"
+                            },
+                            "operation": {
+                                "type": "string",
+                                "enum": ["union", "intersect", "setdiff"],
+                                "description": "Type of operation: 'union' (combine structures), 'intersect' (overlap only), 'setdiff' (first minus second)"
+                            },
+                            "new_structure_name": {
+                                "type": "string",
+                                "description": "Name for the new combined structure"
+                            }
+                        },
+                        "required": ["structure1", "structure2", "operation", "new_structure_name"],
+                        "additionalProperties": False
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "convert_cc_to_percent",
+                    "description": "Convert absolute volume in cc to percentage for DVH objectives. Essential for clinical constraints like D0.03cc (spinal cord/brainstem max dose at 0.03cc). Returns both percentage and fraction formats for use in objectives.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "structure_name": {
+                                "type": "string",
+                                "description": "Name of the structure to analyze"
+                            },
+                            "volume_cc": {
+                                "type": "number",
+                                "description": "Volume in cubic centimeters to convert (e.g., 0.03 for D0.03cc constraints)"
+                            }
+                        },
+                        "required": ["structure_name", "volume_cc"],
+                        "additionalProperties": False
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "record_thoughts",
+                    "description": "Record agent thoughts, reasoning, or planning notes. Use this to summarize current thinking, plan next steps, or note important observations.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "thoughts": {
+                                "type": "string",
+                                "description": "Agent thoughts, reasoning, or planning notes"
+                            }
+                        },
+                        "required": ["thoughts"],
+                        "additionalProperties": False
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "set_overlap_priorities",
+                    "description": "Set minimal overlap priorities: TARGET=1, OAR=2, other=3. Optionally provide custom priorities.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "structure_priorities": {
+                                "type": "object",
+                                "description": "Optional dictionary mapping structure names to priority values. If not provided, uses minimal defaults.",
+                                "additionalProperties": {
+                                    "type": "integer"
+                                }
+                            }
+                        },
+                        "additionalProperties": False
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "analyze_and_filter_structures",
+                    "description": "LLM-based structure analysis tool. Removes helper/evaluation structures, keeps only main targets and critical OARs, infers prescription dose from structure names, and provides QUANTEC-based OAR sparing guidelines.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "provided_prescription_dose": {
+                                "type": "number",
+                                "description": "Optional prescription dose in Gy to validate against inferred dose from structure names"
+                            }
+                        },
+                        "additionalProperties": False
+                    }
+                }
             }
         ]
     
@@ -380,8 +1219,15 @@ class IMRTPlanningAgent:
                 result_dict = self.engine.get_structure_names()
                 result_dict = convert_matlab_types(result_dict)
                 
+            elif tool_name == "get_structure_volumes":
+                result_dict = self.engine.get_structure_volumes()
+                result_dict = convert_matlab_types(result_dict)
+                
             elif tool_name == "create_treatment_plan":
-                result_dict = self.engine.create_empty_plan()
+                num_fractions = 30  # Default
+                if self.treatment_config and self.treatment_config.num_fractions:
+                    num_fractions = self.treatment_config.num_fractions
+                result_dict = self.engine.create_empty_plan(num_fractions=num_fractions)
                 result_dict = convert_matlab_types(result_dict)
                 if result_dict.get("success"):
                     self.plan_state["plan_created"] = True
@@ -402,10 +1248,25 @@ class IMRTPlanningAgent:
                     #     )
 
             elif tool_name == "set_beam_configuration":
-                result_dict = self.engine.set_beam_angles(
-                    arguments["gantry_angles"], 
-                    arguments.get("couch_angles")
-                )
+                # Use provided angles or get site-specific defaults
+                gantry_angles = arguments.get("gantry_angles")
+                couch_angles = arguments.get("couch_angles")
+                
+                # If no angles provided and we have treatment config, use site defaults
+                if not gantry_angles and self.treatment_config:
+                    site_beams = self.guidelines_loader.get_beam_arrangements(self.treatment_config.cancer_site.lower())
+                    if site_beams:
+                        gantry_angles = site_beams.get('gantry_angles', [0, 72, 144, 216, 288])
+                        couch_angles = site_beams.get('couch_angles', [0] * len(gantry_angles))
+                        
+                        # Log that we're using site-specific defaults
+                        self.logger.log_action(
+                            "beam_config_auto",
+                            f"Using site-specific beam configuration for {self.treatment_config.cancer_site}",
+                            {"gantry_angles": gantry_angles, "couch_angles": couch_angles}
+                        )
+                
+                result_dict = self.engine.set_beam_angles(gantry_angles, couch_angles)
                 result_dict = convert_matlab_types(result_dict)
                 
             elif tool_name == "generate_beam_geometry":
@@ -430,7 +1291,9 @@ class IMRTPlanningAgent:
                     arguments["objective_type"],
                     arguments["dose_value"],
                     arguments.get("penalty", 1000.0),
-                    arguments.get("rationale", "No rationale provided")
+                    arguments.get("rationale", "No rationale provided"),
+                    arguments.get("volume_percent", 95),
+                    arguments.get("eud_exponent", 3.5)
                 )
                 result_dict = convert_matlab_types(result_dict)
                 if result_dict.get("success"):
@@ -493,6 +1356,47 @@ class IMRTPlanningAgent:
                         # Clear all objectives
                         self.plan_state["objectives_added"] = []
                 
+            elif tool_name == "add_constraint":
+                result_dict = self.engine.add_constraint(
+                    arguments["structure_name"],
+                    arguments["constraint_type"],
+                    arguments.get("lower_bound"),
+                    arguments.get("upper_bound"),
+                    arguments.get("dose_reference"),
+                    arguments.get("eud_exponent", 3.5),
+                    arguments.get("rationale", "No rationale provided")
+                )
+                result_dict = convert_matlab_types(result_dict)
+                if result_dict.get("success"):
+                    # Log the constraint with rationale
+                    self.logger.log_action(
+                        "constraint_added",
+                        f"Added {arguments['constraint_type']} constraint to {arguments['structure_name']}",
+                        {"rationale": arguments.get("rationale", "No rationale provided")},
+                        result_dict
+                    )
+                
+            elif tool_name == "remove_constraint":
+                result_dict = self.engine.remove_constraint(
+                    arguments["structure_name"],
+                    arguments.get("constraint_index"),
+                    arguments.get("constraint_type"),
+                    arguments.get("rationale", "No rationale provided")
+                )
+                result_dict = convert_matlab_types(result_dict)
+                if result_dict.get("success"):
+                    # Log the constraint removal with rationale
+                    self.logger.log_action(
+                        "constraint_removed",
+                        f"Removed constraint from {arguments['structure_name']}",
+                        {"rationale": arguments.get("rationale", "No rationale provided")},
+                        result_dict
+                    )
+                
+            elif tool_name == "get_current_constraints":
+                result_dict = self.engine.get_current_constraints()
+                result_dict = convert_matlab_types(result_dict)
+                
             elif tool_name == "optimize_fluence":
                 # Configure fmincon tolerances BEFORE optimization runs
                 try:
@@ -552,6 +1456,56 @@ class IMRTPlanningAgent:
             elif tool_name == "get_plan_state":
                 result_dict = {"success": True, "plan_state": convert_matlab_types(self.plan_state)}
                 
+            elif tool_name == "create_ring_structures":
+                result_dict = self.engine.create_ring_structures(
+                    arguments["reference_structure"],
+                    arguments["ring_margins_mm"],
+                    arguments.get("inner_margin_mm", 0),
+                    arguments.get("visualize", False)
+                )
+                result_dict = convert_matlab_types(result_dict)
+                
+            elif tool_name == "perform_voi_operation":
+                result_dict = self.engine.perform_voi_operation(
+                    arguments["structure1"],
+                    arguments["structure2"],
+                    arguments["operation"],
+                    arguments["new_structure_name"]
+                )
+                result_dict = convert_matlab_types(result_dict)
+                
+            elif tool_name == "convert_cc_to_percent":
+                result_dict = self.engine.convert_cc_to_percent(
+                    arguments["structure_name"],
+                    arguments["volume_cc"]
+                )
+                result_dict = convert_matlab_types(result_dict)
+                
+            elif tool_name == "set_overlap_priorities":
+                structure_priorities = arguments.get("structure_priorities")
+                result_dict = self.engine.set_overlap_priorities(structure_priorities)
+                result_dict = convert_matlab_types(result_dict)
+                
+            elif tool_name == "analyze_and_filter_structures":
+                provided_dose = arguments.get("provided_prescription_dose")
+                result_dict = self.engine.analyze_and_filter_structures(provided_dose)
+                result_dict = convert_matlab_types(result_dict)
+                
+            elif tool_name == "record_thoughts":
+                # Store thoughts in plan state and return success
+                thoughts = arguments["thoughts"]
+                if "thoughts" not in self.plan_state:
+                    self.plan_state["thoughts"] = []
+                self.plan_state["thoughts"].append({
+                    "timestamp": time.time(),
+                    "content": thoughts
+                })
+                result_dict = {
+                    "success": True,
+                    "message": "Thoughts recorded successfully",
+                    "thoughts": thoughts
+                }
+                
             else:
                 result_dict = {"success": False, "error": f"Unknown tool: {tool_name}"}
             
@@ -590,27 +1544,155 @@ class IMRTPlanningAgent:
         if len(messages) <= max_messages:
             return messages
         
-        # Keep system prompt, first few messages, and recent messages
+        # Keep system prompt separate
         system_msgs = [msg for msg in messages if msg["role"] == "system"]
         other_msgs = [msg for msg in messages if msg["role"] != "system"]
         
         if len(other_msgs) <= max_messages - len(system_msgs):
             return messages
-            
-        # Keep first 5 and last 10 messages, add compression note
-        keep_first = 5
-        keep_last = max_messages - len(system_msgs) - keep_first - 1  # -1 for compression note
         
-        compressed = system_msgs + other_msgs[:keep_first]
+        # Group messages into conversation units (assistant+tool pairs, user messages)
+        conversation_units = []
+        i = 0
+        while i < len(other_msgs):
+            msg = other_msgs[i]
+            if msg["role"] == "assistant" and msg.get("tool_calls"):
+                # Find all corresponding tool messages
+                unit = [msg]
+                i += 1
+                while i < len(other_msgs) and other_msgs[i]["role"] == "tool":
+                    unit.append(other_msgs[i])
+                    i += 1
+                conversation_units.append(unit)
+            else:
+                # Single message unit
+                conversation_units.append([msg])
+                i += 1
+        
+        # Calculate how many units we can keep
+        available_slots = max_messages - len(system_msgs) - 1  # -1 for compression note
+        
+        if len(conversation_units) <= available_slots:
+            return messages
+        
+        # Keep first few and last few units
+        keep_first_units = min(3, available_slots // 2)
+        keep_last_units = available_slots - keep_first_units
+        
+        if keep_last_units < 0:
+            keep_last_units = 0
+            keep_first_units = available_slots
+        
+        # Build compressed conversation
+        compressed = system_msgs[:]
+        
+        # Add first units
+        for unit in conversation_units[:keep_first_units]:
+            compressed.extend(unit)
         
         # Add compression summary
         compressed.append({
             "role": "user", 
-            "content": f"[Conversation compressed: Kept first {keep_first} and last {keep_last} messages out of {len(other_msgs)} total messages to save context]"
+            "content": f"[Conversation compressed: Kept first {keep_first_units} and last {keep_last_units} conversation units out of {len(conversation_units)} total units to save context]"
         })
         
-        compressed.extend(other_msgs[-keep_last:])
+        # Add last units
+        if keep_last_units > 0:
+            for unit in conversation_units[-keep_last_units:]:
+                compressed.extend(unit)
+        
         return compressed
+    
+    def _convert_to_anthropic_messages(self, messages: List[Dict]) -> List[Dict]:
+        """
+        Convert OpenAI-style messages to Anthropic format.
+        Anthropic doesn't support 'tool' role - tool results must be in 'user' messages.
+        """
+        anthropic_messages = []
+        
+        for msg in messages:
+            if msg["role"] == "system":
+                continue  # System messages handled separately
+            elif msg["role"] == "tool":
+                # Convert tool result to user message with tool_result content
+                anthropic_messages.append({
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": msg.get("tool_call_id", "unknown"),
+                            "content": msg["content"]
+                        }
+                    ]
+                })
+            elif msg["role"] == "assistant" and msg.get("tool_calls"):
+                # Convert assistant message with tool calls to Anthropic format
+                content = []
+                if msg.get("content"):
+                    content.append({"type": "text", "text": msg["content"]})
+                
+                for tc in msg["tool_calls"]:
+                    content.append({
+                        "type": "tool_use",
+                        "id": tc["id"],
+                        "name": tc["function"]["name"],
+                        "input": json.loads(tc["function"]["arguments"])
+                    })
+                
+                anthropic_messages.append({
+                    "role": "assistant",
+                    "content": content
+                })
+            else:
+                # Regular user or assistant message
+                anthropic_messages.append(msg)
+        
+        return anthropic_messages
+    
+    def _call_llm(self, messages: List[Dict], tools: List[Dict]) -> Any:
+        """
+        Call the appropriate LLM provider (OpenAI or Anthropic) based on configured model.
+        
+        Args:
+            messages: Conversation messages
+            tools: Available tools/functions
+            
+        Returns:
+            LLM response object
+        """
+        if self.model_provider == "openai":
+            return openai_client.chat.completions.create(
+                model=self.model,
+                messages=messages,
+                tools=tools,
+                tool_choice="auto"
+            )
+        elif self.model_provider == "anthropic":
+            # Extract system message
+            system_message = next((msg["content"] for msg in messages if msg["role"] == "system"), "")
+            
+            # Convert messages to Anthropic format (handles tool role conversion)
+            anthropic_messages = self._convert_to_anthropic_messages(messages)
+            
+            # Convert tools to Anthropic format
+            anthropic_tools = []
+            for tool in tools:
+                func = tool["function"]
+                anthropic_tools.append({
+                    "name": func["name"],
+                    "description": func["description"],
+                    "input_schema": func["parameters"]
+                })
+            
+            return anthropic_client.messages.create(
+                model=self.model,
+                max_tokens=4096,
+                system=system_message,
+                messages=anthropic_messages,
+                tools=anthropic_tools
+            )
+        else:
+            raise ValueError(f"Unsupported model provider: {self.model_provider}")
     
     def _configure_fmincon_tolerances(self):
         """
@@ -687,212 +1769,8 @@ class IMRTPlanningAgent:
             {"patient_file": patient_file, "max_iterations": max_iterations}
         )
         
-        # Initial system prompt
-        system_prompt = f"""
-            You are a clinically experienced radiotherapy planning agent, specializing in IMRT optimization using matRad with advanced objective management and optimization monitoring capabilities.
-
-            Your goal is to create an optimal treatment plan that achieves target coverage while minimizing dose to organs at risk (OARs), following clinical best practices. You have access to tools for beam setup, dose calculation, optimization, plan evaluation, AND IMPORTANTLY, intelligent objective management with optimization convergence monitoring.
-
-            ## Enhanced Planning Process with Smart Objective Management:
-
-            ### Initial Setup (Steps 1-4):
-            1. Start the MATLAB engine and load patient data.
-            2. Examine the structure information to identify targets and OARs.
-            3. Create an initial treatment plan with appropriate beam angles.
-            4. Generate the beam geometry and calculate the dose influence matrix.
-
-            ### Intelligent Objective Management Workflow (Steps 5+):
-            
-            **BEFORE adding any objectives:**
-            - ALWAYS use get_current_objectives() to check what objectives already exist
-            - Analyze existing objectives for redundancy, conflicts, or excessive constraints
-            - 
-
-            **Optimization and Monitoring Loop:**
-            1. Add initial clinically-guided objectives for targets and OARs WITH CLEAR RATIONALES
-               - ALWAYS provide specific clinical reasoning for each objective (e.g., "Ensure 95% target coverage per clinical protocol", "Protect parotid from xerostomia per QUANTEC guidelines")
-               - Every objective must have a meaningful rationale explaining its clinical necessity
-            2. Run optimize_fluence() and CAREFULLY analyze the optimization_analysis results:
-               - Monitor convergence quality (good/moderate/poor)
-               - Check for objective stagnation and very small step sizes
-               - Evaluate relative improvement percentage
-               - Read optimization summary for warnings
-            3. Evaluate plan quality and clinical metrics
-            4. **CRITICAL DECISION POINT:** Based on optimization convergence AND plan quality:
-
-            **If optimization shows POOR convergence (stagnation, tiny steps):**
-            - This often indicates too many conflicting/redundant objectives
-            - Use get_current_objectives() to review all current objectives  
-            - Strategically remove redundant or conflicting objectives using remove_optimization_objective() WITH CLEAR RATIONALES
-            - ALWAYS explain WHY each objective is being removed (e.g., "Removing redundant max_dose objective conflicting with existing constraint", "Eliminating over-constraining objective causing convergence issues")
-            - Consider clear_all_objectives() for specific structures if overwhelmed with objectives
-            - Re-optimize with simplified objective set
-            
-            **If optimization converges well but plan quality is suboptimal:**
-            - Add targeted objectives for specific clinical deficiencies WITH CLEAR RATIONALES
-            - ALWAYS explain the clinical need for each new objective (e.g., "Adding max_dose constraint due to PTV D2 exceeding 107% per protocol", "Target coverage insufficient, adding min_dose objective to improve D95")
-            - Use remove_optimization_objective() to replace ineffective objectives rather than accumulating them - PROVIDE RATIONALE for removals
-            - Monitor that total objective count doesn't exceed ~8-12 across all structures
-            
-            **If both optimization and plan quality are good:**
-            - Save plan and complete or make minor refinements only
-
-            ### Optimization Strategy with Convergence Monitoring:
-            - First optimization: Use optimize_fluence() (cold-start)
-            - Subsequent optimizations: Use optimize_fluence(use_previous_weights=true) for warm-start
-            - **ANALYZE optimization_analysis output every time:**
-              - convergence_quality: "good" = continue, "moderate" = cautious, "poor" = simplify objectives
-              - objective_stagnation: true = too many constraints, reduce objectives
-              - small_step_sizes: true = optimization struggling, simplify problem
-              - relative_improvement: <1% = likely over-constrained
-            - If optimization stagnates for 2+ consecutive iterations, clear problematic objectives
-
-            ## Treatment Plan Evaluation Tools
-
-            **For comprehensive plan evaluation, use `evaluate_plan_quality()`:**
-            - This is your PRIMARY tool for overall plan assessment
-            - Provides complete quality indicators, DVH analysis, and clinical recommendations for all structures
-            - Use this for plan approval/rejection decisions and comparing different plans
-            - Returns plan-level quality scoring and comprehensive clinical assessment
-            - Includes matRad's official quality indicators (D95, D50, HI, CI, V-metrics, etc.)
-
-            **For focused structure analysis, use `calculate_dvh_analysis(structure_name)`:**
-            - Use this ONLY when you need detailed analysis of a specific structure
-            - For follow-up investigation after comprehensive evaluation
-            - When you need structure-specific DVH plots or deep-dive analysis
-
-            **AVOID calling both methods redundantly** - `evaluate_plan_quality()` already includes comprehensive DVH analysis for all structures.
-
-            Clinical Guidelines:
-            - Target structures (PTVs) should receive 95% of the prescribed dose (typically 50–70 Gy).
-            - OARs should remain below tolerance doses per following guidelines:
-                - Parotid: 25 Gy
-                - Mandible: 26 Gy
-                - Spinal Cord: 25 Gy
-                - Optic Nerve: 35 Gy
-                - Brainstem: 35 Gy
-                - Larynx: 35 Gy
-            - Apply a 30 Gy max dose constraint to the "BODY" or "Skin" structure. This is essential for optimization but should not be tracked or enforced in evaluations due to overlap with PTVs. Only watch out of hot spots in the body/skin. Use it only as an optimization constraint, and coordinate the penalty with other objectives for effective planning.
-            - Dose values in objective functions are total dose over all fractions.
-            - Use appropriate beam arrangements.
-            - Prioritize in case of conflict:
-                - 1st: PTV coverage
-                - 2nd: Critical OAR sparing
-                - 3rd: Non-critical structure sparing (Body/Skin)
-            - Acceptable plan thresholds:
-                - PTV D95 ≥ 95% of prescription
-                - Homogeneity Index (HI) < 0.2
-                - Conformity Index (CI) > 0.7
-                - OAR doses below maximum and mean tolerances
-
-
-            Plan Evaluation Workflow:
-            1. Primary: Use evaluate_plan_quality() for comprehensive plan assessment (all structures, quality scoring, clinical recommendations)
-            2. Optional: Use calculate_dvh_analysis(structure_name) only for focused analysis of specific structures if needed
-
-            Termination Conditions:
-            - A plan is optimal if all clinical thresholds are met (use plan evaluation metrics to verify).
-            - Do not iterate further if:
-                - Plan quality plateaus over 5 iterations (compare plan quality scores and key metrics)
-                - All objective changes result in equivalent or worse tradeoffs
-            - Do not re-run dose calculation unless beam geometry or machine parameters change.
-
-            ## Learning and Memory Management:
-
-            **Maintain Optimization Memory Across Iterations:**
-            - Track which objective combinations led to poor convergence (stagnation, tiny steps)
-            - Remember which objective modifications improved both convergence AND plan quality
-            - If an objective set caused convergence issues, don't repeat the same pattern
-            - Document your reasoning for objective changes in structured format
-
-            **Pattern Recognition for Optimization Issues:**
-            - Multiple min_dose + max_dose objectives on same structure = often redundant
-            - Too many objectives (>3) on single structure = usually over-constrained  
-            - Very high penalty weights (>10000) = can cause numerical issues
-            - Objectives with dose values too close together (<2Gy difference) = often conflicting
-
-            **Adaptive Strategy Based on Convergence History:**
-            - If 2+ consecutive optimizations show poor convergence → Simplify objective set
-            - If optimizer consistently stops at <20 iterations → Objectives likely over-constraining
-            - If step sizes drop to <1e-12 → Problem is numerically ill-conditioned
-            - If objective function barely improves (<1%) → Too many competing constraints
-
-            ## Enhanced Termination Conditions:
-
-            **Plan is optimal when:**
-            - Optimization convergence quality is "good" or "moderate" 
-            - Clinical thresholds are met (PTV D95 ≥95%, OAR doses below limits)
-            - Plan quality score >80 or meets clinical requirements
-
-            **CRITICAL: How to Signal Plan Completion:**
-            When and ONLY when all clinical criteria are satisfied, respond with the EXACT phrase:
-            "PLANNING_COMPLETE: Plan meets all clinical requirements and is ready for clinical use."
-            
-            Do NOT use this phrase unless:
-            1. You have run evaluate_plan_quality() and confirmed all targets meet D95 ≥95% 
-            2. All OARs are below tolerance doses
-            3. Plan quality score is acceptable (>70) or all clinical requirements are met
-            4. You have confirmed these metrics through actual tool results, not assumptions
-
-            **Continue optimization if:**
-            - ANY clinical threshold is not met (PTV coverage, OAR sparing)
-            - Plan quality can still be improved and convergence is good
-            - Optimization is working well but plan needs refinement
-
-            **Only stop iteration if:**
-            - Plan meets ALL clinical criteria (verified through evaluate_plan_quality)
-            - OR: Plan quality has plateaued over 5 iterations WITH good convergence AND clinical thresholds are met
-            - OR: Maximum iterations reached
-            - OR: Optimization consistently fails despite objective simplification
-
-            **Never stop unless clinical criteria are met or maximum iterations reached.**
-
-            **IMPORTANT: Work with Available Tools Only:**
-            - Do NOT ask for additional information, structure margins, or external data
-            - Do NOT request modifications to the patient data or structures
-            - Use ONLY the tools provided to achieve the best possible plan
-            - If clinical criteria cannot be met with current data, optimize to get as close as possible
-            - Make treatment planning decisions based on available structure information and dose constraints
-            - If you encounter limitations, work around them using optimization objectives and beam configuration
-
-            **Emergency Completion Criteria:**
-            If after 150 iterations clinical criteria still cannot be met despite good optimization convergence:
-            - Evaluate whether the plan is clinically usable (even if not ideal)
-            - If the plan provides reasonable target coverage (>90%) and OAR sparing, consider accepting it
-            - Use phrase "PLANNING_COMPLETE: Plan optimized to best achievable level with available data"
-
-            Logging (Enhanced Structured Format):
-            Each planning decision should be logged in a structured JSON format with:
-            - "reason": Explanation of the decision
-            - "tool_used": Name of the matRad function invoked
-            - "inputs": Parameters given to the tool
-            - "objective_rationale": For add/remove objective actions, the specific clinical reasoning provided
-            - "outcome": Metrics after action from plan evaluation (e.g., D95 = 93.2%, HI = 0.15, Parotid Dmean = 26.1 Gy, V30Gy = 45%)
-            - "clinical_assessment": Key findings from plan assessment text
-            - "optimization_convergence": Convergence quality, stagnation status, step sizes, relative improvement
-            - "objectives_status": Current number of objectives per structure, recent modifications with rationales
-            - "learning": What was learned from this iteration for future objective management
-            - "next_action": Planned next step with rationale
-
-            Current patient file: {patient_file}  
-            Maximum iterations allowed: {max_iterations}
-
-            Key Quality Metrics to Monitor (from evaluate_plan_quality):
-            - Targets: D95 (coverage), D50 (median), CI (conformity), HI (homogeneity)
-            - OARs: max_dose, mean_dose, V30Gy, V20Gy (volume metrics)
-            - All: std_dose (dose uniformity), D2/D98 (dose extremes)
-            - Plan-level: quality score (0-100), clinical recommendations
-
-            ## CRITICAL: Action-Oriented Behavior:
-            
-            - When you have a plan or next step, immediately execute it using the appropriate tool
-            - Reasoning should be brief and concise with clear plan-level reasoning across iterations
-            - If you're uncertain about something, use tools to gather information rather than asking for clarification
-            - When adding or removing objectives, ALWAYS provide clear clinical rationales in the tool calls
-
-            Start by getting the current plan state and then proceed step by step.  
-            Always ensure your function calls use valid JSON-serializable parameters.
-        """
+        # Generate site-specific system prompt
+        system_prompt = self._generate_site_specific_prompt()
         
         # Start conversation
         messages = [{"role": "system", "content": system_prompt}]
@@ -901,25 +1779,95 @@ class IMRTPlanningAgent:
             "content": "Begin IMRT planning for this patient immediately. Start by checking the plan state and then proceed with the planning workflow. Take action now - do not just provide reasoning without using tools."
         })
         
+
+        # Create sessions_messages directory if it doesn't exist
+        sessions_dir = './LLM_Agent_Planner/sessions_messages/'
+        os.makedirs(sessions_dir, exist_ok=True)
+        # Save messages content to file with timestamp    
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"messages_{timestamp}.txt"
+        filepath = os.path.join(sessions_dir, filename)
+        
+        with open(filepath, 'w') as f:
+            import json
+            f.write("=== INITIAL MESSAGES ===\n")
+            f.write(json.dumps(messages, indent=2))
+        
         iteration = 0
         while iteration < max_iterations:
             try:
                 # Get LLM response with function calling
-                response = client.chat.completions.create(
-                    model="gpt-5",
-                    messages=messages,
-                    tools=self.get_available_tools(),
-                    tool_choice="auto"
-                )
+                response = self._call_llm(messages, self.get_available_tools())
                 
-                # Add assistant message (simplified version)
-                assistant_message = response.choices[0].message
-                simplified_assistant = {
-                    "role": "assistant",
-                    "content": assistant_message.content,
-                    "tool_calls": assistant_message.tool_calls
-                }
-                messages.append(simplified_assistant)
+                # Parse response based on provider
+                if self.model_provider == "openai":
+                    assistant_message = response.choices[0].message
+                    tool_calls_serializable = None
+                    if assistant_message.tool_calls:
+                        tool_calls_serializable = [
+                            {
+                                "id": tc.id,
+                                "type": "function",
+                                "function": {"name": tc.function.name, "arguments": tc.function.arguments}
+                            } for tc in assistant_message.tool_calls
+                        ]
+                    simplified_assistant = {
+                        "role": "assistant",
+                        "content": assistant_message.content,
+                        "tool_calls": tool_calls_serializable
+                    }
+                    messages.append(simplified_assistant)
+                    
+                elif self.model_provider == "anthropic":
+                    # Convert Anthropic response to OpenAI-like format
+                    content_text = ""
+                    tool_calls_serializable = []
+                    
+                    for content_block in response.content:
+                        if content_block.type == "text":
+                            content_text = content_block.text
+                        elif content_block.type == "tool_use":
+                            tool_calls_serializable.append({
+                                "id": content_block.id,
+                                "type": "function",
+                                "function": {
+                                    "name": content_block.name,
+                                    "arguments": json.dumps(content_block.input)
+                                }
+                            })
+                    
+                    simplified_assistant = {
+                        "role": "assistant",
+                        "content": content_text if content_text else None,
+                        "tool_calls": tool_calls_serializable if tool_calls_serializable else None
+                    }
+                    messages.append(simplified_assistant)
+                    
+                    # Create a simple object to mimic OpenAI's structure
+                    class SimpleMessage:
+                        def __init__(self, content, tool_calls):
+                            self.content = content
+                            self.tool_calls = []
+                            if tool_calls:
+                                for tc in tool_calls:
+                                    class ToolCall:
+                                        def __init__(self, tc_dict):
+                                            self.id = tc_dict["id"]
+                                            class Function:
+                                                def __init__(self, func_dict):
+                                                    self.name = func_dict["name"]
+                                                    self.arguments = func_dict["arguments"]
+                                            self.function = Function(tc_dict["function"])
+                                    self.tool_calls.append(ToolCall(tc))
+                    
+                    assistant_message = SimpleMessage(content_text, tool_calls_serializable)
+                
+                # Count tokens and log messages at each iteration
+                total_chars = sum(len(str(msg.get('content', ''))) for msg in messages)
+                with open('messages_debug.txt', 'a') as f:
+                    f.write(f"\n\n=== ITERATION {iteration} ===\n")
+                    f.write(f"Total chars: {total_chars}, Est tokens: {total_chars//4}\n")
+                    f.write(json.dumps(messages, indent=2))
                 
                 # Check if LLM wants to call functions
                 if assistant_message.tool_calls:
@@ -974,8 +1922,11 @@ class IMRTPlanningAgent:
                         # Provide more specific continuation prompt emphasizing clinical requirements
                         if self.plan_state.get("plan_evaluated"):
                             continuation_prompt = ("Continue with treatment planning. Remember: you must achieve clinical targets "
-                                                 "(PTV D95 ≥95%, all OAR doses below tolerance) before declaring completion. "
-                                                 "What is your next step to improve the plan?")
+                                                 "(PTV D95 ≥95%, all OAR doses below tolerance) before declaring completion. "                                                
+                                                 "If body minus PTVs has very high dose, you need to adjust the penalties and re-optimize (10x penalties for BODY_minus_PTVs with **square_overdosing** and NOT **square_deviation** objective)."
+                                                 "try to localize where the high dose is by looking at the each structure's metrics or help structures (e.g. if the hotspot is in the ring, or in the BODY_minus_PTVs, or in the target, or in the OAR, etc.)"                                                 
+                                                 "If you see no improvement, define a new beam configuration and re-optimize (cold-start) and repeat the process."
+                                                 )
                         else:
                             continuation_prompt = ("Continue with treatment planning. You must evaluate the plan quality first "
                                                  "and ensure all clinical criteria are met before considering the plan complete. "
@@ -986,7 +1937,7 @@ class IMRTPlanningAgent:
                 iteration += 1
                 
                 # Compress conversation history every 10 iterations to prevent context overflow
-                if iteration % 50 == 0:
+                if iteration % 100 == 0:
                     old_length = len(messages)
                     messages = self._compress_conversation_history(messages, max_messages=25)
                     if len(messages) < old_length:
@@ -1017,22 +1968,78 @@ class IMRTPlanningAgent:
         return session_results
 
 
-def main():
-    """Main function to test the LLM agent planning system."""
+def print_supported_models():
+    """Print list of supported models for agentic work."""
+    print("\n" + "=" * 70)
+    print("🤖 SUPPORTED MODELS FOR AGENTIC PLANNING")
+    print("=" * 70)
+    
+    openai_models = {k: v for k, v in SUPPORTED_MODELS.items() if v["provider"] == "openai"}
+    anthropic_models = {k: v for k, v in SUPPORTED_MODELS.items() if v["provider"] == "anthropic"}
+    
+    print("\n📘 OpenAI Models:")
+    for model_name, info in openai_models.items():
+        print(f"  • {model_name:30s} - {info['description']}")
+    
+    print("\n📗 Anthropic Models:")
+    for model_name, info in anthropic_models.items():
+        print(f"  • {model_name:30s} - {info['description']}")
+    
+    print("\n" + "=" * 70)
+    print("💡 Usage: Set model parameter when calling main() or IMRTPlanningAgent()")
+    print("   Example: main(model='gpt-4o') or main(model='claude-3-5-sonnet-latest')")
+    print("=" * 70 + "\n")
+
+
+def main(cancer_site: str = "head_and_neck", 
+         prescription_dose: Optional[Union[float, Dict[str, float]]] = None, 
+         num_fractions: Optional[int] = None,
+         patient_file: str = "HandN.mat",
+         treatment_technique: str = "IMRT",
+         model: str = "gpt-4o"):
+    """
+    Main function to test the LLM agent planning system with configurable treatment parameters.
+    
+    Args:
+        cancer_site: Type of cancer (e.g., 'lung', 'head_and_neck', 'prostate', 'breast')
+        prescription_dose: Total prescription dose in Gy, or dict for SIB. If None, inferred from structure names.
+        num_fractions: Number of treatment fractions. If None, uses site-specific defaults.
+        patient_file: Path to patient data file
+        treatment_technique: Treatment technique (default: 'IMRT')
+        model: LLM model to use (default: 'gpt-4o'). See print_supported_models() for options.
+    """
     print("🚀 Starting LLM Agent IMRT Planning Test")
     print("=" * 50)
     
-    # Configuration
-    matrad_path = "/Users/ahmadneishabouri/matRad"  # Update this path as needed
-    #patient_file = "/Users/ahmadneishabouri/matRad/HandN_4Agent_noconstraints.mat"  # Absolute path
-    patient_file = "HandN.mat"
+    # Configuration        
+    matrad_path = os.path.expanduser("~/matRad")
+    
+    # Create treatment configuration
+    treatment_config = TreatmentConfiguration(
+        cancer_site=cancer_site,
+        prescription_dose=prescription_dose,
+        num_fractions=num_fractions,
+        treatment_technique=treatment_technique,
+        patient_file=patient_file
+    )
     
     try:
-        # Create planning agent
-        agent = IMRTPlanningAgent(matrad_path)
+        # Create planning agent with treatment configuration
+        agent = IMRTPlanningAgent(matrad_path, treatment_config, model=model)
         
         print(f"📊 Patient file: {patient_file}")
         print(f"🏥 matRad path: {matrad_path}")
+        print(f"🎯 Cancer site: {cancer_site}")
+        if prescription_dose is None:
+            print(f"💊 Prescription: Will be inferred from structure names")
+        elif isinstance(prescription_dose, dict):
+            dose_info = ", ".join([f"{target}: {dose} Gy" for target, dose in prescription_dose.items()])
+            primary_dose = max(prescription_dose.values())
+            print(f"💊 Prescription (SIB): {dose_info} in {num_fractions} fractions ({primary_dose/num_fractions:.1f} Gy/fx primary)")
+        else:
+            print(f"💊 Prescription: {prescription_dose} Gy in {num_fractions} fractions ({prescription_dose/num_fractions:.1f} Gy/fx)")
+        print(f"⚡ Technique: {treatment_technique}")
+        print(f"🤖 Model: {model} ({SUPPORTED_MODELS.get(model, {}).get('provider', 'unknown')})")
         print(f"📁 Session ID: {agent.logger.session_id}")
         print("\n🤖 Starting LLM-guided planning session...")
         
@@ -1079,4 +2086,21 @@ def main():
 
 
 if __name__ == "__main__":
-    main() 
+    # Print available models
+    # print_supported_models()
+    
+    # Run with default model (gpt-5.1 - stable and reliable)
+    main()
+    
+    # Examples with different models:
+    
+    # Latest OpenAI models (GPT-5 series):
+    # main(model="gpt-5.1")      # Latest GPT-5.1 with improved reasoning (Nov 2025)
+    # main(model="gpt-5")        # GPT-5 multimodal with advanced reasoning (Aug 2025)
+    # main(model="gpt-4o-mini")  # Faster, cost-effective GPT-4 option
+    
+    # Latest Anthropic models (Claude 4.5/4.1 series - requires: pip install anthropic):
+    # main(model="claude-sonnet-4-5-20250929")  # Latest Sonnet for coding and agentic tasks (Sep 2025)
+    # main(model="claude-opus-4-1-20250805")    # Latest Opus for complex reasoning (Aug 2025)
+    # main(model="claude-haiku-4-5-20251001")   # Latest Haiku, fast and efficient (Oct 2025)
+    # main(model="claude-3-5-sonnet-latest")    # Previous generation, proven performance 
