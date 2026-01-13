@@ -625,9 +625,9 @@ class IMRTPlanningAgent:
             4. Create treatment plan with appropriate beam configuration (at least 9 beams)
             5. Generate beam geometry and calculate dose influence matrix
             6. Add site-appropriate objectives and/or constraints based on inferred prescription and QUANTEC guidelines.
-               - **Constraint Strategy**: Use soft objectives (e.g., square_overdosing) first. If critical OAR sparing fails, switch to hard constraints (e.g., min_max_dose) but be aware of feasibility.
+               - **Constraint Strategy**: Use soft objective first. If critical OAR sparing fails, switch to hard constraints (e.g., min_max_dose) but be aware of feasibility.
                - **Penalty Scaling**: Scale penalties PROPORTIONAL to volume size (Large Volume = High Penalty).
-               - **CRITICAL**: implement a high penalty (10x comparing to PTV penalty) for BODY_minus_PTVs with **square_overdosing** and NOT **square_deviation** objective. I repeat: **square_overdosing** and NOT **square_deviation** objective for BODY_minus_PTVs.
+               - **CRITICAL**: implement a high penalty (10x comparing to PTV penalty) for BODY_minus_PTVs with square_overdosing objective.
             7. Optimize fluence            
             8. Evaluate plan quality using evaluate_plan_quality(), then ALWAYS use record_thoughts() tool to review and summarize objectives/constraints (and confirm their implementation), then concisely provide a plan summary and clear next steps
             9. Iterate until clinical criteria based on inferred prescription are met
