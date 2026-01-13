@@ -1308,8 +1308,8 @@ class MatRadEngine:
         try:
             # Map objective types to matRad objective classes
             obj_class_map = {
-                'min_dose': 'DoseObjectives.matRad_SquaredUnderdosing',
-                'max_dose': 'DoseObjectives.matRad_SquaredOverdosing',
+                'square_underdosing': 'DoseObjectives.matRad_SquaredUnderdosing',
+                'square_overdosing': 'DoseObjectives.matRad_SquaredOverdosing',
                 'mean_dose': 'DoseObjectives.matRad_MeanDose',
                 'square_deviation': 'DoseObjectives.matRad_SquaredDeviation',
                 'eud': 'DoseObjectives.matRad_EUD',
