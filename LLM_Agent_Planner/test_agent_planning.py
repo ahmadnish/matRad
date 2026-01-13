@@ -45,6 +45,7 @@ import os
 import json
 import time
 import numpy as np
+from datetime import datetime
 
 from dotenv import load_dotenv
 # Load environment variables
@@ -619,28 +620,34 @@ class IMRTPlanningAgent:
                - This will remove helper structures, infer prescription dose from target names, and provide QUANTEC guidelines
                - Use the inferred prescription and guidelines for all subsequent planning steps
             3. **Structure Survey**: Use `get_structure_volumes()` to get voxel counts and priorities.
-               - **CRITICAL**: Use voxel counts to scale your penalties. matRad objectives are volume-normalized (Mean Squared Error).
+               - **CRITICAL**: Use voxel counts to scale your penalties. matRad objectives are volume-normalized.
                - **LARGE structures (Body, Skin) need HIGHER penalties (e.g., 5000+) because their error signal is diluted by the huge number of voxels.**
-            4. Create treatment plan with appropriate beam configuration
+            4. Create treatment plan with appropriate beam configuration (at least 9 beams)
             5. Generate beam geometry and calculate dose influence matrix
             6. Add site-appropriate objectives and/or constraints based on inferred prescription and QUANTEC guidelines.
                - **Constraint Strategy**: Use soft objectives (e.g., square_overdosing) first. If critical OAR sparing fails, switch to hard constraints (e.g., min_max_dose) but be aware of feasibility.
                - **Penalty Scaling**: Scale penalties PROPORTIONAL to volume size (Large Volume = High Penalty).
+               - **CRITICAL**: implement a high penalty (10x comparing to PTV penalty) for BODY_minus_PTVs with **square_overdosing** and NOT **square_deviation** objective. I repeat: **square_overdosing** and NOT **square_deviation** objective for BODY_minus_PTVs.
             7. Optimize fluence            
-            8. Evaluate plan quality using evaluate_plan_quality(), then ALWAYS use record_thoughts() to review and summarize objectives/constraints (and confirm their implementation), then concisely provide a plan summary and clear next steps
+            8. Evaluate plan quality using evaluate_plan_quality(), then ALWAYS use record_thoughts() tool to review and summarize objectives/constraints (and confirm their implementation), then concisely provide a plan summary and clear next steps
             9. Iterate until clinical criteria based on inferred prescription are met
 
             ## Important Considerations:        
             - Skin, Body, or External structure is the patient boundary. Use it to create new structures and help structures you may need.
             - Structures may overlap, use tools (e.g. perform_voi_operation) to create new structures and help structures you may need.
-            - Create Skin_excl structure (Skin setdiff all_structures) and maintain a D_max < 0.5 x prescription dose.
+            - Create Body_minus_PTVs structure (Body setdiff all_structures) and maintain a D_max < 0.5 x prescription dose via square_overdosing objective with high penalty (10x comparing to PTV penalty).
             - Keep in mind load_the_patient() leads to losing all previous objectives and constraints set and sets it to default. 
             - **Structure Overlap Management**:
-                - Use set_overlap_priorities() to manage structure overlap ALWAYS BEFORE calculate_dose_influence_matrix() and optimize_fluence().
-                - **CRITICAL**: Lower priority number = Higher Priority. If Target=1 and OAR=2, Target wins overlap.
+                - Use set_overlap_priorities() to manage structure overlap ALWAYS BEFORE calculate_dose_influence_matrix() and optimize_fluence().                
             
             **CRITICAL: How to Signal Plan Completion:**
-            "PLANNING_COMPLETE: Plan meets all clinical requirements and is ready for clinical use."
+            When and ONLY when ALL of the following are met:
+               - Stage 1 criteria: Target coverage + hotspots within specification
+               - Stage 2 criteria: Critical OAR hard limits respected
+               - Stage 3 criteria: Gradient and BODY_minus_PTVs acceptable (spillage controlled, no excessive hotspots)
+               - Plan clinically deliverable and safe
+            
+            Respond with: **"PLANNING_COMPLETE: Plan meets all clinical requirements and is ready for clinical use."**
 
             Start by getting the current plan state and proceed step by step.
         """
@@ -798,7 +805,7 @@ class IMRTPlanningAgent:
                             },
                             "objective_type": {
                                 "type": "string",
-                                "enum": ["min_dose", "max_dose", "mean_dose", "square_deviation", "eud", "min_dvh", "max_dvh"],
+                                "enum": ["square_underdosing", "square_overdosing", "mean_dose", "square_deviation", "eud", "min_dvh", "max_dvh"],
                                 "description": "Type of objective"
                             },
                             "dose_value": {
@@ -1772,8 +1779,16 @@ class IMRTPlanningAgent:
             "content": "Begin IMRT planning for this patient immediately. Start by checking the plan state and then proceed with the planning workflow. Take action now - do not just provide reasoning without using tools."
         })
         
-        # Print messages content to file
-        with open('messages_debug.txt', 'w') as f:
+
+        # Create sessions_messages directory if it doesn't exist
+        sessions_dir = './LLM_Agent_Planner/sessions_messages/'
+        os.makedirs(sessions_dir, exist_ok=True)
+        # Save messages content to file with timestamp    
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"messages_{timestamp}.txt"
+        filepath = os.path.join(sessions_dir, filename)
+        
+        with open(filepath, 'w') as f:
             import json
             f.write("=== INITIAL MESSAGES ===\n")
             f.write(json.dumps(messages, indent=2))
@@ -1908,10 +1923,10 @@ class IMRTPlanningAgent:
                         if self.plan_state.get("plan_evaluated"):
                             continuation_prompt = ("Continue with treatment planning. Remember: you must achieve clinical targets "
                                                  "(PTV D95 ≥95%, all OAR doses below tolerance) before declaring completion. "                                                
-                                                 "If body minus PTVs has very high dose, you need to adjust the penalties and re-optimize (10x penalties for BODY_minus_PTVs with square_overdosing objective)."
-                                                 "try to localize where the high dose is by looking at the DVH analysis of each structure or help structures (e.g. if it's in the ring, or in the BODY_minus_PTVs, or in the target, or in the OAR, etc.)"
-                                                 "If you have exhausted all possible adjustments, you may define a compromise to the clinical requirements by ~5% of the prescription goal dose for the target or OAR."
-                                                 "Finally, you can declare the plan complete with 'PLANNING_COMPLETE: Plan optimized to best achievable level with available data'. ")
+                                                 "If body minus PTVs has very high dose, you need to adjust the penalties and re-optimize (10x penalties for BODY_minus_PTVs with **square_overdosing** and NOT **square_deviation** objective)."
+                                                 "try to localize where the high dose is by looking at the each structure's metrics or help structures (e.g. if the hotspot is in the ring, or in the BODY_minus_PTVs, or in the target, or in the OAR, etc.)"                                                 
+                                                 "If you see no improvement, define a new beam configuration and re-optimize (cold-start) and repeat the process."
+                                                 )
                         else:
                             continuation_prompt = ("Continue with treatment planning. You must evaluate the plan quality first "
                                                  "and ensure all clinical criteria are met before considering the plan complete. "

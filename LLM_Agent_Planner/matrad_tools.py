@@ -437,14 +437,42 @@ class MatRadEngine:
             # Clear optimized weights since beam configuration changed
             self.optimized_weights = None
             self.weights_available = False
+
+            print("Generating beam geometry...")
+            self.eng.eval("stf = matRad_generateStf(ct,cst,pln);", nargout=0)
+            
+            # Instead of trying to get the entire stf struct, just keep track that it exists
+            # self.stf = self.eng.workspace["stf"]  
+            self.stf = True  # Just mark that stf exists in MATLAB workspace
+            
+            # Get beam info
+            num_beams = self.eng.eval("numel(stf)", nargout=1)
+            num_beams_int = int(num_beams)
+            total_bixels = self.eng.eval("sum([stf.totalNumOfBixels])", nargout=1)
+            
+            # Get individual beam details
+            beam_info = []
+            for i in range(1, num_beams_int + 1):
+                gantry = self.eng.eval(f"stf({i}).gantryAngle", nargout=1)
+                couch = self.eng.eval(f"stf({i}).couchAngle", nargout=1)
+                bixels = self.eng.eval(f"stf({i}).totalNumOfBixels", nargout=1)
+                beam_info.append({
+                    "beam_id": i,
+                    "gantry_angle": gantry,
+                    "couch_angle": couch,
+                    "num_bixels": bixels
+                })
             
             return {
                 "success": True,
                 "num_beams": len(gantry_angles),
                 "gantry_angles": gantry_angles,
                 "couch_angles": couch_angles,
+                "num_beams": num_beams_int,
+                "total_bixels": total_bixels,
+                "beam_info": beam_info,
                 "weights_cleared": True,
-                "message": "Beam angles set successfully. Previous optimization weights cleared."
+                "message": "Beam angles and beam geometry set successfully. Previous optimization weights cleared."
             }
             
         except Exception as e:
@@ -1451,7 +1479,7 @@ class MatRadEngine:
             # Determine optimization command based on whether to use previous weights
             if use_previous_weights and self.weights_available and self.optimized_weights is not None:
                 print("Running fluence optimization with previous weights for warm-start...")
-                optimization_cmd = "resultGUI = matRad_fluenceOptimization(dij,cst,pln,wInit);"
+                optimization_cmd = "resultGUI = matRad_fluenceOptimization(dij,cst,pln);"
                 start_type = "warm-start"
             else:
                 print("Running fluence optimization from scratch...")

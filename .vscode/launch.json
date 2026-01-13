@@ -2,6 +2,26 @@
   "version": "0.2.0",
   "configurations": [
     {
+      "name": "Head & Neck (70 Gy / 35 fx) - GPT-5.1",
+      "type": "python",
+      "request": "launch",
+      "program": "${workspaceFolder}/LLM_Agent_Planner/run_site_specific_planning.py",
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "justMyCode": false,
+      "env": {
+        "PYTHONUNBUFFERED": "1",
+        "PYTHONPATH": "${workspaceFolder}"
+      },
+      "args": [
+        "--site", "generic",        
+        "--patient", "~/matRad/matRad/phantoms/HNC_010.mat",
+        "--technique", "IMRT",
+        "--model", "gpt-5.1",
+        "--max-iterations", "200"
+      ]
+    },
+    {
       "name": "Site-specific (prompted)",
       "type": "python",
       "request": "launch",
@@ -23,30 +43,6 @@
         "--max-iterations", "${input:maxIterations}"
       ]
     },
-
-    {
-      "name": "Lung (60 Gy / 30 fx) - GPT-5.1",
-      "type": "python",
-      "request": "launch",
-      "program": "${workspaceFolder}/LLM_Agent_Planner/run_site_specific_planning.py",
-      "console": "integratedTerminal",
-      "cwd": "${workspaceFolder}",
-      "justMyCode": false,
-      "env": {
-        "PYTHONUNBUFFERED": "1",
-        "PYTHONPATH": "${workspaceFolder}"
-      },
-      "args": [
-        "--site", "lung",
-        "--dose", "60",
-        "--fractions", "30",
-        "--patient", "lung_patient.mat",
-        "--technique", "IMRT",
-        "--model", "gpt-5.1",
-        "--max-iterations", "200"
-      ]
-    },
-
     {
       "name": "Head & Neck SIB (Head_and_Neck_1.mat) - GPT-5.1",
       "type": "python",
@@ -113,28 +109,6 @@
         "--max-iterations", "200"
       ]
     },
-
-    {
-      "name": "Head & Neck (70 Gy / 35 fx) - GPT-5.1",
-      "type": "python",
-      "request": "launch",
-      "program": "${workspaceFolder}/LLM_Agent_Planner/run_site_specific_planning.py",
-      "console": "integratedTerminal",
-      "cwd": "${workspaceFolder}",
-      "justMyCode": false,
-      "env": {
-        "PYTHONUNBUFFERED": "1",
-        "PYTHONPATH": "${workspaceFolder}"
-      },
-      "args": [
-        "--site", "head_and_neck",        
-        "--patient", "~/matRad/matRad/phantoms/HNC_010.mat",
-        "--technique", "IMRT",
-        "--model", "gpt-5.1",
-        "--max-iterations", "200"
-      ]
-    },
-
     {
       "name": "Prostate (78 Gy / 39 fx) - GPT-5.1",
       "type": "python",
