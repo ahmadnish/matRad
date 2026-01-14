@@ -735,8 +735,8 @@ class MatRadEngine:
                         
                         # Map className to readable type
                         objective_type_map = {
-                            'DoseObjectives.matRad_SquaredUnderdosing': 'min_dose',
-                            'DoseObjectives.matRad_SquaredOverdosing': 'max_dose',
+                            'DoseObjectives.matRad_SquaredUnderdosing': 'square_underdosing',
+                            'DoseObjectives.matRad_SquaredOverdosing': 'square_overdosing',
                             'DoseObjectives.matRad_QuarticOverdosing': 'quartic_overdosing',
                             'DoseObjectives.matRad_MeanDose': 'mean_dose',
                             'DoseObjectives.matRad_SquaredDeviation': 'square_deviation',

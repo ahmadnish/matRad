@@ -630,14 +630,15 @@ class IMRTPlanningAgent:
                - `PTV_all`: Union of all remaining PTVs (if multiple targets exist)
                - `PTV_eval`: For SIB cases, subtract higher dose from lower dose PTVs as needed
                - `BODY_minus_PTVs`: Spillage control volume using external boundary structure
-               - `Body_minus_all`: Spillage control volume using all structures (PTVs and OARs)
+               - `Body_minus_all`: Spillage control volume using all structures (PTVs + OARs)
                - `Rings`: Gradient control shells around primary PTV`
                - And whatever else is needed to create the evaluation structures.
-            7. Call record_thoughts() to document a plan summary and clear steps for objectives and constraints based on inferred prescription, QUANTEC guidelines, evaluation structures and best practices in IMRT planning.
-            8. Add the site-appropriate objectives and/or constraints based on the plan summary.
-            7. Optimize fluence            
-            8. Evaluate plan quality using evaluate_plan_quality() only **for the first iteration**, then preferably use calculate_dvh_analysis for targeted structures evaluation to save tokens.            
-            9. Iterate until clinical criteria based on plan summary and inferred prescription are met
+            7. **IMPORTANT**: Use record_thoughts() tool to document a plan summary and clear steps for objectives and constraints based on inferred prescription, QUANTEC guidelines, evaluation structures and best practices in IMRT planning.
+            8. **IMPORTANT**: At each iteration, before adding objectives and constraints, check the current set objectives and constraints via get_current_objectives() and get_current_constraints() and remove any redundant or conflicting objectives and constraints using remove_optimization_objective() and remove_constraint() tools.
+            9. Add the site-appropriate objectives and/or constraints based on the plan.
+            10. Optimize fluence            
+            11. Evaluate plan quality using evaluate_plan_quality() only **for the first iteration**, then preferably use calculate_dvh_analysis for targeted structures evaluation to save tokens.            
+            12. Iterate until clinical criteria based on plan summary and inferred prescription are met
 
             ## Important Considerations:        
 
@@ -645,17 +646,25 @@ class IMRTPlanningAgent:
             - Keep in mind load_the_patient() leads to losing all previous objectives and constraints set and sets it to default. 
             - **Structure Overlap Management**:
                 - Use set_overlap_priorities() to manage structure overlap ALWAYS BEFORE calculate_dose_influence_matrix() and optimize_fluence().                
+                
             
             **Hot spot control (BODY / External):**
             - Use **multiple levels** of BODY (prefer `BODY_minus_PTVs` if available) objectives to suppress non-target hot spots:
-              - `square_overdosing` at **0 Gy** with **low** penalty (weak global regularizer)
-              - `square_overdosing` at **~50% Rx** with **medium** penalty (spillage shaping)
-              - **`quartic_overdosing`** at **~95–100% Rx** with **very high** penalty (stronger hot spot suppression than squared)
-            - For **persistent hot spots**, use `quartic_overdosing` instead of `square_overdosing` as it provides **4th power penalty** for stronger hot spot control
+              - `square_overdosing` at **0 Gy** with **low** penalty (e.g. 100; weak global regularizer)
+              - `square_overdosing` at **~50% Rx** with **medium** penalty (e.g. 1000; spillage shaping)
+              - `square_overdosing` at **~95–100% Rx** with **very high** penalty (e.g. 10000; explicit hot spot clamp)
+            - For **persistent hot spots** in the body (or BODY_minus_PTVs), use `quartic_overdosing` instead of `square_overdosing` as it provides **4th power penalty** for stronger hot spot control        
             - Add **EUD** on BODY / `BODY_minus_PTVs` to explicitly pull down maxima:
               - Use a **large EUD exponent** per best practice for max-dose control (start **~10–20**, increase if hot spots persist; avoid extreme values that destabilize optimization).
-            - If soft objectives do not control hot spots, add a **hard max dose constraint** on BODY:
+            - If soft objectives do not control hot spots, add a **hard max dose constraint** on BODY (or BODY_minus_PTVs if available):
               - `min_max_dose` with **upper_bound = 100% Rx** (or **105% Rx** if feasibility issues).
+            
+            **CRITICAL: How to Handle Redundant Objectives and Constraints:**
+            - Use get_current_objectives() and get_current_constraints() to check what already exists
+            - Analyze existing objectives for redundancy, conflicts, or excessive constraints
+            - Check constraint feasibility and compatibility with objectives
+            - Focus on site-specific priorities and constraints
+            - Use remove_optimization_objective(structure_name, objective_index) and remove_constraint(structure_name, constraint_index) to remove redundant or conflicting objectives and constraints
             
             **CRITICAL: How to Signal Plan Completion:**
             When and ONLY when ALL of the following are met:
@@ -1881,7 +1890,7 @@ class IMRTPlanningAgent:
                 
                 # Count tokens and log messages at each iteration
                 total_chars = sum(len(str(msg.get('content', ''))) for msg in messages)
-                with open('messages_debug.txt', 'a') as f:
+                with open(filepath, 'a') as f:
                     f.write(f"\n\n=== ITERATION {iteration} ===\n")
                     f.write(f"Total chars: {total_chars}, Est tokens: {total_chars//4}\n")
                     f.write(json.dumps(messages, indent=2))
@@ -1939,8 +1948,9 @@ class IMRTPlanningAgent:
                         # Provide more specific continuation prompt emphasizing clinical requirements
                         if self.plan_state.get("plan_evaluated"):
                             continuation_prompt = ("Continue with treatment planning. Remember: you must achieve clinical targets "
-                                                 "(PTV D95 ≥95%, all OAR doses below tolerance) before declaring completion. "                                                
-                                                 "If body minus PTVs has very high dose, you need to adjust the penalties and re-optimize (10x penalties for BODY_minus_PTVs with **square_overdosing** and NOT **square_deviation** objective)."
+                                                 "(PTV D95 ≥95%, all OAR doses below tolerance) before declaring completion. "                                               
+                                                 "Before adding new objectives and constraints, check the current set objectives and constraints via get_current_objectives() and get_current_constraints() and remove any redundant or conflicting objectives and constraints using remove_optimization_objective(structure_name, objective_index) and remove_constraint(structure_name, constraint_index) tools."
+                                                 "If body minus PTVs has very high dose, you need to adjust the penalties and re-optimize."
                                                  "try to localize where the high dose is by looking at the each structure's metrics or help structures (e.g. if the hotspot is in the ring, or in the BODY_minus_PTVs, or in the target, or in the OAR, etc.)"                                                 
                                                  "If you see no improvement, define a new beam configuration and re-optimize (cold-start) and repeat the process."
                                                  )
