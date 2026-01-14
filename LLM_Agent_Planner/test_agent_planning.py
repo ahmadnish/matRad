@@ -620,25 +620,41 @@ class IMRTPlanningAgent:
                - This will remove helper structures, infer prescription dose from target names, and provide QUANTEC guidelines
                - Use the inferred prescription and guidelines for all subsequent planning steps
             3. **Structure Survey**: Use `get_structure_volumes()` to get voxel counts and priorities.
-               - **CRITICAL**: Use voxel counts to scale your penalties. matRad objectives are volume-normalized.
-               - **LARGE structures (Body, Skin) need HIGHER penalties (e.g., 5000+) because their error signal is diluted by the huge number of voxels.**
+               - Use voxel counts to scale your penalties. matRad objectives are volume-normalized. Scaling has to be slighly scewed towards larger structures.               
             4. Create treatment plan with appropriate beam configuration (at least 9 beams)
             5. Generate beam geometry and calculate dose influence matrix
-            6. Add site-appropriate objectives and/or constraints based on inferred prescription and QUANTEC guidelines.
-               - **Constraint Strategy**: Use soft objective first. If critical OAR sparing fails, switch to hard constraints (e.g., min_max_dose) but be aware of feasibility.
-               - **Penalty Scaling**: Scale penalties PROPORTIONAL to volume size (Large Volume = High Penalty).
-               - **CRITICAL**: implement a high penalty (10x comparing to PTV penalty) for BODY_minus_PTVs with square_overdosing objective.
+            6. Create evaluation structures using perform_voi_operation tool.
+               - Skin, Body, or External structure is the patient boundary. Use it to create new structures and help structures you may need.
+               - Base all structure operations on the inferred prescription and kept structures               
+               - If needed, create evaluation volumes based on the identified targets:
+               - `PTV_all`: Union of all remaining PTVs (if multiple targets exist)
+               - `PTV_eval`: For SIB cases, subtract higher dose from lower dose PTVs as needed
+               - `BODY_minus_PTVs`: Spillage control volume using external boundary structure
+               - `Body_minus_all`: Spillage control volume using all structures (PTVs and OARs)
+               - `Rings`: Gradient control shells around primary PTV`
+               - And whatever else is needed to create the evaluation structures.
+            7. Call record_thoughts() to document a plan summary and clear steps for objectives and constraints based on inferred prescription, QUANTEC guidelines, evaluation structures and best practices in IMRT planning.
+            8. Add the site-appropriate objectives and/or constraints based on the plan summary.
             7. Optimize fluence            
-            8. Evaluate plan quality using evaluate_plan_quality(), then ALWAYS use record_thoughts() tool to review and summarize objectives/constraints (and confirm their implementation), then concisely provide a plan summary and clear next steps
-            9. Iterate until clinical criteria based on inferred prescription are met
+            8. Evaluate plan quality using evaluate_plan_quality(), then ALWAYS use record_thoughts() tool to review your plan and document your assessment, then concisely provide a plan summary update and clear next steps
+            9. Iterate until clinical criteria based on plan summary and inferred prescription are met
 
             ## Important Considerations:        
-            - Skin, Body, or External structure is the patient boundary. Use it to create new structures and help structures you may need.
-            - Structures may overlap, use tools (e.g. perform_voi_operation) to create new structures and help structures you may need.
-            - Create Body_minus_PTVs structure (Body setdiff all_structures) and maintain a D_max < 0.5 x prescription dose via square_overdosing objective with high penalty (10x comparing to PTV penalty).
+
+                                    
             - Keep in mind load_the_patient() leads to losing all previous objectives and constraints set and sets it to default. 
             - **Structure Overlap Management**:
                 - Use set_overlap_priorities() to manage structure overlap ALWAYS BEFORE calculate_dose_influence_matrix() and optimize_fluence().                
+            
+            **Hot spot control (BODY / External):**
+            - Use **multiple levels** of BODY (prefer `BODY_minus_PTVs` if available) objectives to suppress non-target hot spots:
+              - `square_overdosing` at **0 Gy** with **low** penalty (weak global regularizer)
+              - `square_overdosing` at **~50% Rx** with **medium** penalty (spillage shaping)
+              - `square_overdosing` at **~95–100% Rx** with **very high** penalty (explicit hot spot clamp)
+            - Add **EUD** on BODY / `BODY_minus_PTVs` to explicitly pull down maxima:
+              - Use a **large EUD exponent** per best practice for max-dose control (start **~10–20**, increase if hot spots persist; avoid extreme values that destabilize optimization).
+            - If soft objectives do not control hot spots, add a **hard max dose constraint** on BODY:
+              - `min_max_dose` with **upper_bound = 100% Rx** (or **105% Rx** if feasibility issues).
             
             **CRITICAL: How to Signal Plan Completion:**
             When and ONLY when ALL of the following are met:
