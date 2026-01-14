@@ -737,6 +737,7 @@ class MatRadEngine:
                         objective_type_map = {
                             'DoseObjectives.matRad_SquaredUnderdosing': 'min_dose',
                             'DoseObjectives.matRad_SquaredOverdosing': 'max_dose',
+                            'DoseObjectives.matRad_QuarticOverdosing': 'quartic_overdosing',
                             'DoseObjectives.matRad_MeanDose': 'mean_dose',
                             'DoseObjectives.matRad_SquaredDeviation': 'square_deviation',
                             'DoseObjectives.matRad_EUD': 'eud',
@@ -801,6 +802,7 @@ class MatRadEngine:
             obj_class_map = {
                 'min_dose': 'DoseObjectives.matRad_SquaredUnderdosing',
                 'max_dose': 'DoseObjectives.matRad_SquaredOverdosing',
+                'quartic_overdosing': 'DoseObjectives.matRad_QuarticOverdosing',
                 'mean_dose': 'DoseObjectives.matRad_MeanDose',
                 'square_deviation': 'DoseObjectives.matRad_SquaredDeviation',
                 'eud': 'DoseObjectives.matRad_EUD',
@@ -1317,7 +1319,7 @@ class MatRadEngine:
         
         Args:
             structure_name: Name of the structure to add objective for.
-            obj_type: Type of objective ('min_dose', 'max_dose', 'mean_dose', 'square_deviation', 'eud', 'min_dvh', 'max_dvh')
+            obj_type: Type of objective ('square_underdosing', 'square_overdosing', 'quartic_overdosing', 'mean_dose', 'square_deviation', 'eud', 'min_dvh', 'max_dvh')
             dose_value: Dose value in Gy for the objective (for EUD: target EUD value; for DVH: dose threshold).
             penalty: Penalty weight for the objective.
             rationale: Short explanation of why this objective is being added.
@@ -1338,6 +1340,7 @@ class MatRadEngine:
             obj_class_map = {
                 'square_underdosing': 'DoseObjectives.matRad_SquaredUnderdosing',
                 'square_overdosing': 'DoseObjectives.matRad_SquaredOverdosing',
+                'quartic_overdosing': 'DoseObjectives.matRad_QuarticOverdosing',
                 'mean_dose': 'DoseObjectives.matRad_MeanDose',
                 'square_deviation': 'DoseObjectives.matRad_SquaredDeviation',
                 'eud': 'DoseObjectives.matRad_EUD',

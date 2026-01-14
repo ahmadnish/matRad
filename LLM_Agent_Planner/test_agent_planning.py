@@ -650,7 +650,8 @@ class IMRTPlanningAgent:
             - Use **multiple levels** of BODY (prefer `BODY_minus_PTVs` if available) objectives to suppress non-target hot spots:
               - `square_overdosing` at **0 Gy** with **low** penalty (weak global regularizer)
               - `square_overdosing` at **~50% Rx** with **medium** penalty (spillage shaping)
-              - `square_overdosing` at **~95–100% Rx** with **very high** penalty (explicit hot spot clamp)
+              - **`quartic_overdosing`** at **~95–100% Rx** with **very high** penalty (stronger hot spot suppression than squared)
+            - For **persistent hot spots**, use `quartic_overdosing` instead of `square_overdosing` as it provides **4th power penalty** for stronger hot spot control
             - Add **EUD** on BODY / `BODY_minus_PTVs` to explicitly pull down maxima:
               - Use a **large EUD exponent** per best practice for max-dose control (start **~10–20**, increase if hot spots persist; avoid extreme values that destabilize optimization).
             - If soft objectives do not control hot spots, add a **hard max dose constraint** on BODY:
@@ -821,7 +822,7 @@ class IMRTPlanningAgent:
                             },
                             "objective_type": {
                                 "type": "string",
-                                "enum": ["square_underdosing", "square_overdosing", "mean_dose", "square_deviation", "eud", "min_dvh", "max_dvh"],
+                                "enum": ["square_underdosing", "square_overdosing", "quartic_overdosing", "mean_dose", "square_deviation", "eud", "min_dvh", "max_dvh"],
                                 "description": "Type of objective"
                             },
                             "dose_value": {
