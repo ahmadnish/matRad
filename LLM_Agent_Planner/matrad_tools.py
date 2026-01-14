@@ -2105,17 +2105,11 @@ class MatRadEngine:
         """
         **SPECIALIZED TOOL FOR FOCUSED DVH ANALYSIS**
         
-        Calculate DVH (Dose-Volume Histogram) for specific structure analysis using matRad's quality indicators.
-        Creates detailed DVH plots and structure-specific clinical assessments.
+        Calculate DVH (Dose-Volume Histogram) for specific structure analysis using matRad's quality indicators.        
         
         **USE THIS FOR:**
-        - Focused analysis of a specific structure's dose distribution
-        - Detailed DVH curve examination for individual structures
-        - Structure-specific quality indicator deep-dive
-        - When you need detailed DVH plots for specific structures
-        - Follow-up analysis after comprehensive plan evaluation
-        
-        **NOTE:** For overall plan evaluation, use evaluate_plan() instead.
+        - Focused analysis of a specific structure's dose distribution        
+                
         
         Args:
             structure_name: Name of the structure to calculate DVH for. If None, calculates for all structures.
@@ -2169,17 +2163,17 @@ class MatRadEngine:
         # Calculate DVH and quality indicators using matRad's robust function
         dvh_data = self._calculate_structure_metrics(int(struct_idx))
         
-        # Create detailed clinical assessment
-        assessment = self._generate_clinical_assessment(dvh_data)
+        # Create detailed clinical assessment Nish: assessment and plot_file was temporarily removed to reduce the size of the response.
+        #assessment = self._generate_clinical_assessment(dvh_data)
         
         # Create individual DVH plot
-        plot_file = self._create_single_structure_plot(dvh_data)
+        #plot_file = self._create_single_structure_plot(dvh_data)
         
         return {
             "success": True,
             "structure": dvh_data["structure_name"],
             "structure_type": dvh_data["structure_type"],
-            "dvh_assessment": assessment,
+            #"dvh_assessment": assessment,
             "dvh_metrics": {
                 "D95": dvh_data["D95"],
                 "D50": dvh_data["D50"],
@@ -2200,7 +2194,7 @@ class MatRadEngine:
                 "HI": dvh_data["HI"],
                 "CI": dvh_data["CI"]
             },
-            "plot_file": plot_file,
+            #"plot_file": plot_file,
             "message": f"DVH analyzed for {structure_name} using matRad quality indicators"
         }
     
@@ -2238,12 +2232,12 @@ class MatRadEngine:
         
         for idx in valid_indices:
             dvh_data = self._calculate_structure_metrics(idx)
-            assessment = self._generate_clinical_assessment(dvh_data)
+            #assessment = self._generate_clinical_assessment(dvh_data)
             
             structure_result = {
                 "structure_name": dvh_data["structure_name"],
                 "structure_type": dvh_data["structure_type"],
-                "dvh_assessment": assessment,
+                #"dvh_assessment": assessment,
                 "dvh_metrics": {
                     "D95": dvh_data["D95"],
                     "D50": dvh_data["D50"],

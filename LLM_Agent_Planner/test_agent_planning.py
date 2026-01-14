@@ -636,7 +636,7 @@ class IMRTPlanningAgent:
             7. Call record_thoughts() to document a plan summary and clear steps for objectives and constraints based on inferred prescription, QUANTEC guidelines, evaluation structures and best practices in IMRT planning.
             8. Add the site-appropriate objectives and/or constraints based on the plan summary.
             7. Optimize fluence            
-            8. Evaluate plan quality using evaluate_plan_quality(), then ALWAYS use record_thoughts() tool to review your plan and document your assessment, then concisely provide a plan summary update and clear next steps
+            8. Evaluate plan quality using evaluate_plan_quality() only **for the first iteration**, then preferably use calculate_dvh_analysis for targeted structures evaluation to save tokens.            
             9. Iterate until clinical criteria based on plan summary and inferred prescription are met
 
             ## Important Considerations:        
@@ -1022,13 +1022,13 @@ class IMRTPlanningAgent:
                 "type": "function",
                 "function": {
                     "name": "calculate_dvh_analysis",
-                    "description": "Calculate comprehensive DVH analysis with detailed clinical assessment. For single structure: returns detailed DVH metrics (D95, D50, D5, D2, D98, V-metrics, HI/CI for targets), clinical assessment text, and individual plot. For all structures: returns summary assessment plus individual data for each structure with same detailed metrics.",
+                    "description": "Calculate comprehensive DVH analysis with detailed clinical assessment. For single structure: returns detailed DVH metrics (D95, D50, D5, D2, D98, V-metrics, HI/CI for targets). For all structures: returns summary assessment plus individual data for each structure with same detailed metrics.",
                     "parameters": {
                         "type": "object",
                         "properties": {
                             "structure_name": {
                                 "type": "string",
-                                "description": "Name of specific structure to analyze (optional). If provided, returns detailed analysis for that structure only. If omitted, analyzes all structures and returns comprehensive summary plus individual structure data."
+                                "description": "Name of specific structure to analyze."
                             }
                         },
                         "additionalProperties": False
